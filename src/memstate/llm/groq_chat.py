@@ -37,6 +37,10 @@ async def run_groq_chat(
 
     async with httpx.AsyncClient(timeout=180.0) as client:
         for _ in range(MAX_TOOL_ROUNDS):
+            # Force at least one tool call until the memory layer has been used.
+            has_tool_results = any(m.get("role") == "tool" for m in full)
+            tool_choice: str = "auto" if has_tool_results else "required"
+
             r = await client.post(
                 GROQ_CHAT_URL,
                 headers=headers,
@@ -44,7 +48,7 @@ async def run_groq_chat(
                     "model": model,
                     "messages": full,
                     "tools": MEMORY_TOOLS,
-                    "tool_choice": "auto",
+                    "tool_choice": tool_choice,
                     "temperature": 0.2,
                 },
             )
@@ -57,6 +61,13 @@ async def run_groq_chat(
 
             if not tool_calls:
                 text = (msg.get("content") or "").strip()
+                if not tool_log:
+                    return (
+                        "Cannot answer from memory: no tools were used. "
+                        "Try again or check that the model supports tool_choice.",
+                        tool_log,
+                        used_model,
+                    )
                 return text, tool_log, used_model
 
             full.append(msg)

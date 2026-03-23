@@ -31,15 +31,18 @@ async def run_ollama_chat(
 
     async with httpx.AsyncClient(timeout=180.0) as client:
         for _ in range(MAX_TOOL_ROUNDS):
-            r = await client.post(
-                url,
-                json={
-                    "model": model,
-                    "messages": full,
-                    "tools": OLLAMA_TOOLS,
-                    "stream": False,
-                },
-            )
+            has_tool_results = any(m.get("role") == "tool" for m in full)
+            body: dict[str, Any] = {
+                "model": model,
+                "messages": full,
+                "tools": OLLAMA_TOOLS,
+                "stream": False,
+            }
+            # Prefer requiring tools until memory has been read/written this turn (Ollama 0.5+).
+            if not has_tool_results:
+                body["tool_choice"] = "required"
+
+            r = await client.post(url, json=body)
             r.raise_for_status()
             data = r.json()
             used_model = data.get("model") or model
@@ -48,6 +51,13 @@ async def run_ollama_chat(
 
             if not tool_calls:
                 text = (msg.get("content") or "").strip()
+                if not tool_log:
+                    return (
+                        "Cannot answer from memory: no tools were used. "
+                        "Ensure your Ollama version supports tool_choice, or try another model.",
+                        tool_log,
+                        used_model,
+                    )
                 return text, tool_log, used_model
 
             full.append(msg)

@@ -7,6 +7,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
+from memstate.api.ui_graph_payload import build_ui_graph_snapshot
 from memstate.datamodel.fields import TopicFields, new_history_entry
 from memstate.store.graph_store import REF_UNCHANGED, GraphStore
 
@@ -16,69 +17,36 @@ def _utc_iso() -> str:
 
 
 def _graph_snapshot(store: GraphStore) -> dict[str, Any]:
-    """Same shape as GET /api/ui/graph."""
-    topic_ids = store.list_topic_ids(include_archived=True)
-    nodes: list[dict[str, Any]] = []
-    edges: list[dict[str, Any]] = []
-    seen_rel: set[tuple[str, str, str]] = set()
+    """Same shape as GET /api/ui/graph (includes ``community`` per node)."""
+    return build_ui_graph_snapshot(store)
 
-    for tid in topic_ids:
-        row = store.get_topic(tid)
-        if not row:
-            continue
-        tf = TopicFields.from_json(row.get("fields_json") if isinstance(row.get("fields_json"), str) else "")
-        fields_summary: list[dict[str, Any]] = []
-        for name, rec in tf.fields.items():
-            cur = rec.current_entry()
-            fields_summary.append(
-                {
-                    "name": name,
-                    "field_type": rec.field_type,
-                    "ref_topic_id": rec.ref_topic_id,
-                    "current_value": cur.value if cur else None,
-                    "history_len": len(rec.history),
-                }
-            )
-            if rec.ref_topic_id:
-                edges.append(
-                    {
-                        "from": tid,
-                        "to": rec.ref_topic_id,
-                        "kind": f"field:{name}",
-                        "edge_type": "field_ref",
-                    }
-                )
 
-        tk = row.get("topic_kind")
-        nodes.append(
-            {
-                "id": tid,
-                "label": str(row.get("title") or tid)[:80],
-                "title": row.get("title") or "",
-                "topic_kind": str(tk) if tk else "",
-                "archived": bool(row.get("archived")),
-                "salience": float(row.get("salience") or 0),
-                "fields": fields_summary,
+def _fields_schema_payload(tf: TopicFields, *, detail: str) -> dict[str, Any]:
+    """Build per-field payload for memory_get_topic_schema (detail: minimal | current | history)."""
+    out: dict[str, Any] = {}
+    d = (detail or "minimal").strip().lower()
+    if d not in ("minimal", "current", "history"):
+        d = "minimal"
+    for fname, rec in tf.fields.items():
+        if d == "minimal":
+            out[fname] = {
+                "field_type": rec.field_type,
+                "ref_topic_id": rec.ref_topic_id,
             }
-        )
-
-        for r in store.list_relationships(tid, direction="out"):
-            to_id = str(r.get("id") or "")
-            kind = str(r.get("kind") or "")
-            key = (tid, to_id, kind)
-            if key in seen_rel:
-                continue
-            seen_rel.add(key)
-            edges.append(
-                {
-                    "from": tid,
-                    "to": to_id,
-                    "kind": kind,
-                    "edge_type": "related",
-                }
-            )
-
-    return {"nodes": nodes, "edges": edges}
+        elif d == "current":
+            cur = rec.current_entry()
+            out[fname] = {
+                "field_type": rec.field_type,
+                "ref_topic_id": rec.ref_topic_id,
+                "value": cur.value if cur else None,
+            }
+        else:
+            out[fname] = {
+                "field_type": rec.field_type,
+                "ref_topic_id": rec.ref_topic_id,
+                "history": [e.model_dump() for e in rec.history],
+            }
+    return out
 
 
 def _parse_args(raw: Any) -> dict[str, Any]:
@@ -113,7 +81,35 @@ class MemoryToolRunner:
 
         if name == "memory_list_topics":
             inc = bool(args.get("include_archived", False))
-            return {"ok": True, "topic_ids": s.list_topic_ids(include_archived=inc)}
+            topics = s.list_topics_meta(include_archived=inc)
+            return {
+                "ok": True,
+                "topics": topics,
+                "topic_ids": [t["id"] for t in topics],
+            }
+
+        if name == "memory_get_topic_schema":
+            tid = str(args.get("topic_id") or "")
+            if not tid:
+                return {"ok": False, "error": "topic_id required"}
+            row = s.get_topic(tid)
+            if not row:
+                return {"ok": False, "error": "topic not found"}
+            detail = str(args.get("detail") or "minimal").strip().lower()
+            if detail not in ("minimal", "current", "history"):
+                detail = "minimal"
+            tf = TopicFields.from_json(row.get("fields_json") if isinstance(row.get("fields_json"), str) else "")
+            fields = _fields_schema_payload(tf, detail=detail)
+            return {
+                "ok": True,
+                "topic_id": row.get("id"),
+                "title": row.get("title"),
+                "summary": row.get("summary"),
+                "topic_kind": row.get("topic_kind"),
+                "archived": row.get("archived"),
+                "detail": detail,
+                "fields": fields,
+            }
 
         if name == "memory_get_topic":
             tid = str(args.get("topic_id") or "")

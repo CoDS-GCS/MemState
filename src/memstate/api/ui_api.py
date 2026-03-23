@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from memstate.api.deps import get_graph_store
+from memstate.api.ui_graph_payload import build_ui_graph_snapshot
 from memstate.datamodel.fields import TopicFields, new_history_entry
 from memstate.store.graph_store import REF_UNCHANGED, GraphStore
 
@@ -40,69 +41,8 @@ def datamodel_diagram() -> dict[str, str]:
 
 @router.get("/graph")
 def graph_snapshot(store: GraphStore = Depends(get_graph_store)) -> dict[str, Any]:
-    """Return nodes and edges for visualization (topics, RELATED edges, field refs)."""
-    topic_ids = store.list_topic_ids(include_archived=True)
-    nodes: list[dict[str, Any]] = []
-    edges: list[dict[str, Any]] = []
-    seen_rel: set[tuple[str, str, str]] = set()
-
-    for tid in topic_ids:
-        row = store.get_topic(tid)
-        if not row:
-            continue
-        tf = TopicFields.from_json(row.get("fields_json") if isinstance(row.get("fields_json"), str) else "")
-        fields_summary: list[dict[str, Any]] = []
-        for name, rec in tf.fields.items():
-            cur = rec.current_entry()
-            fields_summary.append(
-                {
-                    "name": name,
-                    "field_type": rec.field_type,
-                    "ref_topic_id": rec.ref_topic_id,
-                    "current_value": cur.value if cur else None,
-                    "history_len": len(rec.history),
-                }
-            )
-            if rec.ref_topic_id:
-                edges.append(
-                    {
-                        "from": tid,
-                        "to": rec.ref_topic_id,
-                        "kind": f"field:{name}",
-                        "edge_type": "field_ref",
-                    }
-                )
-
-        tk = row.get("topic_kind")
-        nodes.append(
-            {
-                "id": tid,
-                "label": str(row.get("title") or tid)[:80],
-                "title": row.get("title") or "",
-                "topic_kind": str(tk) if tk else "",
-                "archived": bool(row.get("archived")),
-                "salience": float(row.get("salience") or 0),
-                "fields": fields_summary,
-            }
-        )
-
-        for r in store.list_relationships(tid, direction="out"):
-            to_id = str(r.get("id") or "")
-            kind = str(r.get("kind") or "")
-            key = (tid, to_id, kind)
-            if key in seen_rel:
-                continue
-            seen_rel.add(key)
-            edges.append(
-                {
-                    "from": tid,
-                    "to": to_id,
-                    "kind": kind,
-                    "edge_type": "related",
-                }
-            )
-
-    return {"nodes": nodes, "edges": edges}
+    """Return nodes and edges for visualization (topics, RELATED, field refs, ``community`` ids)."""
+    return build_ui_graph_snapshot(store)
 
 
 class CreateTopicBody(BaseModel):

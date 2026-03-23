@@ -117,19 +117,10 @@ function wireCollapsible() {
   });
 }
 
-/* ── Graph (D3 force + zoom) ── */
+/* ── Graph (vis-network: layout once, then drag freely — physics off after stabilize) ── */
 
 const LABEL_MAX = 28;
 
-/** Circle radius for topic nodes (labels + salience fit inside). */
-const NODE_RADIUS = 44;
-/** Stroke width on node circles (must match renderGraph). */
-const NODE_STROKE_WIDTH = 2.5;
-/**
- * Distance from node center to outer visible edge (fill + half stroke).
- * Edges are drawn between these boundaries so lines do not cross the disk.
- */
-const EDGE_TRIM_RADIUS = NODE_RADIUS + NODE_STROKE_WIDTH / 2;
 const TITLE_FONT_SIZE = 11;
 const TITLE_LINE_HEIGHT = 12;
 const TITLE_MAX_LINES = 3;
@@ -195,24 +186,36 @@ function salienceToFillOpacity(salience, minS, maxS) {
   return lo + (hi - lo) * Math.max(0, Math.min(1, t));
 }
 
-/** Line segment from source disk edge to target disk edge (not center-to-center). */
-function linkEdgeEndpoints(sx, sy, tx, ty, trim) {
-  const dx = tx - sx;
-  const dy = ty - sy;
-  const len = Math.hypot(dx, dy);
-  if (len < 1e-6) {
-    return { x1: sx, y1: sy, x2: tx, y2: ty };
+/** Undirected connected components — fallback tint when API omits ``community``. */
+function computeClusters(nodes, links) {
+  const adj = new Map();
+  for (const n of nodes) adj.set(n.id, []);
+  for (const l of links) {
+    const a = typeof l.source === "string" ? l.source : l.source.id;
+    const b = typeof l.target === "string" ? l.target : l.target.id;
+    if (!adj.has(a)) adj.set(a, []);
+    if (!adj.has(b)) adj.set(b, []);
+    adj.get(a).push(b);
+    adj.get(b).push(a);
   }
-  const ux = dx / len;
-  const uy = dy / len;
-  const half = len / 2 - 0.5;
-  const t = half > 0 ? Math.min(trim, half) : 0;
-  return {
-    x1: sx + ux * t,
-    y1: sy + uy * t,
-    x2: tx - ux * t,
-    y2: ty - uy * t,
-  };
+  const clusterOf = new Map();
+  let cid = 0;
+  const visited = new Set();
+  for (const n of nodes) {
+    if (visited.has(n.id)) continue;
+    const stack = [n.id];
+    while (stack.length) {
+      const id = stack.pop();
+      if (visited.has(id)) continue;
+      visited.add(id);
+      clusterOf.set(id, cid);
+      for (const nb of adj.get(id) || []) {
+        if (!visited.has(nb)) stack.push(nb);
+      }
+    }
+    cid++;
+  }
+  return { clusterOf, clusterCount: cid };
 }
 
 function tooltip(n) {
@@ -222,6 +225,9 @@ function tooltip(n) {
     `salience: ${n.salience}`,
     `fields: ${(n.fields || []).length}`,
   ];
+  if (n.community != null && Number.isFinite(Number(n.community))) {
+    lines.push(`community: ${n.community} (embedding + refs)`);
+  }
   for (const f of n.fields || []) {
     lines.push(
       `  ${f.name} (${f.field_type})${f.ref_topic_id ? " → " + f.ref_topic_id.slice(0, 8) : ""}`
@@ -240,14 +246,17 @@ function buildGraphData(data) {
     const raw =
       (n.title && String(n.title).trim()) || n.label || n.id.slice(0, 8);
     const salience = saliences[i];
+    const comm =
+      n.community != null && Number.isFinite(Number(n.community)) ? Number(n.community) : null;
     return {
-      id: n.id,
+      id: String(n.id ?? "").trim(),
       labelLines: wrapTitleLines(raw, TITLE_CHARS_PER_LINE, TITLE_MAX_LINES),
       salience,
       salienceLabel: formatSalience(salience),
       fillOpacity: salienceToFillOpacity(salience, minS, maxS),
-      title: tooltip(n),
+      title: tooltip({ ...n, community: comm }),
       archived: !!n.archived,
+      community: comm,
     };
   });
   const links = [];
@@ -258,8 +267,8 @@ function buildGraphData(data) {
     seen.add(key);
     const kind = (e.kind || "").trim();
     links.push({
-      source: e.from,
-      target: e.to,
+      source: String(e.from ?? "").trim(),
+      target: String(e.to ?? "").trim(),
       label: kind ? shortLabel(kind) : "",
       isRef: e.edge_type === "field_ref",
     });
@@ -269,310 +278,160 @@ function buildGraphData(data) {
 
 const graphView = {
   container: null,
-  svg: null,
-  gZoom: null,
-  gPlot: null,
-  zoom: null,
-  simulation: null,
-  width: 400,
-  height: 300,
+  network: null,
   resizeObserver: null,
+  layoutFallbackTimer: null,
 };
 
-function measureGraph() {
-  if (!graphView.container) return;
-  const w = graphView.container.clientWidth;
-  const h = graphView.container.clientHeight;
-  graphView.width = Math.max(w, 80);
-  graphView.height = Math.max(h, 80);
-  if (graphView.svg) {
-    graphView.svg.attr("viewBox", `0 0 ${graphView.width} ${graphView.height}`);
-  }
+function buildVisDatasets(nodes, links) {
+  const { clusterOf } = computeClusters(nodes, links);
+  const visNodes = nodes.map((n) => {
+    const lines = n.labelLines || ["—"];
+    const label = `${lines.join("\n")}\n${n.salienceLabel}`;
+    const cid =
+      n.community != null && Number.isFinite(Number(n.community))
+        ? Number(n.community)
+        : clusterOf.get(n.id) ?? 0;
+    const hue = (cid * 47) % 360;
+    const bg = n.archived
+      ? `rgba(51, 65, 85, ${0.55 + n.fillOpacity * 0.45})`
+      : `rgba(30, 64, 175, ${n.fillOpacity})`;
+    return {
+      id: n.id,
+      label,
+      title: n.title,
+      color: {
+        background: bg,
+        border: n.archived ? "#64748b" : `hsl(${hue}, 62%, 72%)`,
+        highlight: {
+          background: n.archived ? "#475569" : "#2563eb",
+          border: "#93c5fd",
+        },
+      },
+      font: { color: "#f1f5f9", size: 11, multi: true, face: "Inter, Segoe UI, system-ui, sans-serif" },
+      shape: "ellipse",
+      borderWidth: 2,
+      margin: 12,
+    };
+  });
+  const visEdges = links.map((e, i) => ({
+    id: `e${i}`,
+    from: e.source,
+    to: e.target,
+    label: e.label || undefined,
+    color: { color: e.isRef ? "#22c55e" : "#60a5fa", highlight: "#38bdf8" },
+    dashes: e.isRef,
+    arrows: { to: { enabled: true, scaleFactor: 0.65 } },
+    font: { size: 10, color: "#cbd5e1", strokeWidth: 0, align: "middle" },
+    smooth: { type: "dynamic" },
+  }));
+  return { visNodes, visEdges };
 }
 
-function graphDrag(simulation) {
-  function dragstarted(event) {
-    if (!event.active) simulation.alphaTarget(0.35).restart();
-    event.subject.fx = event.subject.x;
-    event.subject.fy = event.subject.y;
-  }
-  function dragged(event) {
-    event.subject.fx = event.x;
-    event.subject.fy = event.y;
-  }
-  function dragended(event) {
-    if (!event.active) simulation.alphaTarget(0);
-    event.subject.fx = null;
-    event.subject.fy = null;
-  }
-  return d3.drag().on("start", dragstarted).on("drag", dragged).on("end", dragended);
-}
-
-function fitGraphView(nodes) {
-  if (!graphView.svg || !graphView.zoom || !nodes.length) return;
-  let minX = Infinity;
-  let maxX = -Infinity;
-  let minY = Infinity;
-  let maxY = -Infinity;
-  for (const n of nodes) {
-    if (n.x == null || n.y == null) continue;
-    minX = Math.min(minX, n.x);
-    maxX = Math.max(maxX, n.x);
-    minY = Math.min(minY, n.y);
-    maxY = Math.max(maxY, n.y);
-  }
-  if (!isFinite(minX)) return;
-  const pad = 100;
-  const bw = Math.max(maxX - minX, 100);
-  const bh = Math.max(maxY - minY, 100);
-  const cx = (minX + maxX) / 2;
-  const cy = (minY + maxY) / 2;
-  const k = Math.min(
-    (graphView.width - 2 * pad) / bw,
-    (graphView.height - 2 * pad) / bh,
-    2.5
-  );
-  const tx = graphView.width / 2 - k * cx;
-  const ty = graphView.height / 2 - k * cy;
-  graphView.svg
-    .transition()
-    .duration(450)
-    .call(graphView.zoom.transform, d3.zoomIdentity.translate(tx, ty).scale(k));
-}
-
-function resetGraphZoom() {
-  if (!graphView.svg || !graphView.zoom) return;
-  graphView.svg.transition().duration(280).call(graphView.zoom.transform, d3.zoomIdentity);
-}
+const VIS_NETWORK_OPTIONS = {
+  physics: {
+    enabled: true,
+    stabilization: {
+      enabled: true,
+      iterations: 220,
+      updateInterval: 25,
+      fit: true,
+    },
+    barnesHut: {
+      gravitationalConstant: -2200,
+      centralGravity: 0.14,
+      springLength: 130,
+      springConstant: 0.055,
+      damping: 0.52,
+      avoidOverlap: 0.45,
+    },
+  },
+  layout: { improvedLayout: true },
+  interaction: {
+    dragNodes: true,
+    dragView: true,
+    zoomView: true,
+    hover: true,
+    hoverConnectedEdges: true,
+    tooltipDelay: 120,
+  },
+  nodes: {
+    shape: "ellipse",
+    widthConstraint: { maximum: 200 },
+  },
+  edges: { selectionWidth: 2 },
+};
 
 function initGraph(container) {
-  container.innerHTML = "";
   graphView.container = container;
-  measureGraph();
-
-  const svg = d3
-    .select(container)
-    .append("svg")
-    .attr("class", "graph-svg")
-    .attr("role", "img")
-    .attr("aria-label", "Topic graph: wheel to zoom, drag background to pan, drag nodes to rearrange, double-click to reset zoom");
-
-  const defs = svg.append("defs");
-  defs
-    .append("marker")
-    .attr("id", "memstate-arrow-related")
-    .attr("viewBox", "0 0 10 10")
-    .attr("refX", 10)
-    .attr("refY", 5)
-    .attr("markerWidth", 6)
-    .attr("markerHeight", 6)
-    .attr("orient", "auto")
-    .append("path")
-    .attr("d", "M 0 0 L 10 5 L 0 10 z")
-    .attr("fill", "#60a5fa");
-  defs
-    .append("marker")
-    .attr("id", "memstate-arrow-ref")
-    .attr("viewBox", "0 0 10 10")
-    .attr("refX", 10)
-    .attr("refY", 5)
-    .attr("markerWidth", 6)
-    .attr("markerHeight", 6)
-    .attr("orient", "auto")
-    .append("path")
-    .attr("d", "M 0 0 L 10 5 L 0 10 z")
-    .attr("fill", "#22c55e");
-
-  const gZoom = svg.append("g").attr("class", "graph-zoom-layer");
-  const gPlot = gZoom.append("g").attr("class", "graph-plot");
-
-  const zoom = d3
-    .zoom()
-    .scaleExtent([0.08, 12])
-    .on("zoom", (event) => {
-      gZoom.attr("transform", event.transform);
-    });
-
-  svg.call(zoom);
-  svg.on("dblclick.zoom", null);
-  svg.on("dblclick", (event) => {
-    if (event.target === svg.node()) resetGraphZoom();
-  });
-
-  graphView.svg = svg;
-  graphView.gZoom = gZoom;
-  graphView.gPlot = gPlot;
-  graphView.zoom = zoom;
-
+  if (graphView.resizeObserver) graphView.resizeObserver.disconnect();
   graphView.resizeObserver = new ResizeObserver(() => {
-    measureGraph();
-    if (graphView.simulation) {
-      graphView.simulation.force(
-        "center",
-        d3.forceCenter(graphView.width / 2, graphView.height / 2)
-      );
-      graphView.simulation.alpha(0.2).restart();
-    }
+    if (!graphView.network || !graphView.container) return;
+    const w = graphView.container.clientWidth;
+    const h = graphView.container.clientHeight;
+    graphView.network.setSize(w, h);
   });
   graphView.resizeObserver.observe(container);
 }
 
 function renderGraph(apiData) {
   const { nodes: nodeIn, links: linkIn } = buildGraphData(apiData);
-  measureGraph();
   updateEmptyState(nodeIn.length);
 
-  if (graphView.simulation) {
-    graphView.simulation.stop();
-    graphView.simulation = null;
+  if (graphView.layoutFallbackTimer) {
+    clearTimeout(graphView.layoutFallbackTimer);
+    graphView.layoutFallbackTimer = null;
   }
-  graphView.gPlot.selectAll("*").remove();
+  if (graphView.network) {
+    graphView.network.destroy();
+    graphView.network = null;
+  }
+  if (graphView.container) graphView.container.innerHTML = "";
 
   if (!nodeIn.length) return;
 
   const nodes = nodeIn.map((d) => ({ ...d }));
   const links = linkIn.map((d) => ({ ...d }));
+  const { visNodes, visEdges } = buildVisDatasets(nodes, links);
 
-  const simulation = d3
-    .forceSimulation(nodes)
-    .force(
-      "link",
-      d3
-        .forceLink(links)
-        .id((d) => d.id)
-        .distance(180)
-        .strength(0.55)
-    )
-    .force("charge", d3.forceManyBody().strength(-520))
-    .force("center", d3.forceCenter(graphView.width / 2, graphView.height / 2))
-    .force("collide", d3.forceCollide(NODE_RADIUS + 6))
-    .alphaDecay(0.022)
-    .velocityDecay(0.35);
+  const data = {
+    nodes: new vis.DataSet(visNodes),
+    edges: new vis.DataSet(visEdges),
+  };
 
-  graphView.simulation = simulation;
+  const net = new vis.Network(graphView.container, data, VIS_NETWORK_OPTIONS);
+  graphView.network = net;
 
-  const g = graphView.gPlot;
-  const linkG = g.append("g").attr("class", "links");
+  let layoutFinalized = false;
+  function finalizeLayout() {
+    if (layoutFinalized) return;
+    layoutFinalized = true;
+    net.setOptions({ physics: false });
+    net.fit({ animation: { duration: 380 } });
+  }
 
-  const linkLine = linkG
-    .selectAll("line")
-    .data(links)
-    .join("line")
-    .attr("stroke", (d) => (d.isRef ? "#22c55e" : "#60a5fa"))
-    .attr("stroke-width", (d) => (d.isRef ? 1.75 : 2.25))
-    .attr("stroke-dasharray", (d) => (d.isRef ? "7 5" : null))
-    .attr("stroke-opacity", 0.95)
-    .attr("marker-end", (d) =>
-      d.isRef ? "url(#memstate-arrow-ref)" : "url(#memstate-arrow-related)"
-    );
-
-  const linkLbl = linkG
-    .selectAll("text.link-label")
-    .data(links.filter((l) => l.label))
-    .join("text")
-    .attr("class", "link-label")
-    .attr("fill", "#cbd5e1")
-    .attr("font-size", 10)
-    .attr("font-family", "Inter, Segoe UI, system-ui, sans-serif")
-    .attr("text-anchor", "middle")
-    .attr("pointer-events", "none")
-    .text((d) => d.label);
-
-  const nodeG = g
-    .append("g")
-    .attr("class", "nodes")
-    .selectAll("g.node")
-    .data(nodes)
-    .join("g")
-    .attr("class", "node")
-    .style("cursor", "grab")
-    .call(graphDrag(simulation))
-    .on("click", (event, d) => {
-      event.stopPropagation();
-      loadDetail(d.id);
-    })
-    .on("dblclick", (event) => event.stopPropagation());
-
-  nodeG
-    .append("circle")
-    .attr("r", NODE_RADIUS)
-    .attr("fill", (d) => (d.archived ? "#334155" : "#1e40af"))
-    .attr("fill-opacity", (d) => d.fillOpacity)
-    .attr("stroke", (d) => (d.archived ? "#64748b" : "#93c5fd"))
-    .attr("stroke-width", NODE_STROKE_WIDTH);
-
-  const labelG = nodeG
-    .append("g")
-    .attr("class", "node-inner-label")
-    .attr("pointer-events", "none");
-
-  labelG.each(function (d) {
-    const g = d3.select(this);
-    const lines = d.labelLines || ["—"];
-    const n = lines.length;
-    const gap = 4;
-    const titleBlockH = (n - 1) * TITLE_LINE_HEIGHT;
-    const firstY = -(titleBlockH / 2) - (SALIENCE_FONT_SIZE + gap) / 2;
-
-    lines.forEach((line, i) => {
-      g.append("text")
-        .attr("text-anchor", "middle")
-        .attr("y", firstY + i * TITLE_LINE_HEIGHT)
-        .attr("dominant-baseline", "middle")
-        .attr("fill", "#f1f5f9")
-        .attr("font-size", TITLE_FONT_SIZE)
-        .attr("font-family", "Inter, Segoe UI, system-ui, sans-serif")
-        .text(line);
-    });
-
-    const salY = firstY + n * TITLE_LINE_HEIGHT + gap + SALIENCE_FONT_SIZE / 2;
-    g.append("text")
-      .attr("class", "node-salience")
-      .attr("text-anchor", "middle")
-      .attr("y", salY)
-      .attr("dominant-baseline", "middle")
-      .attr("fill", "#38bdf8")
-      .attr("font-size", SALIENCE_FONT_SIZE)
-      .attr("font-family", "Inter, Segoe UI, system-ui, sans-serif")
-      .attr("opacity", 0.92)
-      .text(d.salienceLabel);
+  graphView.layoutFallbackTimer = setTimeout(finalizeLayout, 12000);
+  net.on("stabilizationIterationsDone", () => {
+    if (graphView.layoutFallbackTimer) {
+      clearTimeout(graphView.layoutFallbackTimer);
+      graphView.layoutFallbackTimer = null;
+    }
+    finalizeLayout();
   });
 
-  nodeG.append("title").text((d) => d.title);
-
-  let fitted = false;
-  simulation.on("tick", () => {
-    linkLine.each(function (d) {
-      const p = linkEdgeEndpoints(
-        d.source.x,
-        d.source.y,
-        d.target.x,
-        d.target.y,
-        EDGE_TRIM_RADIUS
-      );
-      d3.select(this).attr("x1", p.x1).attr("y1", p.y1).attr("x2", p.x2).attr("y2", p.y2);
-    });
-
-    linkLbl.each(function (d) {
-      const p = linkEdgeEndpoints(
-        d.source.x,
-        d.source.y,
-        d.target.x,
-        d.target.y,
-        EDGE_TRIM_RADIUS
-      );
-      d3.select(this).attr("x", (p.x1 + p.x2) / 2).attr("y", (p.y1 + p.y2) / 2);
-    });
-
-    nodeG.attr("transform", (d) => `translate(${d.x},${d.y})`);
+  net.on("click", (params) => {
+    if (params.nodes.length) loadDetail(params.nodes[0]);
   });
 
-  simulation.on("end", () => {
-    if (!fitted) {
-      fitted = true;
-      fitGraphView(nodes);
+  net.on("doubleClick", (params) => {
+    if (params.nodes.length === 0 && params.edges.length === 0) {
+      net.fit({ animation: { duration: 320 } });
     }
   });
+
+  const w = graphView.container.clientWidth;
+  const h = graphView.container.clientHeight;
+  net.setSize(`${w}px`, `${h}px`);
 }
 
 function updateEmptyState(nodeCount) {
@@ -658,9 +517,106 @@ function appendChatMessage(role, text) {
   roleEl.className = "role";
   roleEl.textContent = role === "user" ? "You" : "Assistant";
   const body = document.createElement("div");
+  body.className = "chat-body";
   body.textContent = text;
   div.appendChild(roleEl);
   div.appendChild(body);
+  log.appendChild(div);
+  log.scrollTop = log.scrollHeight;
+}
+
+/**
+ * Assistant reply with expandable "Thinking" trace (provider, model, tool calls + results).
+ * @param {string} text
+ * @param {{ provider?: string, model?: string, tool_log?: { tool: string, result: unknown }[] }} [meta]
+ */
+function appendAssistantMessage(text, meta) {
+  const log = document.getElementById("chat-log");
+  if (!log) return;
+
+  const div = document.createElement("div");
+  div.className = "chat-msg assistant";
+
+  const roleEl = document.createElement("div");
+  roleEl.className = "role";
+  roleEl.textContent = "Assistant";
+
+  const body = document.createElement("div");
+  body.className = "chat-body";
+  body.textContent = text || "(no reply)";
+
+  const toolLog = Array.isArray(meta?.tool_log) ? meta.tool_log : [];
+  const hasTools = toolLog.length > 0;
+
+  const thinking = document.createElement("div");
+  thinking.className = "chat-thinking";
+
+  const toggle = document.createElement("button");
+  toggle.type = "button";
+  toggle.className = "chat-thinking-toggle";
+  toggle.setAttribute("aria-expanded", "false");
+  const chev = document.createElement("span");
+  chev.className = "chat-thinking-chev";
+  chev.setAttribute("aria-hidden", "true");
+  chev.textContent = "▸";
+  const toggleLabel = document.createElement("span");
+  toggleLabel.textContent = hasTools ? "Thinking & tool trace" : "How this answer was built";
+  toggle.appendChild(chev);
+  toggle.appendChild(toggleLabel);
+
+  const panel = document.createElement("div");
+  panel.className = "chat-thinking-body";
+  panel.hidden = true;
+
+  const metaLine = document.createElement("div");
+  metaLine.className = "chat-thinking-meta";
+  metaLine.textContent = `${meta?.provider || "—"} · ${meta?.model || "—"}`;
+  panel.appendChild(metaLine);
+
+  if (hasTools) {
+    toolLog.forEach((entry, i) => {
+      const step = document.createElement("div");
+      step.className = "chat-thinking-step";
+      const nameEl = document.createElement("div");
+      nameEl.className = "chat-thinking-tool-name";
+      nameEl.textContent = `${i + 1}. ${entry.tool || "(unknown)"}`;
+      const pre = document.createElement("pre");
+      pre.className = "chat-thinking-json";
+      let s;
+      try {
+        s = JSON.stringify(entry.result, null, 2);
+      } catch {
+        s = String(entry.result);
+      }
+      if (s.length > 8000) {
+        s = `${s.slice(0, 8000)}\n… (${s.length} chars total, truncated)`;
+      }
+      pre.textContent = s;
+      step.appendChild(nameEl);
+      step.appendChild(pre);
+      panel.appendChild(step);
+    });
+  } else {
+    const p = document.createElement("p");
+    p.className = "chat-thinking-none";
+    p.textContent =
+      "No tools were called. The model produced this reply without invoking memory tools (or tools are not shown for this response).";
+    panel.appendChild(p);
+  }
+
+  toggle.addEventListener("click", () => {
+    const open = toggle.getAttribute("aria-expanded") === "true";
+    toggle.setAttribute("aria-expanded", String(!open));
+    panel.hidden = open;
+    chev.textContent = open ? "▸" : "▾";
+  });
+
+  thinking.appendChild(toggle);
+  thinking.appendChild(panel);
+
+  div.appendChild(roleEl);
+  div.appendChild(body);
+  div.appendChild(thinking);
   log.appendChild(div);
   log.scrollTop = log.scrollHeight;
 }
@@ -710,8 +666,11 @@ function wireChat() {
     btn.disabled = true;
     try {
       const provider = prov?.value || "ollama";
+      const messagesForApi = chatHistory
+        .filter((m) => m.role === "user" && String(m.content ?? "").trim())
+        .map((m) => ({ role: "user", content: String(m.content).trim() }));
       const payload = {
-        messages: chatHistory,
+        messages: messagesForApi,
         provider,
         model: modelSel?.value || undefined,
       };
@@ -730,15 +689,12 @@ function wireChat() {
         body: JSON.stringify(payload),
       });
       chatHistory.push({ role: "assistant", content: data.reply || "" });
-      appendChatMessage("assistant", data.reply || "(no reply)");
+      appendAssistantMessage(data.reply || "(no reply)", {
+        provider: data.provider,
+        model: data.model,
+        tool_log: data.tool_log || [],
+      });
       if (data.tool_log && data.tool_log.length) {
-        const line = data.tool_log.map((x) => x.tool).join(" · ");
-        const log = document.getElementById("chat-log");
-        const div = document.createElement("div");
-        div.className = "chat-msg tools";
-        div.innerHTML = `<div class="role">Tools</div><div>${escapeHtml(line)}</div>`;
-        log.appendChild(div);
-        log.scrollTop = log.scrollHeight;
         await refreshGraph();
       }
     } catch (err) {
@@ -870,8 +826,8 @@ function wireForms() {
 
 document.addEventListener("DOMContentLoaded", async () => {
   const container = document.getElementById("network");
-  if (typeof d3 === "undefined") {
-    container.textContent = "D3 failed to load.";
+  if (typeof vis === "undefined" || !vis.Network || !vis.DataSet) {
+    container.textContent = "vis-network failed to load.";
     return;
   }
   initGraph(container);

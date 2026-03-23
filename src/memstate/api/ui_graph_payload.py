@@ -1,0 +1,105 @@
+"""Shared graph snapshot for the dev UI and LLM tools (same JSON shape)."""
+
+from __future__ import annotations
+
+from typing import Any
+
+from memstate.api.graph_viz_communities import compute_topic_communities
+from memstate.datamodel.fields import TopicFields
+from memstate.datamodel.mappers import topic_from_graph_row
+from memstate.store.graph_store import GraphStore
+
+
+def build_ui_graph_snapshot(store: GraphStore) -> dict[str, Any]:
+    """
+    Return ``{ "nodes": [...], "edges": [...] }`` for visualization and tools.
+
+    Each node includes ``community``: clusters merge (1) undirected structural
+    edges — field refs and RELATED — with (2) cosine-similarity neighborhoods
+    between topic embeddings (see :func:`compute_topic_communities`).
+    """
+    topic_ids = store.list_topic_ids(include_archived=True)
+    nodes: list[dict[str, Any]] = []
+    edges: list[dict[str, Any]] = []
+    seen_rel: set[tuple[str, str, str]] = set()
+    structural: set[tuple[str, str]] = set()
+    embeddings: dict[str, list[float]] = {}
+
+    def add_structural(a: str, b: str) -> None:
+        if not a or not b or a == b:
+            return
+        structural.add((a, b) if a < b else (b, a))
+
+    for tid in topic_ids:
+        row = store.get_topic(tid)
+        if not row:
+            continue
+        sid = str(tid)
+        topic_node = topic_from_graph_row(row)
+        if topic_node and topic_node.embedding:
+            embeddings[sid] = list(topic_node.embedding)
+
+        tf = TopicFields.from_json(row.get("fields_json") if isinstance(row.get("fields_json"), str) else "")
+        fields_summary: list[dict[str, Any]] = []
+        for name, rec in tf.fields.items():
+            cur = rec.current_entry()
+            fields_summary.append(
+                {
+                    "name": name,
+                    "field_type": rec.field_type,
+                    "ref_topic_id": rec.ref_topic_id,
+                    "current_value": cur.value if cur else None,
+                    "history_len": len(rec.history),
+                }
+            )
+            if rec.ref_topic_id:
+                rid = str(rec.ref_topic_id)
+                edges.append(
+                    {
+                        "from": sid,
+                        "to": rid,
+                        "kind": f"field:{name}",
+                        "edge_type": "field_ref",
+                    }
+                )
+                add_structural(sid, rid)
+
+        tk = row.get("topic_kind")
+        nodes.append(
+            {
+                "id": sid,
+                "label": str(row.get("title") or sid)[:80],
+                "title": row.get("title") or "",
+                "topic_kind": str(tk) if tk else "",
+                "archived": bool(row.get("archived")),
+                "salience": float(row.get("salience") or 0),
+                "fields": fields_summary,
+            }
+        )
+
+        for r in store.list_relationships(tid, direction="out"):
+            to_id = str(r.get("id") or "")
+            kind = str(r.get("kind") or "")
+            key = (sid, to_id, kind)
+            if key in seen_rel:
+                continue
+            seen_rel.add(key)
+            edges.append(
+                {
+                    "from": sid,
+                    "to": to_id,
+                    "kind": kind,
+                    "edge_type": "related",
+                }
+            )
+            add_structural(sid, to_id)
+
+    comm = compute_topic_communities(
+        [n["id"] for n in nodes],
+        list(structural),
+        embeddings,
+    )
+    for n in nodes:
+        n["community"] = int(comm.get(n["id"], 0))
+
+    return {"nodes": nodes, "edges": edges}

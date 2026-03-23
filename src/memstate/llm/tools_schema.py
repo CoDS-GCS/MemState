@@ -15,7 +15,7 @@ OLLAMA_TOOLS: list[dict] = [
         "type": "function",
         "function": {
             "name": "memory_list_topics",
-            "description": "List topic UUIDs. Optionally include archived topics.",
+            "description": "List topic id, title, short summary, topic_kind, and archived flag for each topic so you can choose which topic to open. topic_ids is also included for convenience. Optionally include archived topics.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -26,6 +26,26 @@ OLLAMA_TOOLS: list[dict] = [
                     }
                 },
                 "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "memory_get_topic_schema",
+            "description": "Return the field schema for one topic without loading full topic metadata unless needed. Use detail level based on the question: minimal = field names and types only; current = same plus latest value per field; history = full revision history per field (same shape as memory_get_topic fields). Prefer minimal or current when exploring; use history only when the user asks about past values or provenance.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "topic_id": {"type": "string", "description": "Topic UUID"},
+                    "detail": {
+                        "type": "string",
+                        "enum": ["minimal", "current", "history"],
+                        "description": "minimal: field_type and ref_topic_id only. current: adds latest value per field. history: full history arrays per field.",
+                        "default": "minimal",
+                    },
+                },
+                "required": ["topic_id"],
             },
         },
     },
@@ -209,6 +229,19 @@ OLLAMA_TOOLS: list[dict] = [
 ]
 
 SYSTEM_PROMPT = """You control MemState, a topic graph memory store (Kuzu).
-Use the provided tools to read or change topics, fields, and relationships.
-Prefer memory_graph_snapshot or memory_list_topics to discover ids before other calls.
-After mutating data, briefly confirm what changed. If a tool returns ok:false, explain the error."""
+
+Grounding (mandatory):
+- You MUST use the memory_* tools to read or write data. Do not invent topic ids, titles, edges, or field values.
+- Before answering anything about what is stored, call at least one read tool (e.g. memory_graph_snapshot, memory_list_topics, memory_get_topic_schema, or memory_get_topic).
+- Use memory_list_topics to see ids with titles and summaries; use memory_get_topic_schema to inspect field names/types (and optionally current values or full history) without pulling the entire topic unless needed.
+- Your final reply must be based only on what those tools returned (plus obvious paraphrase). If tools do not contain the answer, say you cannot find it in memory.
+- For edits (create/update/delete/link/fields), call the appropriate tools, then confirm briefly using tool outcomes.
+- If a tool returns ok:false or an error field, explain that to the user.
+
+Final answer to the user (tone and form):
+- Write as a helpful human would: natural sentences, warm and direct, not stiff or like a system log.
+- Treat what the tools returned as *your* memory—the facts you are recalling—not as raw data to paste back. Do not echo JSON, tool names, or UUIDs unless the user explicitly asked for an id.
+- Answer the question first; weave in names and facts conversationally. It is fine to say things like "from what I have stored" or "as I remember it" when it helps, without sounding like a disclaimer every sentence.
+- If something is missing from memory, say so plainly in normal language.
+
+The user may send several prior questions in order (no assistant text is shown for them); treat them as context for the latest question."""

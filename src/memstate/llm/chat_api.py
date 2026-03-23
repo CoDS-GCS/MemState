@@ -22,7 +22,7 @@ router = APIRouter(prefix="/api/llm", tags=["llm"])
 class ChatBody(BaseModel):
     messages: list[dict[str, Any]] = Field(
         ...,
-        description="OpenAI-style messages (typically user/assistant turns; system is added server-side).",
+        description="User turns only (prior questions + current); assistant content is ignored server-side.",
     )
     provider: Literal["ollama", "groq"] = "ollama"
     model: str | None = Field(None, description="Model id (provider-specific)")
@@ -30,6 +30,19 @@ class ChatBody(BaseModel):
         None,
         description="Override Ollama API base (Ollama provider only).",
     )
+
+
+def _user_messages_only(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep only user messages with non-empty content (short context; no assistant text)."""
+    out: list[dict[str, Any]] = []
+    for m in messages:
+        if m.get("role") != "user":
+            continue
+        c = m.get("content")
+        if c is None or not str(c).strip():
+            continue
+        out.append({"role": "user", "content": str(c).strip()})
+    return out
 
 
 def _resolve_base_url(body: ChatBody, settings: Settings) -> str:
@@ -45,6 +58,9 @@ def _resolve_base_url(body: ChatBody, settings: Settings) -> str:
 async def llm_chat(body: ChatBody, store: GraphStore = Depends(get_graph_store)) -> dict[str, Any]:
     settings = get_settings()
     runner = MemoryToolRunner(store)
+    user_msgs = _user_messages_only(body.messages)
+    if not user_msgs:
+        raise HTTPException(status_code=400, detail="At least one non-empty user message is required.")
 
     if body.provider == "groq":
         key = (settings.groq_api_key or "").strip()
@@ -58,7 +74,7 @@ async def llm_chat(body: ChatBody, store: GraphStore = Depends(get_graph_store))
             reply, tool_log, used = await run_groq_chat(
                 api_key=key,
                 model=model,
-                messages=body.messages,
+                messages=user_msgs,
                 runner=runner,
             )
         except httpx.HTTPStatusError as e:
@@ -83,7 +99,7 @@ async def llm_chat(body: ChatBody, store: GraphStore = Depends(get_graph_store))
         reply, tool_log, used = await run_ollama_chat(
             base_url=base,
             model=model,
-            messages=body.messages,
+            messages=user_msgs,
             runner=runner,
         )
     except httpx.HTTPStatusError as e:

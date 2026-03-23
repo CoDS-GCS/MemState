@@ -30,8 +30,20 @@ def memory_graph_snapshot() -> dict[str, Any]:
 
 @mcp.tool()
 def memory_list_topics(include_archived: bool = False) -> dict[str, Any]:
-    """List topic UUIDs."""
+    """List topics with id, title, summary, topic_kind, and archived (not ids only)."""
     return _runner().execute("memory_list_topics", {"include_archived": include_archived})
+
+
+@mcp.tool()
+def memory_get_topic_schema(
+    topic_id: str,
+    detail: str = "minimal",
+) -> dict[str, Any]:
+    """Field schema for one topic: minimal (names/types), current (+ latest value), or history (full)."""
+    return _runner().execute(
+        "memory_get_topic_schema",
+        {"topic_id": topic_id, "detail": detail},
+    )
 
 
 @mcp.tool()

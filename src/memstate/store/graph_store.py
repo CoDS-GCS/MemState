@@ -480,6 +480,35 @@ class GraphStore:
             rows = [x for x in rows if not x.get("archived")]
         return [str(x["id"]) for x in rows if x.get("id")]
 
+    def list_topics_meta(self, *, include_archived: bool = False) -> list[dict[str, Any]]:
+        """Id, title, summary, and light metadata for each topic (for LLM discovery)."""
+        r = self._q(
+            """
+            MATCH (t:Topic)
+            RETURN t.id AS id, t.title AS title, t.summary AS summary,
+                   t.topic_kind AS topic_kind, t.archived AS archived
+            """,
+            read_only=True,
+        )
+        rows = _rows(r)
+        if not include_archived:
+            rows = [x for x in rows if not x.get("archived")]
+        out: list[dict[str, Any]] = []
+        for x in rows:
+            tid = x.get("id")
+            if not tid:
+                continue
+            out.append(
+                {
+                    "id": str(tid),
+                    "title": x.get("title"),
+                    "summary": x.get("summary"),
+                    "topic_kind": x.get("topic_kind"),
+                    "archived": bool(x.get("archived")),
+                }
+            )
+        return out
+
     def migrate_legacy_field_chains_to_json(self, topic_id: str, *, max_history: int = 500) -> int:
         """Copy legacy FieldHead/FieldVersion chains into fields_json. Returns fields migrated."""
         names = [

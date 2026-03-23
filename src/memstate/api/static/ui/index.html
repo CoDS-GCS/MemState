@@ -8,7 +8,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
-    <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js" crossorigin></script>
+    <script src="https://cdn.jsdelivr.net/npm/vis-network@9.1.9/standalone/umd/vis-network.min.js" crossorigin></script>
     <script src="app.js" defer></script>
   </head>
   <body>
@@ -125,35 +125,6 @@
 
         <div id="status" class="status-bar"></div>
         </div>
-
-        <div class="panel-chat" aria-label="LLM assistant">
-          <div class="chat-header">
-            <span class="chat-title">Assistant</span>
-            <span class="chat-hint" id="chat-hint-text">Choose <strong>Ollama</strong> (local) or <strong>Groq</strong> (cloud; set <code>GROQ_API_KEY</code> in <code>.env</code>).</span>
-          </div>
-          <div class="chat-settings">
-            <label class="chat-setting">
-              <span>Provider</span>
-              <select id="llm-provider" aria-label="LLM provider">
-                <option value="ollama">Ollama (local)</option>
-                <option value="groq">Groq</option>
-              </select>
-            </label>
-            <label class="chat-setting">
-              <span>Model</span>
-              <select id="llm-model" aria-label="Model"></select>
-            </label>
-            <label class="chat-setting chat-setting-full" id="ollama-url-wrap">
-              <span>Ollama URL</span>
-              <input id="ollama-url" type="url" inputmode="url" placeholder="http://127.0.0.1:11434" autocomplete="off" />
-            </label>
-          </div>
-          <div id="chat-log" class="chat-log"></div>
-          <form id="form-chat" class="chat-input-row">
-            <textarea id="chat-input" rows="2" placeholder="Ask to list topics, add relationships, update fields…" autocomplete="off"></textarea>
-            <button type="submit" class="btn-primary chat-send" id="btn-chat-send">Send</button>
-          </form>
-        </div>
       </aside>
 
       <main>
@@ -170,7 +141,7 @@
           <div class="legend">
             <span><i class="rel"></i> RELATED</span>
             <span><i class="ref"></i> field ref</span>
-            <span class="legend-hint">Wheel zoom · drag empty space to pan · drag nodes</span>
+            <span class="legend-hint">Wheel zoom · pan · drag nodes · ring tint = community (embeddings + ref/RELATED edges)</span>
           </div>
         </div>
         <div class="detail-panel">
@@ -184,6 +155,35 @@
           <pre class="raw" id="detail">Click a node to inspect its topic + fields.</pre>
         </div>
       </main>
+
+      <aside class="panel panel-chat" aria-label="LLM assistant">
+        <div class="chat-header">
+          <span class="chat-title">Assistant</span>
+          <span class="chat-hint" id="chat-hint-text">Choose <strong>Ollama</strong> (local) or <strong>Groq</strong> (cloud; set <code>GROQ_API_KEY</code> in <code>.env</code>).</span>
+        </div>
+        <div class="chat-settings">
+          <label class="chat-setting">
+            <span>Provider</span>
+            <select id="llm-provider" aria-label="LLM provider">
+              <option value="ollama">Ollama (local)</option>
+              <option value="groq">Groq</option>
+            </select>
+          </label>
+          <label class="chat-setting">
+            <span>Model</span>
+            <select id="llm-model" aria-label="Model"></select>
+          </label>
+          <label class="chat-setting chat-setting-full" id="ollama-url-wrap">
+            <span>Ollama URL</span>
+            <input id="ollama-url" type="url" inputmode="url" placeholder="http://127.0.0.1:11434" autocomplete="off" />
+          </label>
+        </div>
+        <div id="chat-log" class="chat-log"></div>
+        <form id="form-chat" class="chat-input-row">
+          <textarea id="chat-input" rows="2" placeholder="Ask to list topics, add relationships, update fields…" autocomplete="off"></textarea>
+          <button type="submit" class="btn-primary chat-send" id="btn-chat-send">Send</button>
+        </form>
+      </aside>
     </div>
 
     <div id="toast-container" class="toast-container"></div>
