@@ -103,3 +103,61 @@ def build_ui_graph_snapshot(store: GraphStore) -> dict[str, Any]:
         n["community"] = int(comm.get(n["id"], 0))
 
     return {"nodes": nodes, "edges": edges}
+
+
+def build_topics_schema_snapshot(store: GraphStore) -> dict[str, Any]:
+    """
+    Structural view for reorganization: topic id, title, kind, salience, archived,
+    and per-field ``field_type``, ``ref_topic_id``, ``salience`` only.
+
+    Omits topic summaries, field values, and revision history. RELATED edges only
+    (no field_ref duplicate edges—refs appear on fields).
+    """
+    topic_ids = store.list_topic_ids(include_archived=True)
+    topics: list[dict[str, Any]] = []
+    for tid in topic_ids:
+        row = store.get_topic(tid)
+        if not row:
+            continue
+        sid = str(tid)
+        tf = TopicFields.from_json(row.get("fields_json") if isinstance(row.get("fields_json"), str) else "")
+        fields_out: dict[str, Any] = {}
+        for fname, rec in tf.fields.items():
+            fields_out[fname] = {
+                "field_type": rec.field_type,
+                "ref_topic_id": rec.ref_topic_id,
+                "salience": rec.salience,
+            }
+        tk = row.get("topic_kind")
+        topics.append(
+            {
+                "id": sid,
+                "title": str(row.get("title") or ""),
+                "topic_kind": str(tk) if tk else "",
+                "archived": bool(row.get("archived")),
+                "salience": float(row.get("salience") or 0),
+                "fields": fields_out,
+            }
+        )
+
+    edges: list[dict[str, Any]] = []
+    seen_rel: set[tuple[str, str, str]] = set()
+    for tid in topic_ids:
+        sid = str(tid)
+        for r in store.list_relationships(tid, direction="out"):
+            to_id = str(r.get("id") or "")
+            kind = str(r.get("kind") or "")
+            key = (sid, to_id, kind)
+            if key in seen_rel:
+                continue
+            seen_rel.add(key)
+            edges.append(
+                {
+                    "from": sid,
+                    "to": to_id,
+                    "kind": kind,
+                    "edge_type": "related",
+                }
+            )
+
+    return {"topics": topics, "edges": edges}

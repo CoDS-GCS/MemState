@@ -24,6 +24,11 @@ class Settings(BaseSettings):
     groq_model: str = "openai/gpt-oss-20b"
     # LLM chat: how many dialogue turns (user + optional assistant each) to send for intent/context.
     chat_intent_turns: int = Field(default=8, ge=1, le=64)
+    # Max assistant↔API iterations while the model keeps requesting tool calls (reorganize flows need more).
+    chat_max_tool_rounds: int = Field(default=32, ge=1, le=256)
+    # On query intent: bump field salience when read tools return field data (cap field_salience_max).
+    query_field_salience_bump: float = Field(default=0.1, ge=0.0, le=2.0)
+    field_salience_max: float = Field(default=10.0, ge=0.1, le=10.0)
 
     @model_validator(mode="after")
     def _load_groq_api_key_from_env_file(self) -> Self:

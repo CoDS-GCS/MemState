@@ -9,7 +9,11 @@ OLLAMA_TOOLS: list[dict] = [
         "type": "function",
         "function": {
             "name": "memory_graph_snapshot",
-            "description": "Return the full topic graph: nodes (topics with summary fields) and edges (RELATED + field refs). Use to explore or answer questions about structure.",
+            "description": (
+                "Return the full topic graph: nodes (topics with summary fields) and edges (RELATED + field refs). "
+                "Use to see how topics connect; then open linked topic ids with memory_get_topic_schema or memory_get_topic "
+                "to walk the graph across multiple hops when one node is not enough to answer the question."
+            ),
             "parameters": {"type": "object", "properties": {}, "required": []},
         },
     },
@@ -17,7 +21,11 @@ OLLAMA_TOOLS: list[dict] = [
         "type": "function",
         "function": {
             "name": "memory_list_topics",
-            "description": "List topic id, title, short summary, topic_kind, and archived flag for each topic so you can choose which topic to open. topic_ids is also included for convenience. Optionally include archived topics.",
+            "description": (
+                "List topic id, title, short summary, topic_kind, and archived flag for each topic so you can choose which topic to open. "
+                "topic_ids is also included for convenience. Optionally include archived topics. "
+                "After picking a topic, use get_topic_schema or get_topic; follow ref_topic_id and RELATED edges to other topics when the question requires more than one node."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -35,7 +43,13 @@ OLLAMA_TOOLS: list[dict] = [
         "type": "function",
         "function": {
             "name": "memory_get_topic_schema",
-            "description": "Return the field schema for one topic without loading full topic metadata unless needed. Use detail level based on the question: minimal = field names and types only; current = same plus latest value per field; history = full revision history per field (same shape as memory_get_topic fields). Prefer minimal or current when exploring; use history only when the user asks about past values or provenance.",
+            "description": (
+                "Return the field schema for one topic without loading full topic metadata unless needed. "
+                "ref_topic_id on a field points at another topic—follow with another get_topic_schema or get_topic when you need that linked entity. "
+                "Use detail level based on the question: minimal = field names and types only; current = same plus latest value per field; "
+                "history = full revision history per field (same shape as memory_get_topic fields). Prefer minimal or current when exploring; "
+                "use history only when the user asks about past values or provenance."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -55,7 +69,10 @@ OLLAMA_TOOLS: list[dict] = [
         "type": "function",
         "function": {
             "name": "memory_get_topic",
-            "description": "Load one topic by id with title, summary, kind, salience, archived flag, and all fields with history.",
+            "description": (
+                "Load one topic by id with title, summary, kind, salience, archived flag, and all fields with history. "
+                "If a field has ref_topic_id, call get_topic (or get_topic_schema) again on that id to traverse the graph until you have the facts you need."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -72,7 +89,10 @@ OLLAMA_TOOLS: list[dict] = [
         "type": "function",
         "function": {
             "name": "memory_create_topic",
-            "description": "Create a new topic node.",
+            "description": (
+                "Create a new topic node. For large ingest, call this multiple times to split content across topics, "
+                "then link topics with memory_add_relationship and refs as needed."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -183,7 +203,9 @@ OLLAMA_TOOLS: list[dict] = [
         "type": "function",
         "function": {
             "name": "memory_get_field",
-            "description": "Read one field on a topic including history.",
+            "description": (
+                "Read one field on a topic including history. If the field points at another topic (ref_topic_id), open that topic next when you need its details to answer."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -228,6 +250,116 @@ OLLAMA_TOOLS: list[dict] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "memory_reorganize_consolidation",
+            "description": (
+                "Reorganization: consolidation. Returns guidelines and topics_schema_snapshot (field names, types, "
+                "refs, salience, RELATED edges only—no field values or histories). Plan from structure; use "
+                "memory_get_topic_schema / memory_get_topic only when values are needed before writes. Then apply "
+                "with write tools."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "criteria": {
+                        "type": "string",
+                        "description": "User goals (size, performance, reasoning).",
+                        "default": "",
+                    },
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "memory_reorganize_merge_topics",
+            "description": (
+                "Reorganization: merge topics. Returns guidelines and topics_schema_snapshot (structure only). "
+                "Use schema overlap (field names/types, kinds, titles, refs) to propose candidates; then call "
+                "memory_get_topic_schema with detail current (or memory_get_topic) on candidates to compare **values**—"
+                "overlap and intersection (e.g. shared list items, same strings, same entity). Merge only if merging "
+                "improves organization; skip merges that would blur distinct entities."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "criteria": {
+                        "type": "string",
+                        "description": "User goals for merging.",
+                        "default": "",
+                    },
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "memory_reorganize_split_topics",
+            "description": (
+                "Reorganization: split overloaded topics. Returns guidelines and topics_schema_snapshot (structure "
+                "only). Plan splits from field-name clusters and kinds; read values only if needed."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "criteria": {
+                        "type": "string",
+                        "description": "User goals for splitting.",
+                        "default": "",
+                    },
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "memory_reorganize_connect_topics",
+            "description": (
+                "Reorganization: connect topics with RELATED edges or refs. Returns guidelines and "
+                "topics_schema_snapshot (structure only)."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "criteria": {
+                        "type": "string",
+                        "description": "User goals for linking.",
+                        "default": "",
+                    },
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "memory_reorganize_retention_trim",
+            "description": (
+                "Reorganization: retention trim (RTC). Returns guidelines and topics_schema_snapshot (structure "
+                "only). Plan from salience, archived, field counts—use history tools only when trimming revisions."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "criteria": {
+                        "type": "string",
+                        "description": "User goals for retention.",
+                        "default": "",
+                    },
+                },
+                "required": [],
+            },
+        },
+    },
 ]
 
 
@@ -265,6 +397,11 @@ INGEST_READ_HELPER_NAMES: frozenset[str] = frozenset(
         "memory_get_topic_schema",
         "memory_get_topic",
         "memory_get_field",
+        "memory_reorganize_consolidation",
+        "memory_reorganize_merge_topics",
+        "memory_reorganize_split_topics",
+        "memory_reorganize_connect_topics",
+        "memory_reorganize_retention_trim",
     }
 )
 INGEST_TOOL_NAMES: frozenset[str] = INGEST_WRITE_TOOL_NAMES | INGEST_READ_HELPER_NAMES
@@ -292,13 +429,30 @@ If unclear, reply: both"""
 
 
 QUERY_ROUTE_PROMPT = """Routed mode: QUERY (read-only).
-You only have read/list tools available. Answer from stored facts; do not attempt creates, updates, deletes, or relationship/field writes."""
+You only have read/list tools available. Answer from stored facts; do not attempt creates, updates, deletes, or relationship/field writes.
+Each returned field includes salience (0–10); on this path, accessed fields are bumped slightly (capped) and the topic salience is updated to the average of field saliences.
+
+Graph traversal: You may and should issue multiple read calls in sequence to walk the topic graph. Topics link via RELATED edges and via field ref_topic_id (see memory_graph_snapshot). If the answer is not fully on one topic, follow those links: open related topic ids with memory_get_topic_schema or memory_get_topic (and memory_get_field if you need one field). Use memory_graph_snapshot or memory_list_topics to orient, then drill into topics and their neighbors until you have enough detail. Do not stop after a single topic when the question depends on linked people, projects, or other entities."""
 
 INGEST_ROUTE_PROMPT = """Routed mode: INGEST (writes).
-Use write tools to change memory. Use read helpers (list_topics, get_topic_schema, get_topic, get_field) only to resolve topic ids or inspect fields before writing. You do not have memory_graph_snapshot—use list_topics and get_topic* instead."""
+Use write tools to change memory. Use read helpers (list_topics, get_topic_schema, get_topic, get_field) only to resolve topic ids or inspect fields before writing. You do not have memory_graph_snapshot—use list_topics and get_topic* instead.
+
+Large inputs: If the user gives a lot of text or many distinct facts, do not cram everything into one topic. Split across multiple topics (e.g. one coherent entity, document section, or theme per topic), give each a clear title/summary, and link them with memory_add_relationship (RELATED or a specific kind) and field ref_topic_id where it helps retrieval. Prefer several smaller, navigable topics over one overloaded node.
+If the user message is labeled Part i/n with overlap between parts, treat it as one ingest task in sequence: merge with prior parts without duplicating the same entities or facts."""
 
 BOTH_ROUTE_PROMPT = """Routed mode: BOTH (read and write).
-You have the full tool set: read or write in any order as needed for the user's latest message."""
+You have the full tool set: read or write in any order as needed for the user's latest message. When answering from stored facts, traverse the graph (RELATED edges and field refs) with repeated reads as in query mode until you have enough detail—do not assume one topic is enough if the question spans linked entities.
+When the user is storing a large amount of new information, split it across multiple topics and link them (same practice as ingest mode)—avoid one overloaded topic.
+If the user message is labeled Part i/n with overlap between parts, continue one task across chunks without duplicating entities or facts."""
+
+REORGANIZE_PROMPT = """Memory reorganize (hierarchical—avoid loading everything at once):
+1) Call the matching memory_reorganize_* tool for the user’s goal (consolidation, merge_topics, split_topics, connect_topics, retention_trim) with their criteria. That returns topics_schema_snapshot: structure only (field names/types, edges)—no full values or histories.
+2) Plan from that snapshot first. Do not call memory_graph_snapshot or bulk list_topics unless the snapshot is insufficient.
+3) **Merge topics exception:** For memory_reorganize_merge_topics, after the schema pass you **must** compare **current field values** for candidate pairs (memory_get_topic_schema with detail current, or memory_get_topic). Look for value overlap and intersection (shared strings, list overlap, same facts). Merge **only if** merging improves organization; reject merges that would combine distinct entities.
+4) For other reorganize modes, if you need a specific value or id, use memory_get_topic_schema (detail minimal or current) or a targeted memory_get_topic / memory_get_field—one topic at a time, not the whole graph.
+5) Apply changes with write tools, then summarize briefly for the user without dumping tool names or UUIDs unless asked.
+
+Use read tools in whatever order fits: the reorganize snapshot first, then targeted reads; for merge, schema then values then decide."""
 
 
 def build_chat_system_prompt(route: IntentRoute) -> str:
@@ -308,8 +462,10 @@ def build_chat_system_prompt(route: IntentRoute) -> str:
         parts.append(QUERY_ROUTE_PROMPT)
     elif route == "ingest":
         parts.append(INGEST_ROUTE_PROMPT)
+        parts.append(REORGANIZE_PROMPT)
     else:
         parts.append(BOTH_ROUTE_PROMPT)
+        parts.append(REORGANIZE_PROMPT)
     return "\n\n".join(parts)
 
 
@@ -317,8 +473,10 @@ SYSTEM_PROMPT = """You control MemState, a topic graph memory store (Kuzu), in p
 
 Grounding (mandatory):
 - You MUST use the memory_* tools to read or write data. Do not invent topic ids, titles, edges, or field values.
+- Brief greetings or tiny talk may be answered without tools. For anything about what is stored, or any edit, use the appropriate memory_* tools.
 - Before answering anything about what is stored, call at least one read tool (e.g. memory_graph_snapshot, memory_list_topics, memory_get_topic_schema, or memory_get_topic).
 - Use memory_list_topics to see ids with titles and summaries; use memory_get_topic_schema to inspect field names/types (and optionally current values or full history) without pulling the entire topic unless needed.
+- The store is a graph: topics link via RELATED edges and field ref_topic_id. When answering from stored facts, follow those links with additional reads on the linked topic ids until you have what you need—do not treat one topic as always sufficient.
 - Your final reply must be based only on what those tools returned (plus obvious paraphrase). If tools do not contain the answer, say you don't know or don't have that detail—without mentioning tools, databases, or "memory" as a system.
 - For edits (create/update/delete/link/fields), call the appropriate tools, then confirm briefly using tool outcomes.
 - If a tool returns ok:false or an error field, explain that to the user.
@@ -340,4 +498,4 @@ When the client sends prior assistant replies in the thread, use them to resolve
 INTENT_ROUTING_PROMPT = """Dialogue intent (the messages after this block include recent user/assistant turns):
 - Infer what the *latest user message* is trying to do before you choose tools: e.g. answer a question from stored facts, add or update stored facts, delete or link topics, follow-up that refers to earlier wording, or casual chat.
 - Resolve references ("he", "she", "that", "it", "the same person") using the preceding turns you can see.
-- Pick the smallest appropriate memory_* tool set for that intent; do not read the whole graph if a narrow query suffices."""
+- Pick the smallest appropriate memory_* tool set for that intent; avoid loading irrelevant bulk, but traverse relationships and field refs when the answer requires more than one topic."""

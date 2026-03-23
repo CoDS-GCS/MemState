@@ -106,6 +106,25 @@
           </div>
         </div>
 
+        <div class="panel-section" data-section="reorganize">
+          <button type="button" class="section-toggle">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v4"/><path d="M12 18v4"/><path d="M4.93 4.93l2.83 2.83"/><path d="M16.24 16.24l2.83 2.83"/><path d="M2 12h4"/><path d="M18 12h4"/><path d="M4.93 19.07l2.83-2.83"/><path d="M16.24 7.76l2.83-2.83"/><circle cx="12" cy="12" r="3"/></svg>
+            Memory reorganize
+            <svg class="chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+          <div class="section-body section-reorganize">
+            <p class="reorganize-hint">Runs in the assistant (same tools as MCP). Each action calls a dedicated memory_reorganize_* tool with a topics-schema snapshot—structure only, not values or histories.</p>
+            <label class="reorganize-criteria-label">Criteria <textarea id="reorganize-criteria" rows="2" placeholder="e.g. smaller graph, faster recall, clearer reasoning chains"></textarea></label>
+            <div class="reorganize-grid" role="group" aria-label="Reorganize operations">
+              <button type="button" class="btn-reorg" data-reorg-op="consolidation" title="Dedupe fields, tighten summaries, remove redundant edges">Consolidation</button>
+              <button type="button" class="btn-reorg" data-reorg-op="merge_topics" title="Combine overlapping topics into one">Merge topics</button>
+              <button type="button" class="btn-reorg" data-reorg-op="split_topics" title="Split overloaded topics">Split topics</button>
+              <button type="button" class="btn-reorg" data-reorg-op="connect_topics" title="Add RELATED links where missing">Connect topics</button>
+              <button type="button" class="btn-reorg" data-reorg-op="retention_trim" title="Archive, trim stale data, adjust salience">RTC (retention trim)</button>
+            </div>
+          </div>
+        </div>
+
         <div class="panel-section" data-section="delete">
           <button type="button" class="section-toggle">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
@@ -141,8 +160,16 @@
           <div class="legend">
             <span><i class="rel"></i> RELATED</span>
             <span><i class="ref"></i> field ref</span>
-            <span class="legend-hint">Wheel zoom · pan · drag nodes · ring tint = community (embeddings + ref/RELATED edges)</span>
+            <span class="legend-hint">Wheel zoom · pan · drag · topic: field nodes; field: timeline panel; field/topic again: collapse · ring = community</span>
           </div>
+          <aside id="field-timeline-panel" class="field-timeline-panel" hidden aria-label="Field history timeline">
+            <div class="field-timeline-head">
+              <span class="field-timeline-title">Field history</span>
+              <button type="button" class="field-timeline-close" id="field-timeline-close" aria-label="Close timeline">×</button>
+            </div>
+            <p class="field-timeline-context" id="field-timeline-context"></p>
+            <div class="field-timeline-track" id="field-timeline-track"></div>
+          </aside>
         </div>
         <div class="detail-panel">
           <div class="detail-header">

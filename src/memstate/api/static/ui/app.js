@@ -5,9 +5,10 @@ const LS_KEY = "memstate_api_key";
 function formatApiError(data) {
   const parts = [];
   if (data.detail != null) {
-    parts.push(
-      typeof data.detail === "object" ? JSON.stringify(data.detail) : String(data.detail)
-    );
+    let d =
+      typeof data.detail === "object" ? JSON.stringify(data.detail) : String(data.detail);
+    if (d.length > 2000) d = d.slice(0, 2000) + "…";
+    parts.push(d);
   }
   if (data.hint) parts.push(String(data.hint));
   return parts.join(" — ") || "Request failed";
@@ -177,6 +178,125 @@ function formatSalience(s) {
   return s.toFixed(2).replace(/\.?0+$/, "");
 }
 
+const FIELD_NODE_PREFIX = "memstate_field:";
+const FIELD_TIMELINE_MAX_ENTRIES = 50;
+
+function truncateText(s, max) {
+  const t = String(s ?? "");
+  if (t.length <= max) return t;
+  return t.slice(0, Math.max(0, max - 1)) + "…";
+}
+
+function makeFieldNodeId(topicId, fieldName) {
+  return `${FIELD_NODE_PREFIX}${topicId}||${encodeURIComponent(fieldName)}`;
+}
+
+function parseFieldNodeId(id) {
+  if (!id.startsWith(FIELD_NODE_PREFIX)) return null;
+  const rest = id.slice(FIELD_NODE_PREFIX.length);
+  const sep = "||";
+  const i = rest.indexOf(sep);
+  if (i === -1) return null;
+  const topicId = rest.slice(0, i);
+  const fieldName = decodeURIComponent(rest.slice(i + sep.length));
+  return { topicId, fieldName };
+}
+
+/**
+ * @param {string} fieldName
+ * @param {Record<string, unknown>} f
+ */
+function formatFieldCompactLabel(fieldName, f) {
+  const lines = [fieldName, `(${f.field_type || "?"})`];
+  const hist = Array.isArray(f.history) ? f.history : [];
+  const cur = hist[0] || {};
+  const v = cur.value;
+  const vs = typeof v === "object" && v !== null ? JSON.stringify(v) : String(v ?? "—");
+  lines.push(truncateText(vs, 48));
+  if (f.ref_topic_id) lines.push(`→ ${String(f.ref_topic_id).slice(0, 10)}…`);
+  return lines.join("\n");
+}
+
+function hideFieldTimelinePanel() {
+  const panel = document.getElementById("field-timeline-panel");
+  const track = document.getElementById("field-timeline-track");
+  const ctx = document.getElementById("field-timeline-context");
+  if (panel) panel.hidden = true;
+  if (track) track.innerHTML = "";
+  if (ctx) ctx.textContent = "";
+}
+
+/**
+ * @param {string} topicTitle
+ * @param {string} fieldName
+ * @param {Record<string, unknown>} f
+ */
+function showFieldTimelinePanel(topicTitle, fieldName, f) {
+  const panel = document.getElementById("field-timeline-panel");
+  const track = document.getElementById("field-timeline-track");
+  const ctx = document.getElementById("field-timeline-context");
+  if (!panel || !track || !ctx) return;
+
+  ctx.textContent = `${topicTitle || "Topic"} · ${fieldName}`;
+  track.innerHTML = "";
+
+  const hist = Array.isArray(f.history) ? f.history : [];
+  if (hist.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "field-timeline-empty";
+    empty.textContent = "No history entries.";
+    track.appendChild(empty);
+  } else {
+    const cap = Math.min(hist.length, FIELD_TIMELINE_MAX_ENTRIES);
+    for (let i = 0; i < cap; i++) {
+      const e = hist[i];
+      const row = document.createElement("div");
+      row.className = "field-timeline-entry";
+      const time = document.createElement("div");
+      time.className = "field-timeline-time";
+      const when = e && typeof e === "object" && e.valid_from ? String(e.valid_from) : `Entry ${i + 1}`;
+      time.textContent = when;
+      const val = document.createElement("div");
+      val.className = "field-timeline-value";
+      const v = e && typeof e === "object" ? e.value : e;
+      let text = typeof v === "object" && v !== null ? JSON.stringify(v, null, 2) : String(v ?? "—");
+      if (text.length > 2000) text = text.slice(0, 1999) + "…";
+      val.textContent = text;
+      row.appendChild(time);
+      row.appendChild(val);
+      track.appendChild(row);
+    }
+    if (hist.length > cap) {
+      const more = document.createElement("div");
+      more.className = "field-timeline-empty";
+      more.textContent = `… ${hist.length - cap} more entries not shown`;
+      track.appendChild(more);
+    }
+  }
+  panel.hidden = false;
+}
+
+function resetFieldNodeStyle(fieldNodeId) {
+  const ds = graphView.visDataSets;
+  const t = graphView.topicExpandCache;
+  const parsed = parseFieldNodeId(fieldNodeId);
+  if (!ds || !t || !parsed) return;
+  const f = t.fields && typeof t.fields === "object" ? t.fields[parsed.fieldName] : null;
+  if (!f || typeof f !== "object") return;
+  ds.nodes.update({
+    id: fieldNodeId,
+    label: formatFieldCompactLabel(parsed.fieldName, f),
+    widthConstraint: { maximum: 210 },
+    font: { color: "#e8f5f3", size: 10, multi: true, face: "Inter, Segoe UI, system-ui, sans-serif" },
+    borderWidth: 2,
+    color: {
+      background: "rgba(20, 90, 85, 0.92)",
+      border: "#2dd4bf",
+      highlight: { background: "#134e4a", border: "#5eead4" },
+    },
+  });
+}
+
 /** Map salience to fill opacity: low salience → more transparent. */
 function salienceToFillOpacity(salience, minS, maxS) {
   const lo = 0.32;
@@ -281,7 +401,266 @@ const graphView = {
   network: null,
   resizeObserver: null,
   layoutFallbackTimer: null,
+  /** @type {string[] | null} */
+  nodeIds: null,
+  /** @type {Array<{ source: string, target: string }> | null} */
+  lastRawLinks: null,
+  /** @type {{ nodes: any, edges: any } | null} */
+  visDataSets: null,
+  /** @type {string | null} */
+  expandedId: null,
+  /** @type {Record<string, { x: number, y: number }> | null} */
+  savedPositions: null,
+  /** @type {Record<string, unknown> | null} */
+  compactNodeBackup: null,
+  /** @type {string | null} */
+  expandPending: null,
+  /** @type {string[] | null} */
+  syntheticFieldNodeIds: null,
+  /** @type {string[] | null} */
+  syntheticFieldEdgeIds: null,
+  /** @type {string | null} */
+  expandedFieldHistoryId: null,
+  /** @type {Record<string, unknown> | null} */
+  topicExpandCache: null,
 };
+
+function removeSyntheticFieldGraph() {
+  hideFieldTimelinePanel();
+  const ds = graphView.visDataSets;
+  if (!ds) return;
+  if (graphView.syntheticFieldEdgeIds && graphView.syntheticFieldEdgeIds.length) {
+    ds.edges.remove(graphView.syntheticFieldEdgeIds);
+  }
+  if (graphView.syntheticFieldNodeIds && graphView.syntheticFieldNodeIds.length) {
+    ds.nodes.remove(graphView.syntheticFieldNodeIds);
+  }
+  graphView.syntheticFieldEdgeIds = null;
+  graphView.syntheticFieldNodeIds = null;
+  graphView.expandedFieldHistoryId = null;
+  graphView.topicExpandCache = null;
+}
+
+function collapseGraphExpand({ restorePositions = true } = {}) {
+  const ds = graphView.visDataSets;
+  const net = graphView.network;
+  const id = graphView.expandedId;
+  if (!id) return;
+
+  removeSyntheticFieldGraph();
+
+  if (graphView.compactNodeBackup && ds) {
+    ds.nodes.update(graphView.compactNodeBackup);
+  }
+  if (restorePositions && graphView.savedPositions && net) {
+    for (const nid of Object.keys(graphView.savedPositions)) {
+      const p = graphView.savedPositions[nid];
+      net.moveNode(nid, p.x, p.y);
+    }
+  }
+  graphView.expandedId = null;
+  graphView.savedPositions = null;
+  graphView.compactNodeBackup = null;
+  graphView.expandPending = null;
+
+  const pre = document.getElementById("detail");
+  if (pre) pre.textContent = "Click a node to inspect its topic + fields.";
+  if (net && typeof net.unselectAll === "function") net.unselectAll();
+}
+
+function layoutFieldNodesBelowTopic(topicId, fieldNodeIds) {
+  const net = graphView.network;
+  const saved = graphView.savedPositions;
+  if (!net || !saved || !fieldNodeIds.length) return;
+  const fp = saved[topicId];
+  if (!fp) return;
+  const cx = fp.x;
+  const cy = fp.y;
+  const n = fieldNodeIds.length;
+  const spacing = Math.min(150, Math.max(88, 720 / Math.max(n, 1)));
+  const dy = 130;
+  fieldNodeIds.forEach((fid, i) => {
+    const nx = cx + (i - (n - 1) / 2) * spacing;
+    net.moveNode(fid, nx, cy + dy);
+  });
+  net.moveNode(topicId, cx, cy);
+  net.fit({ animation: { duration: 380 } });
+}
+
+/**
+ * @param {string} fieldNodeId
+ */
+function toggleFieldHistory(fieldNodeId) {
+  const ds = graphView.visDataSets;
+  const net = graphView.network;
+  const t = graphView.topicExpandCache;
+  const parsed = parseFieldNodeId(fieldNodeId);
+  if (!ds || !net || !t || !parsed) return;
+  const f = t.fields && typeof t.fields === "object" ? t.fields[parsed.fieldName] : null;
+  if (!f || typeof f !== "object") return;
+
+  const pre = document.getElementById("detail");
+  const topicTitle = String(t.title || "").trim() || "Topic";
+
+  if (graphView.expandedFieldHistoryId === fieldNodeId) {
+    resetFieldNodeStyle(fieldNodeId);
+    graphView.expandedFieldHistoryId = null;
+    hideFieldTimelinePanel();
+    if (pre) pre.textContent = JSON.stringify(t, null, 2);
+    net.selectNodes([fieldNodeId]);
+    return;
+  }
+
+  if (graphView.expandedFieldHistoryId) {
+    resetFieldNodeStyle(graphView.expandedFieldHistoryId);
+  }
+
+  graphView.expandedFieldHistoryId = fieldNodeId;
+  ds.nodes.update({
+    id: fieldNodeId,
+    borderWidth: 3,
+    color: {
+      background: "rgba(20, 90, 85, 0.92)",
+      border: "#fbbf24",
+      highlight: { background: "#134e4a", border: "#5eead4" },
+    },
+  });
+  showFieldTimelinePanel(topicTitle, parsed.fieldName, f);
+  if (pre) {
+    pre.textContent = JSON.stringify(
+      {
+        topic_id: t.id,
+        field: parsed.fieldName,
+        field_type: f.field_type,
+        ref_topic_id: f.ref_topic_id,
+        history: f.history,
+      },
+      null,
+      2
+    );
+  }
+  net.selectNodes([fieldNodeId]);
+}
+
+/**
+ * @param {string} topicId
+ */
+async function expandGraphNode(topicId) {
+  const net = graphView.network;
+  const ds = graphView.visDataSets;
+  if (!net || !ds || !graphView.nodeIds) return;
+
+  graphView.expandPending = topicId;
+
+  if (graphView.expandedId && graphView.expandedId !== topicId) {
+    collapseGraphExpand({ restorePositions: true });
+  }
+
+  graphView.savedPositions = net.getPositions(graphView.nodeIds);
+  const prev = ds.nodes.get(topicId);
+  graphView.compactNodeBackup = prev ? { ...prev } : null;
+
+  try {
+    const t = await loadDetail(topicId);
+    if (graphView.expandPending !== topicId) return;
+
+    graphView.topicExpandCache = t;
+    graphView.expandedFieldHistoryId = null;
+
+    const bg =
+      prev && prev.color && prev.color.background
+        ? prev.color.background
+        : "rgba(30, 64, 175, 0.92)";
+    ds.nodes.update({
+      id: topicId,
+      shape: "ellipse",
+      borderWidth: 3,
+      color: {
+        background: bg,
+        border: "#93c5fd",
+        highlight: { background: "#2563eb", border: "#bfdbfe" },
+      },
+    });
+
+    const fieldsObj = t.fields && typeof t.fields === "object" ? t.fields : {};
+    const fieldNames = Object.keys(fieldsObj).sort();
+    const fieldNodeIds = [];
+    const edgeIds = [];
+    const newNodes = [];
+    const newEdges = [];
+
+    fieldNames.forEach((fname, idx) => {
+      const f = fieldsObj[fname];
+      if (!f || typeof f !== "object") return;
+      const fid = makeFieldNodeId(topicId, fname);
+      fieldNodeIds.push(fid);
+      const eid = `memstate_fe_${topicId}_${idx}`;
+      edgeIds.push(eid);
+      newNodes.push({
+        id: fid,
+        label: formatFieldCompactLabel(fname, f),
+        title: `${fname} — opens timeline panel (top right); click field again or × to close`,
+        shape: "box",
+        margin: 10,
+        widthConstraint: { maximum: 210 },
+        font: {
+          color: "#e8f5f3",
+          size: 10,
+          multi: true,
+          face: "Inter, Segoe UI, system-ui, sans-serif",
+        },
+        color: {
+          background: "rgba(20, 90, 85, 0.92)",
+          border: "#2dd4bf",
+          highlight: { background: "#134e4a", border: "#5eead4" },
+        },
+        borderWidth: 2,
+      });
+      newEdges.push({
+        id: eid,
+        from: topicId,
+        to: fid,
+        label: "",
+        color: { color: "rgba(148, 163, 184, 0.55)" },
+        dashes: [3, 6],
+        arrows: { to: { enabled: false } },
+        smooth: { type: "cubicBezier", roundness: 0.35 },
+      });
+    });
+
+    graphView.syntheticFieldNodeIds = fieldNodeIds;
+    graphView.syntheticFieldEdgeIds = edgeIds;
+
+    if (newNodes.length) {
+      ds.nodes.add(newNodes);
+      ds.edges.add(newEdges);
+      layoutFieldNodesBelowTopic(topicId, fieldNodeIds);
+    } else {
+      net.fit({ animation: { duration: 320 } });
+    }
+
+    graphView.expandedId = topicId;
+    net.selectNodes([topicId]);
+  } catch (e) {
+    if (graphView.expandPending !== topicId) return;
+    const errPre = document.getElementById("detail");
+    if (errPre) errPre.textContent = "Error: " + e.message;
+    toast(String(e.message), "error");
+    removeSyntheticFieldGraph();
+    if (graphView.compactNodeBackup) {
+      ds.nodes.update(graphView.compactNodeBackup);
+    }
+    if (graphView.savedPositions) {
+      for (const nid of Object.keys(graphView.savedPositions)) {
+        const p = graphView.savedPositions[nid];
+        net.moveNode(nid, p.x, p.y);
+      }
+    }
+    graphView.savedPositions = null;
+    graphView.compactNodeBackup = null;
+    graphView.expandedId = null;
+  }
+}
 
 function buildVisDatasets(nodes, links) {
   const { clusterOf } = computeClusters(nodes, links);
@@ -375,6 +754,18 @@ function initGraph(container) {
 }
 
 function renderGraph(apiData) {
+  graphView.expandedId = null;
+  graphView.savedPositions = null;
+  graphView.compactNodeBackup = null;
+  graphView.expandPending = null;
+  graphView.syntheticFieldNodeIds = null;
+  graphView.syntheticFieldEdgeIds = null;
+  graphView.expandedFieldHistoryId = null;
+  graphView.topicExpandCache = null;
+  graphView.nodeIds = null;
+  graphView.lastRawLinks = null;
+  graphView.visDataSets = null;
+
   const { nodes: nodeIn, links: linkIn } = buildGraphData(apiData);
   updateEmptyState(nodeIn.length);
 
@@ -399,6 +790,10 @@ function renderGraph(apiData) {
     edges: new vis.DataSet(visEdges),
   };
 
+  graphView.nodeIds = nodes.map((n) => n.id);
+  graphView.lastRawLinks = links;
+  graphView.visDataSets = data;
+
   const net = new vis.Network(graphView.container, data, VIS_NETWORK_OPTIONS);
   graphView.network = net;
 
@@ -420,7 +815,17 @@ function renderGraph(apiData) {
   });
 
   net.on("click", (params) => {
-    if (params.nodes.length) loadDetail(params.nodes[0]);
+    if (!params.nodes.length) return;
+    const id = params.nodes[0];
+    if (id.startsWith(FIELD_NODE_PREFIX)) {
+      toggleFieldHistory(id);
+      return;
+    }
+    if (graphView.expandedId === id) {
+      collapseGraphExpand({ restorePositions: true });
+      return;
+    }
+    expandGraphNode(id);
   });
 
   net.on("doubleClick", (params) => {
@@ -464,6 +869,49 @@ const LS_LLM_PROVIDER = "memstate_llm_provider";
 const LS_MODEL_OLLAMA = "memstate_llm_model_ollama";
 const LS_MODEL_GROQ = "memstate_llm_model_groq";
 const LS_CHAT_INTENT_TURNS = "memstate_chat_intent_turns";
+/** Groq edge timeouts are common above ~tens of k chars—warn before send (single-shot only). */
+const GROQ_LONG_MESSAGE_WARN_CHARS = 28000;
+/** Above this character count, split the user message into overlapping chunks (sequential requests). */
+const CHAT_CHUNK_THRESHOLD = 10000;
+const CHAT_CHUNK_MAX_CHARS = 10000;
+const CHAT_CHUNK_OVERLAP = 800;
+
+/**
+ * Split long text into chunks of at most maxLen, sliding by (maxLen - overlap) for continuity.
+ * @param {string} text
+ * @param {number} maxLen
+ * @param {number} overlap
+ * @returns {string[]}
+ */
+function chunkTextWithOverlap(text, maxLen, overlap) {
+  const L = text.length;
+  if (L <= maxLen) return [text];
+  if (overlap >= maxLen) return [text];
+  const chunks = [];
+  let start = 0;
+  while (start < L) {
+    const end = Math.min(start + maxLen, L);
+    chunks.push(text.slice(start, end));
+    if (end === L) break;
+    const next = end - overlap;
+    start = next <= start ? end : next;
+  }
+  return chunks;
+}
+
+/**
+ * @param {string} chunk
+ * @param {number} index1
+ * @param {number} total
+ * @param {number} overlap
+ */
+function buildChunkedUserMessage(chunk, index1, total, overlap) {
+  return (
+    `[Part ${index1}/${total} — long user message split with ~${overlap} character overlap between adjacent parts for context.]\n` +
+    `Integrate this segment with the graph; duplicated overlap is for continuity only (avoid duplicating whole topics already created in a prior part).\n\n---\n\n` +
+    chunk
+  );
+}
 
 const OLLAMA_MODELS = [
   { value: "llama3.2:latest", label: "llama3.2" },
@@ -475,6 +923,54 @@ const GROQ_MODELS = [
 ];
 
 const chatHistory = [];
+
+/** Collapse very long message bodies; full text preserved for expand. */
+const CHAT_BODY_PREVIEW_MAX = 900;
+
+function truncateChatPreview(text, max) {
+  const t = String(text ?? "");
+  if (t.length <= max) return t;
+  let cut = t.slice(0, max);
+  const lastSp = cut.lastIndexOf(" ");
+  if (lastSp > max * 0.55) cut = cut.slice(0, lastSp);
+  return cut.trimEnd() + "…";
+}
+
+/**
+ * @param {HTMLDivElement} wrapper
+ * @param {string} fullText
+ */
+function fillCollapsibleChatBody(wrapper, fullText) {
+  const t = String(fullText ?? "");
+  wrapper.className = "chat-body";
+  if (t.length <= CHAT_BODY_PREVIEW_MAX) {
+    wrapper.textContent = t;
+    return;
+  }
+  const preview = document.createElement("div");
+  preview.className = "chat-body-text chat-body-text-preview";
+  preview.textContent = truncateChatPreview(t, CHAT_BODY_PREVIEW_MAX);
+  const full = document.createElement("div");
+  full.className = "chat-body-text chat-body-text-full";
+  full.hidden = true;
+  full.textContent = t;
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "chat-body-expand";
+  btn.textContent = "Show more";
+  btn.setAttribute("aria-expanded", "false");
+  btn.addEventListener("click", () => {
+    const expanded = btn.getAttribute("aria-expanded") === "true";
+    const next = !expanded;
+    btn.setAttribute("aria-expanded", String(next));
+    preview.hidden = next;
+    full.hidden = !next;
+    btn.textContent = next ? "Show less" : "Show more";
+  });
+  wrapper.appendChild(preview);
+  wrapper.appendChild(full);
+  wrapper.appendChild(btn);
+}
 
 function fillLlmModelSelect(provider) {
   const sel = document.getElementById("llm-model");
@@ -518,8 +1014,7 @@ function appendChatMessage(role, text) {
   roleEl.className = "role";
   roleEl.textContent = role === "user" ? "You" : "Assistant";
   const body = document.createElement("div");
-  body.className = "chat-body";
-  body.textContent = text;
+  fillCollapsibleChatBody(body, text);
   div.appendChild(roleEl);
   div.appendChild(body);
   log.appendChild(div);
@@ -529,7 +1024,7 @@ function appendChatMessage(role, text) {
 /**
  * Assistant reply with expandable "Thinking" trace (provider, model, tool calls + results).
  * @param {string} text
- * @param {{ provider?: string, model?: string, intent?: string, tool_log?: { tool: string, result: unknown }[] }} [meta]
+ * @param {{ provider?: string, model?: string, intent?: string, intent_source?: string, tool_log?: { tool: string, result: unknown }[] }} [meta]
  */
 function appendAssistantMessage(text, meta) {
   const log = document.getElementById("chat-log");
@@ -543,11 +1038,24 @@ function appendAssistantMessage(text, meta) {
   roleEl.textContent = "Assistant";
 
   const body = document.createElement("div");
-  body.className = "chat-body";
-  body.textContent = text || "(no reply)";
+  fillCollapsibleChatBody(body, text || "(no reply)");
 
   const toolLog = Array.isArray(meta?.tool_log) ? meta.tool_log : [];
   const hasTools = toolLog.length > 0;
+  const hasIntent = Boolean(meta?.intent);
+
+  function intentRouteLabel(route) {
+    if (route === "query") return "Query — read-only memory tools";
+    if (route === "ingest") return "Ingest — write memory (+ read helpers)";
+    if (route === "both") return "Both — full read/write tool set";
+    return String(route || "—");
+  }
+
+  function intentSourceLabel(src) {
+    if (src === "override") return "Client override (intent_override)";
+    if (src === "classifier") return "LLM classifier (no tools, separate call)";
+    return "—";
+  }
 
   const thinking = document.createElement("div");
   thinking.className = "chat-thinking";
@@ -561,7 +1069,8 @@ function appendAssistantMessage(text, meta) {
   chev.setAttribute("aria-hidden", "true");
   chev.textContent = "▸";
   const toggleLabel = document.createElement("span");
-  toggleLabel.textContent = hasTools ? "Thinking & tool trace" : "How this answer was built";
+  toggleLabel.textContent =
+    hasIntent || hasTools ? "Thinking: intent, tools & trace" : "How this answer was built";
   toggle.appendChild(chev);
   toggle.appendChild(toggleLabel);
 
@@ -571,17 +1080,31 @@ function appendAssistantMessage(text, meta) {
 
   const metaLine = document.createElement("div");
   metaLine.className = "chat-thinking-meta";
-  const route = meta?.intent ? ` · ${meta.intent}` : "";
-  metaLine.textContent = `${meta?.provider || "—"} · ${meta?.model || "—"}${route}`;
+  metaLine.textContent = `${meta?.provider || "—"} · ${meta?.model || "—"}`;
   panel.appendChild(metaLine);
 
+  if (hasIntent) {
+    const intentBlock = document.createElement("div");
+    intentBlock.className = "chat-thinking-intent";
+    const intentTitle = document.createElement("div");
+    intentTitle.className = "chat-thinking-tool-name";
+    intentTitle.textContent = "1. Intent classification";
+    const intentBody = document.createElement("div");
+    intentBody.className = "chat-thinking-intent-detail";
+    intentBody.innerHTML = `<strong>${escapeHtml(String(meta.intent))}</strong> — ${escapeHtml(intentRouteLabel(meta.intent))}<br/><span class="chat-thinking-intent-source">${escapeHtml(intentSourceLabel(meta.intent_source))}</span>`;
+    intentBlock.appendChild(intentTitle);
+    intentBlock.appendChild(intentBody);
+    panel.appendChild(intentBlock);
+  }
+
   if (hasTools) {
+    const stepOffset = hasIntent ? 2 : 1;
     toolLog.forEach((entry, i) => {
       const step = document.createElement("div");
       step.className = "chat-thinking-step";
       const nameEl = document.createElement("div");
       nameEl.className = "chat-thinking-tool-name";
-      nameEl.textContent = `${i + 1}. ${entry.tool || "(unknown)"}`;
+      nameEl.textContent = `${i + stepOffset}. ${entry.tool || "(unknown)"}`;
       const pre = document.createElement("pre");
       pre.className = "chat-thinking-json";
       let s;
@@ -621,6 +1144,163 @@ function appendAssistantMessage(text, meta) {
   div.appendChild(thinking);
   log.appendChild(div);
   log.scrollTop = log.scrollHeight;
+}
+
+/**
+ * @param {string} userText
+ * @param {{ intentOverride?: "query"|"ingest"|"both" }} [options]
+ */
+async function runChatTurn(userText, options = {}) {
+  const { intentOverride } = options;
+  const btn = document.getElementById("btn-chat-send");
+  const ollamaUrl = document.getElementById("ollama-url");
+  const prov = document.getElementById("llm-provider");
+  const modelSel = document.getElementById("llm-model");
+  const text = String(userText || "").trim();
+  if (!text) return;
+
+  const provider = prov?.value || "ollama";
+  const chunks =
+    text.length > CHAT_CHUNK_THRESHOLD
+      ? chunkTextWithOverlap(text, CHAT_CHUNK_MAX_CHARS, CHAT_CHUNK_OVERLAP)
+      : [text];
+  const multiPart = chunks.length > 1;
+
+  if (!multiPart && provider === "groq" && text.length >= GROQ_LONG_MESSAGE_WARN_CHARS) {
+    toast(
+      "Heads up: very long messages often time out on Groq (HTTP 524). Consider splitting into shorter parts or using Ollama."
+    );
+  }
+  if (multiPart) {
+    toast(
+      `Sending ${chunks.length} overlapping parts (${CHAT_CHUNK_MAX_CHARS} chars max per part, ${CHAT_CHUNK_OVERLAP} overlap).`
+    );
+  }
+
+  if (btn) btn.disabled = true;
+  try {
+    for (let pi = 0; pi < chunks.length; pi++) {
+      const part = chunks[pi];
+      const userContent = multiPart
+        ? buildChunkedUserMessage(part, pi + 1, chunks.length, CHAT_CHUNK_OVERLAP)
+        : part;
+
+      appendChatMessage("user", userContent);
+      chatHistory.push({ role: "user", content: userContent });
+
+      const messagesForApi = chatHistory
+        .filter(
+          (m) =>
+            (m.role === "user" || m.role === "assistant") && String(m.content ?? "").trim()
+        )
+        .map((m) => ({ role: m.role, content: String(m.content).trim() }));
+      const payload = {
+        messages: messagesForApi,
+        provider,
+        model: modelSel?.value || undefined,
+      };
+      if (intentOverride === "query" || intentOverride === "ingest" || intentOverride === "both") {
+        payload.intent_override = intentOverride;
+      }
+      const it = document.getElementById("chat-intent-turns");
+      const kTurns = it ? parseInt(it.value, 10) : parseInt(localStorage.getItem(LS_CHAT_INTENT_TURNS) || "8", 10);
+      if (Number.isFinite(kTurns) && kTurns >= 1 && kTurns <= 64) {
+        payload.intent_turns = kTurns;
+      }
+      if (provider === "ollama") {
+        const u = ollamaUrl?.value?.trim();
+        if (u) {
+          payload.ollama_base_url = u;
+          localStorage.setItem(LS_OLLAMA_URL, u);
+        }
+        localStorage.setItem(LS_MODEL_OLLAMA, modelSel?.value || "");
+      } else {
+        localStorage.setItem(LS_MODEL_GROQ, modelSel?.value || "");
+      }
+      const data = await api("/api/llm/chat", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+      const replyText = data.reply || "(no reply)";
+      chatHistory.push({ role: "assistant", content: replyText });
+      appendAssistantMessage(
+        multiPart ? `[Reply — part ${pi + 1}/${chunks.length}]\n\n${replyText}` : replyText,
+        {
+          provider: data.provider,
+          model: data.model,
+          intent: data.intent,
+          intent_source: data.intent_source,
+          tool_log: data.tool_log || [],
+        }
+      );
+      if (data.tool_log && data.tool_log.length) {
+        await refreshGraph();
+      }
+    }
+  } catch (err) {
+    appendChatMessage("assistant", "Error: " + err.message);
+    toast(err.message, "error");
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+function buildReorganizeUserMessage(operation, criteriaRaw) {
+  const criteria = String(criteriaRaw || "").trim();
+  const goals =
+    criteria ||
+    "Optimize memory size, retrieval performance, and reasoning quality; keep facts accurate.";
+  const labels = {
+    consolidation: "consolidation",
+    merge_topics: "merge topics",
+    split_topics: "split topics",
+    connect_topics: "connect topics",
+    retention_trim: "retention trim (RTC)",
+  };
+  const toolByOp = {
+    consolidation: "memory_reorganize_consolidation",
+    merge_topics: "memory_reorganize_merge_topics",
+    split_topics: "memory_reorganize_split_topics",
+    connect_topics: "memory_reorganize_connect_topics",
+    retention_trim: "memory_reorganize_retention_trim",
+  };
+  const label = labels[operation] || operation;
+  const tool = toolByOp[operation] || "memory_reorganize_consolidation";
+  if (operation === "merge_topics") {
+    return (
+      `Memory reorganize: ${label}.\n\n` +
+      `Criteria: ${goals}\n\n` +
+      `Workflow: (1) Call ${tool} for topics_schema_snapshot (structure only). ` +
+      `(2) Find merge candidates from overlapping schema (field names/types, kinds, titles, refs). ` +
+      `(3) For candidates, use memory_get_topic_schema with detail current (or memory_get_topic) to compare **values**—look for overlap and intersection (shared strings, list overlap, same entity). ` +
+      `(4) Merge only if merging improves organization; skip distinct entities. ` +
+      `(5) Apply with write tools and summarize briefly.`
+    );
+  }
+  return (
+    `Memory reorganize: ${label}.\n\n` +
+    `Criteria: ${goals}\n\n` +
+    `Workflow: (1) Call ${tool} with these criteria to get the compact topics_schema_snapshot (structure only). ` +
+    `(2) Plan from that snapshot. (3) Only if needed, use memory_get_topic_schema (minimal/current) or a single memory_get_topic—avoid loading the full graph. ` +
+    `(4) Apply with write tools. Summarize changes briefly.`
+  );
+}
+
+function wireReorganize() {
+  const criteriaEl = document.getElementById("reorganize-criteria");
+  document.querySelectorAll(".btn-reorg[data-reorg-op]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const op = btn.getAttribute("data-reorg-op");
+      if (!op) return;
+      const criteria = criteriaEl ? criteriaEl.value : "";
+      const msg = buildReorganizeUserMessage(op, criteria);
+      runChatTurn(msg, { intentOverride: "both" });
+      const aside = document.querySelector("aside.panel-chat");
+      if (aside) {
+        requestAnimationFrame(() => aside.scrollIntoView({ behavior: "smooth", block: "nearest" }));
+      }
+    });
+  });
 }
 
 function wireChat() {
@@ -675,57 +1355,7 @@ function wireChat() {
     const text = input.value.trim();
     if (!text) return;
     input.value = "";
-    appendChatMessage("user", text);
-    chatHistory.push({ role: "user", content: text });
-    btn.disabled = true;
-    try {
-      const provider = prov?.value || "ollama";
-      const messagesForApi = chatHistory
-        .filter(
-          (m) =>
-            (m.role === "user" || m.role === "assistant") && String(m.content ?? "").trim()
-        )
-        .map((m) => ({ role: m.role, content: String(m.content).trim() }));
-      const payload = {
-        messages: messagesForApi,
-        provider,
-        model: modelSel?.value || undefined,
-      };
-      const it = document.getElementById("chat-intent-turns");
-      const kTurns = it ? parseInt(it.value, 10) : parseInt(localStorage.getItem(LS_CHAT_INTENT_TURNS) || "8", 10);
-      if (Number.isFinite(kTurns) && kTurns >= 1 && kTurns <= 64) {
-        payload.intent_turns = kTurns;
-      }
-      if (provider === "ollama") {
-        const u = ollamaUrl?.value?.trim();
-        if (u) {
-          payload.ollama_base_url = u;
-          localStorage.setItem(LS_OLLAMA_URL, u);
-        }
-        localStorage.setItem(LS_MODEL_OLLAMA, modelSel?.value || "");
-      } else {
-        localStorage.setItem(LS_MODEL_GROQ, modelSel?.value || "");
-      }
-      const data = await api("/api/llm/chat", {
-        method: "POST",
-        body: JSON.stringify(payload),
-      });
-      chatHistory.push({ role: "assistant", content: data.reply || "" });
-      appendAssistantMessage(data.reply || "(no reply)", {
-        provider: data.provider,
-        model: data.model,
-        intent: data.intent,
-        tool_log: data.tool_log || [],
-      });
-      if (data.tool_log && data.tool_log.length) {
-        await refreshGraph();
-      }
-    } catch (err) {
-      appendChatMessage("assistant", "Error: " + err.message);
-      toast(err.message, "error");
-    } finally {
-      btn.disabled = false;
-    }
+    await runChatTurn(text);
   });
 }
 
@@ -733,13 +1363,10 @@ function wireChat() {
 
 async function loadDetail(topicId) {
   const pre = document.getElementById("detail");
-  pre.textContent = "Loading…";
-  try {
-    const t = await api(`/api/ui/topics/${encodeURIComponent(topicId)}`);
-    pre.textContent = JSON.stringify(t, null, 2);
-  } catch (e) {
-    pre.textContent = "Error: " + e.message;
-  }
+  if (pre) pre.textContent = "Loading…";
+  const t = await api(`/api/ui/topics/${encodeURIComponent(topicId)}`);
+  if (pre) pre.textContent = JSON.stringify(t, null, 2);
+  return t;
 }
 
 /* ── Copy detail ── */
@@ -858,7 +1485,16 @@ document.addEventListener("DOMContentLoaded", async () => {
   wireCollapsible();
   wireForms();
   wireChat();
+  wireReorganize();
   wireCopyDetail();
+  const ftClose = document.getElementById("field-timeline-close");
+  if (ftClose) {
+    ftClose.addEventListener("click", () => {
+      const id = graphView.expandedFieldHistoryId;
+      if (id) toggleFieldHistory(id);
+      else hideFieldTimelinePanel();
+    });
+  }
   await checkBackendBanner();
   await refreshGraph();
 });

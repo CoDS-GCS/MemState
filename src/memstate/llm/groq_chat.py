@@ -11,10 +11,51 @@ from memstate.llm.tools_schema import OLLAMA_TOOLS, SYSTEM_PROMPT
 from memstate.llm.tool_runner import MemoryToolRunner
 
 GROQ_CHAT_URL = "https://api.groq.com/openai/v1/chat/completions"
-MAX_TOOL_ROUNDS = 10
+DEFAULT_MAX_TOOL_ROUNDS = 32
+
+# Long read timeout: large prompts + tool rounds can exceed Cloudflare/Groq limits anyway,
+# but a generous client timeout avoids local premature aborts on slow responses.
+GROQ_HTTP_TIMEOUT = httpx.Timeout(connect=30.0, read=600.0, write=120.0, pool=30.0)
 
 # Re-use same JSON-schema tools as Ollama (OpenAI format).
 MEMORY_TOOLS = OLLAMA_TOOLS
+
+
+async def _groq_completion_post(
+    client: httpx.AsyncClient,
+    *,
+    headers: dict[str, str],
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    """
+    POST chat/completions; retry on Groq output_parse_failed (some models emit plain text
+    instead of valid tool calls).
+
+    Retries use tool_choice=required so the model must emit at least one tool call, without
+    locking to a single tool name (locking caused tool_use_failed when the model correctly
+    chose memory_list_topics before memory_reorganize_*).
+    """
+    last: httpx.Response | None = None
+    for attempt in range(3):
+        r = await client.post(GROQ_CHAT_URL, headers=headers, json=payload)
+        last = r
+        if r.status_code == 200:
+            return r.json()
+        if r.status_code == 400:
+            try:
+                err_body = r.json()
+            except Exception:
+                r.raise_for_status()
+                raise
+            code = (err_body.get("error") or {}).get("code")
+            if code == "output_parse_failed" and attempt < 2:
+                payload["temperature"] = 0
+                payload["tool_choice"] = "required"
+                continue
+        r.raise_for_status()
+    if last is not None:
+        last.raise_for_status()
+    raise RuntimeError("Groq request failed")
 
 
 async def run_groq_chat(
@@ -25,6 +66,7 @@ async def run_groq_chat(
     runner: MemoryToolRunner,
     system_prompt: str | None = None,
     tools: list[dict[str, Any]] | None = None,
+    max_tool_rounds: int = DEFAULT_MAX_TOOL_ROUNDS,
 ) -> tuple[str, list[dict[str, Any]], str]:
     """
     Groq chat/completions with tools; execute tool calls until the model returns text.
@@ -39,25 +81,23 @@ async def run_groq_chat(
     tool_log: list[dict[str, Any]] = []
     used_model = model
 
-    async with httpx.AsyncClient(timeout=180.0) as client:
-        for _ in range(MAX_TOOL_ROUNDS):
-            # Force at least one tool call until the memory layer has been used.
-            has_tool_results = any(m.get("role") == "tool" for m in full)
-            tool_choice: str = "auto" if has_tool_results else "required"
+    rounds = max(1, int(max_tool_rounds))
+    async with httpx.AsyncClient(timeout=GROQ_HTTP_TIMEOUT) as client:
+        for _ in range(rounds):
+            payload: dict[str, Any] = {
+                "model": model,
+                "messages": full,
+                "tools": tool_defs,
+                "tool_choice": "auto",
+                "temperature": 0.2,
+                "parallel_tool_calls": False,
+            }
 
-            r = await client.post(
-                GROQ_CHAT_URL,
+            data = await _groq_completion_post(
+                client,
                 headers=headers,
-                json={
-                    "model": model,
-                    "messages": full,
-                    "tools": tool_defs,
-                    "tool_choice": tool_choice,
-                    "temperature": 0.2,
-                },
+                payload=payload,
             )
-            r.raise_for_status()
-            data = r.json()
             used_model = data.get("model") or model
             choice = (data.get("choices") or [{}])[0]
             msg = choice.get("message") or {}
@@ -66,12 +106,7 @@ async def run_groq_chat(
             if not tool_calls:
                 text = (msg.get("content") or "").strip()
                 if not tool_log:
-                    return (
-                        "Cannot answer from memory: no tools were used. "
-                        "Try again or check that the model supports tool_choice.",
-                        tool_log,
-                        used_model,
-                    )
+                    return (text or "How can I help?", tool_log, used_model)
                 return text, tool_log, used_model
 
             full.append(msg)
@@ -92,7 +127,7 @@ async def run_groq_chat(
                 )
 
         return (
-            "Stopped after maximum tool rounds; check tool_log for partial results.",
+            f"Stopped after {rounds} tool rounds (max {rounds}); check tool_log for partial results.",
             tool_log,
             used_model,
         )

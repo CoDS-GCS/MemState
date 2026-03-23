@@ -10,7 +10,7 @@ import httpx
 from memstate.llm.tools_schema import OLLAMA_TOOLS, SYSTEM_PROMPT
 from memstate.llm.tool_runner import MemoryToolRunner
 
-MAX_TOOL_ROUNDS = 10
+DEFAULT_MAX_TOOL_ROUNDS = 32
 
 
 async def run_ollama_chat(
@@ -21,6 +21,7 @@ async def run_ollama_chat(
     runner: MemoryToolRunner,
     system_prompt: str | None = None,
     tools: list[dict[str, Any]] | None = None,
+    max_tool_rounds: int = DEFAULT_MAX_TOOL_ROUNDS,
 ) -> tuple[str, list[dict[str, Any]], str]:
     """
     Send messages to Ollama with tools; execute tool calls until the model replies with text.
@@ -33,18 +34,16 @@ async def run_ollama_chat(
     tool_log: list[dict[str, Any]] = []
     used_model = model
 
+    rounds = max(1, int(max_tool_rounds))
     async with httpx.AsyncClient(timeout=180.0) as client:
-        for _ in range(MAX_TOOL_ROUNDS):
-            has_tool_results = any(m.get("role") == "tool" for m in full)
+        for _ in range(rounds):
             body: dict[str, Any] = {
                 "model": model,
                 "messages": full,
                 "tools": tool_defs,
                 "stream": False,
+                "tool_choice": "auto",
             }
-            # Prefer requiring tools until memory has been read/written this turn (Ollama 0.5+).
-            if not has_tool_results:
-                body["tool_choice"] = "required"
 
             r = await client.post(url, json=body)
             r.raise_for_status()
@@ -56,12 +55,7 @@ async def run_ollama_chat(
             if not tool_calls:
                 text = (msg.get("content") or "").strip()
                 if not tool_log:
-                    return (
-                        "Cannot answer from memory: no tools were used. "
-                        "Ensure your Ollama version supports tool_choice, or try another model.",
-                        tool_log,
-                        used_model,
-                    )
+                    return (text or "How can I help?", tool_log, used_model)
                 return text, tool_log, used_model
 
             full.append(msg)
@@ -80,7 +74,7 @@ async def run_ollama_chat(
                 )
 
         return (
-            "Stopped after maximum tool rounds; check tool_log for partial results.",
+            f"Stopped after {rounds} tool rounds (max {rounds}); check tool_log for partial results.",
             tool_log,
             used_model,
         )

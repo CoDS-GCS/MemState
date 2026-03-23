@@ -21,6 +21,7 @@ from memstate.store.graph_store import GraphStore
 router = APIRouter(prefix="/api/llm", tags=["llm"])
 
 _INTENT_TURNS_CAP = 64
+_MAX_TOOL_ROUNDS_CAP = 256
 
 
 def _normalize_dialogue_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -58,6 +59,41 @@ def _clip_dialogue_to_last_k_turns(messages: list[dict[str, Any]], k: int) -> li
     return [msg for turn in selected for msg in turn]
 
 
+def _groq_upstream_error_message(response: httpx.Response | None) -> str:
+    """Short, user-safe message; never return HTML error pages to the client."""
+    if response is None:
+        return "No response from Groq."
+    text = response.text or ""
+    status = response.status_code
+    ct = (response.headers.get("content-type") or "").lower()
+    if status != 524 and "application/json" in ct and text.strip().startswith("{"):
+        try:
+            j = response.json()
+            err = j.get("error")
+            if isinstance(err, dict):
+                msg = err.get("message") or str(err)
+                code = err.get("code")
+                if code:
+                    return f"Groq: {msg} (code {code})"
+                return f"Groq: {msg}"
+        except Exception:
+            pass
+    if status == 524 or "Error code 524" in text or "A timeout occurred" in text:
+        return (
+            "Groq timed out (HTTP 524). Very large or slow requests often fail at the edge. "
+            "Split your text into smaller messages, or use the Ollama provider locally."
+        )
+    st = text.strip()
+    if st.startswith("<!DOCTYPE") or st.startswith("<html"):
+        return (
+            f"Groq returned an HTML error page (HTTP {status}). This is usually a timeout or overload—"
+            "try shorter input, retry later, or use Ollama."
+        )
+    if len(text) > 1200:
+        return f"Groq error (HTTP {status}): {text[:1200]}…"
+    return text or f"HTTP {status}"
+
+
 class ChatBody(BaseModel):
     messages: list[dict[str, Any]] = Field(
         ...,
@@ -79,6 +115,12 @@ class ChatBody(BaseModel):
         None,
         description="Skip LLM intent classification and fix route (query|ingest|both).",
     )
+    max_tool_rounds: int | None = Field(
+        None,
+        ge=1,
+        le=_MAX_TOOL_ROUNDS_CAP,
+        description="Max LLM↔API rounds while tools are requested (overrides MEMSTATE_CHAT_MAX_TOOL_ROUNDS).",
+    )
 
 
 def _prepare_chat_messages(body: ChatBody, settings: Settings) -> list[dict[str, Any]]:
@@ -95,6 +137,11 @@ def _prepare_chat_messages(body: ChatBody, settings: Settings) -> list[dict[str,
     return _clip_dialogue_to_last_k_turns(norm, k)
 
 
+def _resolve_max_tool_rounds(body: ChatBody, settings: Settings) -> int:
+    n = body.max_tool_rounds if body.max_tool_rounds is not None else settings.chat_max_tool_rounds
+    return max(1, min(int(n), _MAX_TOOL_ROUNDS_CAP))
+
+
 def _resolve_base_url(body: ChatBody, settings: Settings) -> str:
     if body.ollama_base_url and body.ollama_base_url.strip():
         return validate_client_ollama_url(body.ollama_base_url, settings)
@@ -102,6 +149,9 @@ def _resolve_base_url(body: ChatBody, settings: Settings) -> str:
         return normalize_ollama_base_url(settings.ollama_base_url)
     except ValueError:
         return settings.ollama_base_url.rstrip("/")
+
+
+IntentSource = Literal["classifier", "override"]
 
 
 async def _resolve_intent_route(
@@ -112,23 +162,23 @@ async def _resolve_intent_route(
     ollama_base: str,
     groq_key: str,
     model: str,
-) -> IntentRoute:
+) -> tuple[IntentRoute, IntentSource]:
     if body.intent_override is not None:
-        return body.intent_override
+        return body.intent_override, "override"
     text = dialogue_text_for_classifier(dialogue)
-    return await classify_intent(
+    route = await classify_intent(
         provider=body.provider,
         model=model,
         ollama_base_url=ollama_base,
         groq_api_key=groq_key,
         dialogue_text=text,
     )
+    return route, "classifier"
 
 
 @router.post("/chat")
 async def llm_chat(body: ChatBody, store: GraphStore = Depends(get_graph_store)) -> dict[str, Any]:
     settings = get_settings()
-    runner = MemoryToolRunner(store)
     dialogue = _prepare_chat_messages(body, settings)
     model = (
         (body.model or (settings.groq_model if body.provider == "groq" else settings.ollama_model))
@@ -137,6 +187,7 @@ async def llm_chat(body: ChatBody, store: GraphStore = Depends(get_graph_store))
     )
     groq_key = (settings.groq_api_key or "").strip()
     ollama_base = _resolve_base_url(body, settings)
+    tool_rounds = _resolve_max_tool_rounds(body, settings)
 
     if body.provider == "groq":
         if not groq_key:
@@ -145,8 +196,14 @@ async def llm_chat(body: ChatBody, store: GraphStore = Depends(get_graph_store))
                 detail="Groq is not configured. Set GROQ_API_KEY in .env (see .env.example).",
             )
         try:
-            route = await _resolve_intent_route(
+            route, intent_source = await _resolve_intent_route(
                 body, dialogue=dialogue, settings=settings, ollama_base=ollama_base, groq_key=groq_key, model=model
+            )
+            runner = MemoryToolRunner(
+                store,
+                chat_route=route,
+                query_field_salience_bump=settings.query_field_salience_bump,
+                field_salience_max=settings.field_salience_max,
             )
             tool_defs = tools_for_intent_route(route)
             sys_prompt = build_chat_system_prompt(route)
@@ -157,10 +214,11 @@ async def llm_chat(body: ChatBody, store: GraphStore = Depends(get_graph_store))
                 runner=runner,
                 system_prompt=sys_prompt,
                 tools=tool_defs,
+                max_tool_rounds=tool_rounds,
             )
         except httpx.HTTPStatusError as e:
-            detail = e.response.text if e.response is not None else str(e)
-            raise HTTPException(status_code=502, detail=f"Groq error: {detail}") from e
+            detail = _groq_upstream_error_message(e.response)
+            raise HTTPException(status_code=502, detail=detail) from e
         except httpx.RequestError as e:
             raise HTTPException(
                 status_code=503,
@@ -172,12 +230,20 @@ async def llm_chat(body: ChatBody, store: GraphStore = Depends(get_graph_store))
             "model": used,
             "provider": "groq",
             "intent": route,
+            "intent_source": intent_source,
+            "max_tool_rounds": tool_rounds,
         }
 
     # Ollama
     try:
-        route = await _resolve_intent_route(
+        route, intent_source = await _resolve_intent_route(
             body, dialogue=dialogue, settings=settings, ollama_base=ollama_base, groq_key=groq_key, model=model
+        )
+        runner = MemoryToolRunner(
+            store,
+            chat_route=route,
+            query_field_salience_bump=settings.query_field_salience_bump,
+            field_salience_max=settings.field_salience_max,
         )
         tool_defs = tools_for_intent_route(route)
         sys_prompt = build_chat_system_prompt(route)
@@ -211,4 +277,6 @@ async def llm_chat(body: ChatBody, store: GraphStore = Depends(get_graph_store))
         "model": used,
         "provider": "ollama",
         "intent": route,
+        "intent_source": intent_source,
+        "max_tool_rounds": tool_rounds,
     }

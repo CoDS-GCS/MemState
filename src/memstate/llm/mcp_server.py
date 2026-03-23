@@ -13,7 +13,12 @@ mcp = FastMCP(
     "memstate-memory",
     instructions=(
         "MemState topic graph memory: use these tools to read and edit topics, fields, "
-        "and RELATED relationships. Call memory_graph_snapshot to see the full graph."
+        "and RELATED relationships. Call memory_graph_snapshot for the full graph with values. "
+        "For reorganization, use memory_reorganize_consolidation, memory_reorganize_merge_topics, "
+        "memory_reorganize_split_topics, memory_reorganize_connect_topics, or "
+        "memory_reorganize_retention_trim—each returns topics_schema_snapshot (structure only). "
+        "For merge_topics, compare current values (get_topic_schema current) for overlap before merging. "
+        "Use memory_get_topic_schema / memory_get_topic when values are needed before writes."
     ),
 )
 
@@ -163,6 +168,36 @@ def memory_set_field_ref(topic_id: str, field_name: str, ref_topic_id: str = "")
         "memory_set_field_ref",
         {"topic_id": topic_id, "field_name": field_name, "ref_topic_id": ref_topic_id},
     )
+
+
+@mcp.tool()
+def memory_reorganize_consolidation(criteria: str = "") -> dict[str, Any]:
+    """Consolidation: guidelines + topics_schema_snapshot (no values/histories)."""
+    return _runner().execute("memory_reorganize_consolidation", {"criteria": criteria})
+
+
+@mcp.tool()
+def memory_reorganize_merge_topics(criteria: str = "") -> dict[str, Any]:
+    """Merge topics: schema snapshot first; then compare current values (get_topic_schema current) for overlap—merge only if organization improves."""
+    return _runner().execute("memory_reorganize_merge_topics", {"criteria": criteria})
+
+
+@mcp.tool()
+def memory_reorganize_split_topics(criteria: str = "") -> dict[str, Any]:
+    """Split topics: guidelines + topics_schema_snapshot (structure only)."""
+    return _runner().execute("memory_reorganize_split_topics", {"criteria": criteria})
+
+
+@mcp.tool()
+def memory_reorganize_connect_topics(criteria: str = "") -> dict[str, Any]:
+    """Connect topics: guidelines + topics_schema_snapshot (structure only)."""
+    return _runner().execute("memory_reorganize_connect_topics", {"criteria": criteria})
+
+
+@mcp.tool()
+def memory_reorganize_retention_trim(criteria: str = "") -> dict[str, Any]:
+    """Retention trim (RTC): guidelines + topics_schema_snapshot (structure only)."""
+    return _runner().execute("memory_reorganize_retention_trim", {"criteria": criteria})
 
 
 def main() -> None:

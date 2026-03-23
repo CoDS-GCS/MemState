@@ -36,12 +36,27 @@ class TopicField(BaseModel):
     field_type: FieldType = "string"
     ref_topic_id: str | None = None
     history: list[FieldHistoryEntry] = Field(default_factory=list)
+    salience: float = Field(
+        default=1.0,
+        ge=0.0,
+        le=10.0,
+        description="Per-field salience (0–10). Topic salience is the average of its fields.",
+    )
 
     @field_validator("field_type", mode="before")
     @classmethod
     def _coerce_field_type(cls, v: Any) -> str:
         s = str(v) if v is not None else "string"
         return s if s in _ALLOWED_TYPES else "string"
+
+    @field_validator("salience", mode="before")
+    @classmethod
+    def _clamp_salience(cls, v: Any) -> float:
+        try:
+            x = float(v)
+        except (TypeError, ValueError):
+            return 1.0
+        return max(0.0, min(10.0, x))
 
     def current_entry(self) -> FieldHistoryEntry | None:
         return self.history[0] if self.history else None

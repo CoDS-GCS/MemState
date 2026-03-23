@@ -114,6 +114,42 @@ class GraphStore:
             {"id": topic_id, "fj": tf.to_json(), "updated_at": _now_iso()},
         )
 
+    @staticmethod
+    def average_field_salience(tf: TopicFields) -> float:
+        if not tf.fields:
+            return 1.0
+        vals = [float(f.salience) for f in tf.fields.values()]
+        return sum(vals) / len(vals)
+
+    def bump_field_salience_on_query(
+        self,
+        topic_id: str,
+        field_names: list[str],
+        *,
+        bump: float,
+        max_field_salience: float,
+    ) -> None:
+        """Increase salience on named fields (capped); set topic salience to the average of field saliences."""
+        if not field_names or bump <= 0:
+            return
+        tf = self._get_topic_fields(topic_id)
+        if not tf.fields:
+            return
+        for name in field_names:
+            if name not in tf.fields:
+                continue
+            rec = tf.fields[name]
+            rec.salience = min(max_field_salience, float(rec.salience) + bump)
+        avg = self.average_field_salience(tf)
+        self._set_topic_fields(topic_id, tf)
+        self.update_topic_meta(topic_id, salience=avg)
+
+    def sync_topic_salience_from_fields(self, topic_id: str) -> None:
+        """Set topic ``salience`` to the average of all field saliences."""
+        tf = self._get_topic_fields(topic_id)
+        avg = self.average_field_salience(tf)
+        self.update_topic_meta(topic_id, salience=avg)
+
     def create_topic(
         self,
         topic_id: str,
@@ -365,6 +401,7 @@ class GraphStore:
         if len(rec.history) > max_history:
             rec.history = rec.history[:max_history]
         self._set_topic_fields(topic_id, tf)
+        self.sync_topic_salience_from_fields(topic_id)
         return str(entry.id)
 
     def set_field_ref(
@@ -386,6 +423,7 @@ class GraphStore:
         else:
             tf.fields[field_name].ref_topic_id = ref_topic_id
         self._set_topic_fields(topic_id, tf)
+        self.sync_topic_salience_from_fields(topic_id)
 
     def update_field(
         self,
@@ -420,6 +458,7 @@ class GraphStore:
                 raise ValueError(f"ref_topic_id not found: {ref_topic_id}")
             rec.ref_topic_id = ref_topic_id if ref_topic_id else None
         self._set_topic_fields(topic_id, tf)
+        self.sync_topic_salience_from_fields(topic_id)
         return None
 
     def delete_field(self, topic_id: str, field_name: str) -> None:
@@ -427,6 +466,7 @@ class GraphStore:
         if field_name in tf.fields:
             del tf.fields[field_name]
             self._set_topic_fields(topic_id, tf)
+            self.sync_topic_salience_from_fields(topic_id)
 
     def list_field_names(self, topic_id: str) -> list[str]:
         return self.list_fields_for_topic(topic_id)
