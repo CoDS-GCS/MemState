@@ -19,13 +19,17 @@ async def run_ollama_chat(
     model: str,
     messages: list[dict[str, Any]],
     runner: MemoryToolRunner,
+    system_prompt: str | None = None,
+    tools: list[dict[str, Any]] | None = None,
 ) -> tuple[str, list[dict[str, Any]], str]:
     """
     Send messages to Ollama with tools; execute tool calls until the model replies with text.
     Returns (assistant_text, tool_log, model_used).
     """
     url = f"{base_url.rstrip('/')}/api/chat"
-    full: list[dict[str, Any]] = [{"role": "system", "content": SYSTEM_PROMPT}, *messages]
+    sys = system_prompt if system_prompt is not None else SYSTEM_PROMPT
+    tool_defs = tools if tools is not None else OLLAMA_TOOLS
+    full: list[dict[str, Any]] = [{"role": "system", "content": sys}, *messages]
     tool_log: list[dict[str, Any]] = []
     used_model = model
 
@@ -35,7 +39,7 @@ async def run_ollama_chat(
             body: dict[str, Any] = {
                 "model": model,
                 "messages": full,
-                "tools": OLLAMA_TOOLS,
+                "tools": tool_defs,
                 "stream": False,
             }
             # Prefer requiring tools until memory has been read/written this turn (Ollama 0.5+).

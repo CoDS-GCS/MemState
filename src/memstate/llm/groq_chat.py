@@ -23,6 +23,8 @@ async def run_groq_chat(
     model: str,
     messages: list[dict[str, Any]],
     runner: MemoryToolRunner,
+    system_prompt: str | None = None,
+    tools: list[dict[str, Any]] | None = None,
 ) -> tuple[str, list[dict[str, Any]], str]:
     """
     Groq chat/completions with tools; execute tool calls until the model returns text.
@@ -31,7 +33,9 @@ async def run_groq_chat(
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
-    full: list[dict[str, Any]] = [{"role": "system", "content": SYSTEM_PROMPT}, *messages]
+    sys = system_prompt if system_prompt is not None else SYSTEM_PROMPT
+    tool_defs = tools if tools is not None else MEMORY_TOOLS
+    full: list[dict[str, Any]] = [{"role": "system", "content": sys}, *messages]
     tool_log: list[dict[str, Any]] = []
     used_model = model
 
@@ -47,7 +51,7 @@ async def run_groq_chat(
                 json={
                     "model": model,
                     "messages": full,
-                    "tools": MEMORY_TOOLS,
+                    "tools": tool_defs,
                     "tool_choice": tool_choice,
                     "temperature": 0.2,
                 },

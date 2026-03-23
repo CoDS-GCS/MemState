@@ -129,7 +129,7 @@ def memory_append_field(
     why_changed: str | None = None,
     provenance: str = "mcp",
 ) -> dict[str, Any]:
-    """Append a field value / history entry."""
+    """Append history to a field; reuse an existing field_name when the fact fits—avoid redundant new fields."""
     args: dict[str, Any] = {
         "topic_id": topic_id,
         "field_name": field_name,

@@ -463,6 +463,7 @@ const LS_OLLAMA_URL = "memstate_ollama_url";
 const LS_LLM_PROVIDER = "memstate_llm_provider";
 const LS_MODEL_OLLAMA = "memstate_llm_model_ollama";
 const LS_MODEL_GROQ = "memstate_llm_model_groq";
+const LS_CHAT_INTENT_TURNS = "memstate_chat_intent_turns";
 
 const OLLAMA_MODELS = [
   { value: "llama3.2:latest", label: "llama3.2" },
@@ -528,7 +529,7 @@ function appendChatMessage(role, text) {
 /**
  * Assistant reply with expandable "Thinking" trace (provider, model, tool calls + results).
  * @param {string} text
- * @param {{ provider?: string, model?: string, tool_log?: { tool: string, result: unknown }[] }} [meta]
+ * @param {{ provider?: string, model?: string, intent?: string, tool_log?: { tool: string, result: unknown }[] }} [meta]
  */
 function appendAssistantMessage(text, meta) {
   const log = document.getElementById("chat-log");
@@ -570,7 +571,8 @@ function appendAssistantMessage(text, meta) {
 
   const metaLine = document.createElement("div");
   metaLine.className = "chat-thinking-meta";
-  metaLine.textContent = `${meta?.provider || "—"} · ${meta?.model || "—"}`;
+  const route = meta?.intent ? ` · ${meta.intent}` : "";
+  metaLine.textContent = `${meta?.provider || "—"} · ${meta?.model || "—"}${route}`;
   panel.appendChild(metaLine);
 
   if (hasTools) {
@@ -635,6 +637,18 @@ function wireChat() {
   }
 
   if (ollamaUrl) ollamaUrl.value = localStorage.getItem(LS_OLLAMA_URL) || "";
+  const intentTurnsEl = document.getElementById("chat-intent-turns");
+  if (intentTurnsEl) {
+    const saved = localStorage.getItem(LS_CHAT_INTENT_TURNS);
+    const n = saved != null ? parseInt(saved, 10) : 8;
+    if (Number.isFinite(n) && n >= 1 && n <= 64) intentTurnsEl.value = String(n);
+    intentTurnsEl.addEventListener("change", () => {
+      const v = parseInt(intentTurnsEl.value, 10);
+      if (Number.isFinite(v) && v >= 1 && v <= 64) {
+        localStorage.setItem(LS_CHAT_INTENT_TURNS, String(v));
+      }
+    });
+  }
   if (prov) {
     prov.value = localStorage.getItem(LS_LLM_PROVIDER) || "ollama";
     fillLlmModelSelect(prov.value);
@@ -667,13 +681,21 @@ function wireChat() {
     try {
       const provider = prov?.value || "ollama";
       const messagesForApi = chatHistory
-        .filter((m) => m.role === "user" && String(m.content ?? "").trim())
-        .map((m) => ({ role: "user", content: String(m.content).trim() }));
+        .filter(
+          (m) =>
+            (m.role === "user" || m.role === "assistant") && String(m.content ?? "").trim()
+        )
+        .map((m) => ({ role: m.role, content: String(m.content).trim() }));
       const payload = {
         messages: messagesForApi,
         provider,
         model: modelSel?.value || undefined,
       };
+      const it = document.getElementById("chat-intent-turns");
+      const kTurns = it ? parseInt(it.value, 10) : parseInt(localStorage.getItem(LS_CHAT_INTENT_TURNS) || "8", 10);
+      if (Number.isFinite(kTurns) && kTurns >= 1 && kTurns <= 64) {
+        payload.intent_turns = kTurns;
+      }
       if (provider === "ollama") {
         const u = ollamaUrl?.value?.trim();
         if (u) {
@@ -692,6 +714,7 @@ function wireChat() {
       appendAssistantMessage(data.reply || "(no reply)", {
         provider: data.provider,
         model: data.model,
+        intent: data.intent,
         tool_log: data.tool_log || [],
       });
       if (data.tool_log && data.tool_log.length) {

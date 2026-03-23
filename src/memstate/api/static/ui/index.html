@@ -177,6 +177,10 @@
             <span>Ollama URL</span>
             <input id="ollama-url" type="url" inputmode="url" placeholder="http://127.0.0.1:11434" autocomplete="off" />
           </label>
+          <label class="chat-setting" title="How many back-and-forth turns (user + assistant) the model sees for intent and follow-ups">
+            <span>Context turns</span>
+            <input id="chat-intent-turns" type="number" min="1" max="64" step="1" value="8" aria-label="Dialogue turns for intent" />
+          </label>
         </div>
         <div id="chat-log" class="chat-log"></div>
         <form id="form-chat" class="chat-input-row">

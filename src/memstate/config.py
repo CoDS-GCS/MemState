@@ -1,7 +1,7 @@
 from pathlib import Path
 from typing import Self
 
-from pydantic import model_validator
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -22,6 +22,8 @@ class Settings(BaseSettings):
     # Groq (https://console.groq.com) — also load GROQ_API_KEY from .env / process env (no MEMSTATE_ prefix).
     groq_api_key: str | None = None
     groq_model: str = "openai/gpt-oss-20b"
+    # LLM chat: how many dialogue turns (user + optional assistant each) to send for intent/context.
+    chat_intent_turns: int = Field(default=8, ge=1, le=64)
 
     @model_validator(mode="after")
     def _load_groq_api_key_from_env_file(self) -> Self:
