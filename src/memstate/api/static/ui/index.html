@@ -129,7 +129,24 @@
         <div class="panel-chat" aria-label="LLM assistant">
           <div class="chat-header">
             <span class="chat-title">Assistant</span>
-            <span class="chat-hint">Ollama + tools · <code>llama3.2</code> or <code>qwen2.5</code></span>
+            <span class="chat-hint" id="chat-hint-text">Choose <strong>Ollama</strong> (local) or <strong>Groq</strong> (cloud; set <code>GROQ_API_KEY</code> in <code>.env</code>).</span>
+          </div>
+          <div class="chat-settings">
+            <label class="chat-setting">
+              <span>Provider</span>
+              <select id="llm-provider" aria-label="LLM provider">
+                <option value="ollama">Ollama (local)</option>
+                <option value="groq">Groq</option>
+              </select>
+            </label>
+            <label class="chat-setting">
+              <span>Model</span>
+              <select id="llm-model" aria-label="Model"></select>
+            </label>
+            <label class="chat-setting chat-setting-full" id="ollama-url-wrap">
+              <span>Ollama URL</span>
+              <input id="ollama-url" type="url" inputmode="url" placeholder="http://127.0.0.1:11434" autocomplete="off" />
+            </label>
           </div>
           <div id="chat-log" class="chat-log"></div>
           <form id="form-chat" class="chat-input-row">

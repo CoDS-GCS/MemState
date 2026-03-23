@@ -598,9 +598,56 @@ async function refreshGraph() {
   }
 }
 
-/* ── LLM chat (Ollama + memory tools) ── */
+/* ── LLM chat (Ollama / Groq + memory tools) ── */
+
+const LS_OLLAMA_URL = "memstate_ollama_url";
+const LS_LLM_PROVIDER = "memstate_llm_provider";
+const LS_MODEL_OLLAMA = "memstate_llm_model_ollama";
+const LS_MODEL_GROQ = "memstate_llm_model_groq";
+
+const OLLAMA_MODELS = [
+  { value: "llama3.2:latest", label: "llama3.2" },
+  { value: "qwen2.5:latest", label: "qwen2.5" },
+];
+const GROQ_MODELS = [
+  { value: "openai/gpt-oss-20b", label: "GPT-OSS 20B" },
+  { value: "openai/gpt-oss-120b", label: "GPT-OSS 120B" },
+];
 
 const chatHistory = [];
+
+function fillLlmModelSelect(provider) {
+  const sel = document.getElementById("llm-model");
+  if (!sel) return;
+  const opts = provider === "groq" ? GROQ_MODELS : OLLAMA_MODELS;
+  sel.innerHTML = "";
+  for (const o of opts) {
+    const opt = document.createElement("option");
+    opt.value = o.value;
+    opt.textContent = o.label;
+    sel.appendChild(opt);
+  }
+  const key = provider === "groq" ? LS_MODEL_GROQ : LS_MODEL_OLLAMA;
+  const saved = localStorage.getItem(key);
+  if (saved && [...sel.options].some((op) => op.value === saved)) {
+    sel.value = saved;
+  }
+}
+
+function syncProviderUi(provider) {
+  const wrap = document.getElementById("ollama-url-wrap");
+  const hint = document.getElementById("chat-hint-text");
+  if (wrap) wrap.hidden = provider === "groq";
+  if (hint) {
+    if (provider === "groq") {
+      hint.innerHTML =
+        "Uses <strong>Groq</strong> in the cloud. Set <code>GROQ_API_KEY</code> in <code>.env</code> on the server.";
+    } else {
+      hint.innerHTML =
+        "<strong>Ollama</strong> runs locally (ollama.com). Change URL if not on <code>127.0.0.1:11434</code>.";
+    }
+  }
+}
 
 function appendChatMessage(role, text) {
   const log = document.getElementById("chat-log");
@@ -622,7 +669,37 @@ function wireChat() {
   const form = document.getElementById("form-chat");
   const input = document.getElementById("chat-input");
   const btn = document.getElementById("btn-chat-send");
+  const ollamaUrl = document.getElementById("ollama-url");
+  const prov = document.getElementById("llm-provider");
+  const modelSel = document.getElementById("llm-model");
   if (!form || !input || !btn) return;
+
+  if (!localStorage.getItem(LS_MODEL_OLLAMA) && localStorage.getItem("memstate_ollama_model")) {
+    localStorage.setItem(LS_MODEL_OLLAMA, localStorage.getItem("memstate_ollama_model"));
+  }
+
+  if (ollamaUrl) ollamaUrl.value = localStorage.getItem(LS_OLLAMA_URL) || "";
+  if (prov) {
+    prov.value = localStorage.getItem(LS_LLM_PROVIDER) || "ollama";
+    fillLlmModelSelect(prov.value);
+    syncProviderUi(prov.value);
+    prov.addEventListener("change", () => {
+      localStorage.setItem(LS_LLM_PROVIDER, prov.value);
+      fillLlmModelSelect(prov.value);
+      syncProviderUi(prov.value);
+    });
+  }
+  if (modelSel && prov) {
+    modelSel.addEventListener("change", () => {
+      const key = prov.value === "groq" ? LS_MODEL_GROQ : LS_MODEL_OLLAMA;
+      localStorage.setItem(key, modelSel.value);
+    });
+  }
+  if (ollamaUrl) {
+    ollamaUrl.addEventListener("change", () => {
+      localStorage.setItem(LS_OLLAMA_URL, ollamaUrl.value.trim());
+    });
+  }
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
     const text = input.value.trim();
@@ -632,9 +709,25 @@ function wireChat() {
     chatHistory.push({ role: "user", content: text });
     btn.disabled = true;
     try {
+      const provider = prov?.value || "ollama";
+      const payload = {
+        messages: chatHistory,
+        provider,
+        model: modelSel?.value || undefined,
+      };
+      if (provider === "ollama") {
+        const u = ollamaUrl?.value?.trim();
+        if (u) {
+          payload.ollama_base_url = u;
+          localStorage.setItem(LS_OLLAMA_URL, u);
+        }
+        localStorage.setItem(LS_MODEL_OLLAMA, modelSel?.value || "");
+      } else {
+        localStorage.setItem(LS_MODEL_GROQ, modelSel?.value || "");
+      }
       const data = await api("/api/llm/chat", {
         method: "POST",
-        body: JSON.stringify({ messages: chatHistory }),
+        body: JSON.stringify(payload),
       });
       chatHistory.push({ role: "assistant", content: data.reply || "" });
       appendChatMessage("assistant", data.reply || "(no reply)");

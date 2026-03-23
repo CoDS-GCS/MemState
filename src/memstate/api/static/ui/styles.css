@@ -247,6 +247,66 @@ header h1 {
   border-radius: 3px;
 }
 
+.chat-settings {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.4rem;
+  flex-shrink: 0;
+}
+
+.chat-setting-full {
+  grid-column: 1 / -1;
+}
+
+.chat-setting {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.62rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.chat-setting input {
+  padding: 0.35rem 0.45rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 0.72rem;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.chat-setting input:focus {
+  outline: none;
+  border-color: var(--border-focus);
+}
+
+.chat-setting select {
+  padding: 0.35rem 0.45rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 0.72rem;
+  cursor: pointer;
+}
+
+.chat-setting select:focus {
+  outline: none;
+  border-color: var(--border-focus);
+}
+
+@media (max-width: 380px) {
+  .chat-settings {
+    grid-template-columns: 1fr;
+  }
+}
+
 .chat-log {
   flex: 1 1 auto;
   min-height: 72px;
