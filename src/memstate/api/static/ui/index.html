@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>MemState — graph &amp; controls</title>
+    <link rel="stylesheet" href="styles.css" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+    <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js" crossorigin></script>
+    <script src="app.js" defer></script>
+  </head>
+  <body>
+    <div id="backend-banner" class="backend-banner" hidden role="status"></div>
+
+    <header>
+      <div class="header-left">
+        <svg class="logo-icon" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="2"/><path d="M12 2v4m0 12v4M4.93 4.93l2.83 2.83m8.48 8.48l2.83 2.83M2 12h4m12 0h4M4.93 19.07l2.83-2.83m8.48-8.48l2.83-2.83"/>
+        </svg>
+        <h1>MemState</h1>
+        <span class="header-badge">Graph Explorer</span>
+      </div>
+      <div class="header-right">
+        <div class="header-input-group">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+          <input type="password" id="api-key" placeholder="API key (optional)" autocomplete="off" />
+        </div>
+        <button type="button" class="btn-icon" id="btn-refresh" title="Refresh graph">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+        </button>
+      </div>
+    </header>
+
+    <div class="layout">
+      <aside class="panel">
+        <div class="panel-controls">
+        <div class="panel-section" data-section="create">
+          <button type="button" class="section-toggle active">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+            Create topic
+            <svg class="chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+          <div class="section-body open">
+            <form id="form-topic">
+              <label>Title <input name="title" type="text" value="Demo topic" placeholder="Topic title" /></label>
+              <label>Summary <input name="summary" type="text" placeholder="Brief description (optional)" /></label>
+              <div class="form-row">
+                <label class="flex-1">Kind <input name="topic_kind" type="text" placeholder="e.g. project" /></label>
+                <label class="w-80">Salience <input name="salience" type="number" value="1" min="0" step="0.1" /></label>
+              </div>
+              <button type="submit" class="btn-primary">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                Create
+              </button>
+            </form>
+          </div>
+        </div>
+
+        <div class="panel-section" data-section="edge">
+          <button type="button" class="section-toggle">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+            Add relationship
+            <svg class="chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+          <div class="section-body">
+            <form id="form-rel">
+              <label>From topic ID <input name="from_id" type="text" required placeholder="UUID" /></label>
+              <label>To topic ID <input name="to_topic_id" type="text" required placeholder="UUID" /></label>
+              <label>Kind <input name="kind" type="text" value="associated_with" /></label>
+              <button type="submit" class="btn-primary">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+                Link
+              </button>
+            </form>
+          </div>
+        </div>
+
+        <div class="panel-section" data-section="field">
+          <button type="button" class="section-toggle">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+            Append field
+            <svg class="chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+          <div class="section-body">
+            <form id="form-field">
+              <label>Topic ID <input name="topic_id" type="text" required placeholder="UUID" /></label>
+              <div class="form-row">
+                <label class="flex-1">Field name <input name="field_name" type="text" value="status" /></label>
+                <label class="w-100">Type
+                  <select name="field_type">
+                    <option>string</option>
+                    <option>json</option>
+                    <option>list</option>
+                  </select>
+                </label>
+              </div>
+              <label>Value <textarea name="value" rows="2" placeholder="Field value">open</textarea></label>
+              <label>Ref topic ID <input name="ref_topic_id" type="text" placeholder="Optional UUID (links to another topic)" /></label>
+              <button type="submit" class="btn-primary">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+                Save
+              </button>
+            </form>
+          </div>
+        </div>
+
+        <div class="panel-section" data-section="delete">
+          <button type="button" class="section-toggle">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+            Delete topic
+            <svg class="chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+          <div class="section-body">
+            <form id="form-delete">
+              <label>Topic ID <input name="topic_id" type="text" required placeholder="UUID" /></label>
+              <button type="submit" class="btn-danger">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                Delete
+              </button>
+            </form>
+          </div>
+        </div>
+
+        <div id="status" class="status-bar"></div>
+        </div>
+
+        <div class="panel-chat" aria-label="LLM assistant">
+          <div class="chat-header">
+            <span class="chat-title">Assistant</span>
+            <span class="chat-hint">Ollama + tools · <code>llama3.2</code> or <code>qwen2.5</code></span>
+          </div>
+          <div id="chat-log" class="chat-log"></div>
+          <form id="form-chat" class="chat-input-row">
+            <textarea id="chat-input" rows="2" placeholder="Ask to list topics, add relationships, update fields…" autocomplete="off"></textarea>
+            <button type="submit" class="btn-primary chat-send" id="btn-chat-send">Send</button>
+          </form>
+        </div>
+      </aside>
+
+      <main>
+        <div class="graph-wrap">
+          <div id="network"></div>
+          <div id="empty-state" class="empty-state">
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" opacity="0.4">
+              <circle cx="12" cy="12" r="2"/><circle cx="5" cy="5" r="1.5"/><circle cx="19" cy="5" r="1.5"/><circle cx="19" cy="19" r="1.5"/><circle cx="5" cy="19" r="1.5"/>
+              <line x1="6.3" y1="6.3" x2="10.6" y2="10.6"/><line x1="13.4" y1="10.6" x2="17.7" y2="6.3"/><line x1="13.4" y1="13.4" x2="17.7" y2="17.7"/><line x1="6.3" y1="17.7" x2="10.6" y2="13.4"/>
+            </svg>
+            <p>No topics yet</p>
+            <span>Create a topic in the sidebar to get started</span>
+          </div>
+          <div class="legend">
+            <span><i class="rel"></i> RELATED</span>
+            <span><i class="ref"></i> field ref</span>
+            <span class="legend-hint">Wheel zoom · drag empty space to pan · drag nodes</span>
+          </div>
+        </div>
+        <div class="detail-panel">
+          <div class="detail-header">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+            <strong>Topic detail</strong>
+            <button type="button" class="btn-copy" id="btn-copy-detail" title="Copy JSON">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+            </button>
+          </div>
+          <pre class="raw" id="detail">Click a node to inspect its topic + fields.</pre>
+        </div>
+      </main>
+    </div>
+
+    <div id="toast-container" class="toast-container"></div>
+  </body>
+</html>

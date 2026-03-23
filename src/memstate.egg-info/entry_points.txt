@@ -1,0 +1,3 @@
+[console_scripts]
+memstate-api = memstate.api.cli:main
+memstate-llm-mcp = memstate.llm.mcp_server:main

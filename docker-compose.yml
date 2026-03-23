@@ -1,0 +1,14 @@
+services:
+  memstate-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8765:8765"
+    environment:
+      MEMSTATE_KUZU_PATH: /data/memstate.kuzu
+    volumes:
+      - memstate_data:/data
+
+volumes:
+  memstate_data:

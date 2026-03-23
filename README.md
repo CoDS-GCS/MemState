@@ -1,1 +1,40 @@
 # MemState
+
+Topic graph memory with an embedded **Kuzu** database, FastAPI ingest/query, and a small web UI to explore topics, `fields_json`, and relationships.
+
+## Data model
+
+Each **Topic** node stores scalar metadata (title, summary, salience, `topic_kind`, embeddings, etc.) and a JSON blob **`fields_json`** for typed fields with optional per-field history and **`ref_topic_id`** (field-level reference to another topic).
+
+**Topic–topic** links use a **`RELATED`** edge with a **`kind`** string (e.g. `associated_with`). **Field references** to another topic are modeled in the UI graph as edges from a topic to the referenced topic when `ref_topic_id` is set on a field.
+
+The diagram below matches the high-level shape of the model (same Mermaid source as `GET /api/ui/datamodel`):
+
+```mermaid
+flowchart LR
+  subgraph topicA [Topic A]
+    metaA[title summary salience topic_kind embedding]
+    fieldsA[fields_json]
+  end
+  subgraph topicB [Topic B]
+    metaB[...]
+    fieldsB[fields_json]
+  end
+  topicA -->|RELATED kind| topicB
+  fieldsA -->|ref_topic_id on field| topicB
+```
+
+## Run
+
+```bash
+pip install -e .
+python -m memstate.api.cli
+```
+
+Open `http://127.0.0.1:8765/ui/` for the graph explorer (D3 force layout: scroll to zoom, drag the background to pan, drag nodes to rearrange, double-click empty SVG to reset zoom). Set `MEMSTATE_KUZU_PATH` if you want the database file outside the project directory (recommended if the folder is cloud-synced).
+
+## API
+
+- `GET /health/graph` — Kuzu store health
+- `GET /api/ui/graph` — graph snapshot for the UI (requires API key if configured)
+- `GET /api/ui/datamodel` — JSON with the `mermaid` string used in the diagram above
