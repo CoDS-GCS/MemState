@@ -26,6 +26,12 @@ class Settings(BaseSettings):
     chat_intent_turns: int = Field(default=8, ge=1, le=64)
     # Max assistant↔API iterations while the model keeps requesting tool calls (reorganize flows need more).
     chat_max_tool_rounds: int = Field(default=32, ge=1, le=256)
+    # When POST /api/llm/chat uses internal_chunk=True, split the last user message into segments (same as UI limits).
+    chat_chunk_threshold_chars: int = Field(default=10000, ge=2000, le=500_000)
+    chat_chunk_max_chars: int = Field(default=10000, ge=1000, le=100_000)
+    chat_chunk_overlap: int = Field(default=800, ge=0, le=5000)
+    # Per-segment tool budget for internal chunking (each segment is a separate LLM run; graph persists between).
+    chat_chunk_per_segment_tool_rounds: int = Field(default=72, ge=8, le=256)
     # On query intent: bump field salience when read tools return field data (cap field_salience_max).
     query_field_salience_bump: float = Field(default=0.1, ge=0.0, le=2.0)
     field_salience_max: float = Field(default=10.0, ge=0.1, le=10.0)

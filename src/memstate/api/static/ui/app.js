@@ -871,47 +871,8 @@ const LS_MODEL_GROQ = "memstate_llm_model_groq";
 const LS_CHAT_INTENT_TURNS = "memstate_chat_intent_turns";
 /** Groq edge timeouts are common above ~tens of k chars—warn before send (single-shot only). */
 const GROQ_LONG_MESSAGE_WARN_CHARS = 28000;
-/** Above this character count, split the user message into overlapping chunks (sequential requests). */
+/** Above this character count, POST once with internal_chunk=true (server splits into overlapping segments). */
 const CHAT_CHUNK_THRESHOLD = 10000;
-const CHAT_CHUNK_MAX_CHARS = 10000;
-const CHAT_CHUNK_OVERLAP = 800;
-
-/**
- * Split long text into chunks of at most maxLen, sliding by (maxLen - overlap) for continuity.
- * @param {string} text
- * @param {number} maxLen
- * @param {number} overlap
- * @returns {string[]}
- */
-function chunkTextWithOverlap(text, maxLen, overlap) {
-  const L = text.length;
-  if (L <= maxLen) return [text];
-  if (overlap >= maxLen) return [text];
-  const chunks = [];
-  let start = 0;
-  while (start < L) {
-    const end = Math.min(start + maxLen, L);
-    chunks.push(text.slice(start, end));
-    if (end === L) break;
-    const next = end - overlap;
-    start = next <= start ? end : next;
-  }
-  return chunks;
-}
-
-/**
- * @param {string} chunk
- * @param {number} index1
- * @param {number} total
- * @param {number} overlap
- */
-function buildChunkedUserMessage(chunk, index1, total, overlap) {
-  return (
-    `[Part ${index1}/${total} — long user message split with ~${overlap} character overlap between adjacent parts for context.]\n` +
-    `Integrate this segment with the graph; duplicated overlap is for continuity only (avoid duplicating whole topics already created in a prior part).\n\n---\n\n` +
-    chunk
-  );
-}
 
 const OLLAMA_MODELS = [
   { value: "llama3.2:latest", label: "llama3.2" },
@@ -1080,7 +1041,11 @@ function appendAssistantMessage(text, meta) {
 
   const metaLine = document.createElement("div");
   metaLine.className = "chat-thinking-meta";
-  metaLine.textContent = `${meta?.provider || "—"} · ${meta?.model || "—"}`;
+  const segHint =
+    meta?.internal_chunked && meta?.segments != null
+      ? ` · ${meta.segments} server segment${meta.segments !== 1 ? "s" : ""}`
+      : "";
+  metaLine.textContent = `${meta?.provider || "—"} · ${meta?.model || "—"}${segHint}`;
   panel.appendChild(metaLine);
 
   if (hasIntent) {
@@ -1104,7 +1069,8 @@ function appendAssistantMessage(text, meta) {
       step.className = "chat-thinking-step";
       const nameEl = document.createElement("div");
       nameEl.className = "chat-thinking-tool-name";
-      nameEl.textContent = `${i + stepOffset}. ${entry.tool || "(unknown)"}`;
+      const seg = entry.segment != null ? `[seg ${entry.segment}] ` : "";
+      nameEl.textContent = `${i + stepOffset}. ${seg}${entry.tool || "(unknown)"}`;
       const pre = document.createElement("pre");
       pre.className = "chat-thinking-json";
       let s;
@@ -1160,82 +1126,73 @@ async function runChatTurn(userText, options = {}) {
   if (!text) return;
 
   const provider = prov?.value || "ollama";
-  const chunks =
-    text.length > CHAT_CHUNK_THRESHOLD
-      ? chunkTextWithOverlap(text, CHAT_CHUNK_MAX_CHARS, CHAT_CHUNK_OVERLAP)
-      : [text];
-  const multiPart = chunks.length > 1;
+  const useInternalChunk = text.length > CHAT_CHUNK_THRESHOLD;
 
-  if (!multiPart && provider === "groq" && text.length >= GROQ_LONG_MESSAGE_WARN_CHARS) {
+  if (!useInternalChunk && provider === "groq" && text.length >= GROQ_LONG_MESSAGE_WARN_CHARS) {
     toast(
-      "Heads up: very long messages often time out on Groq (HTTP 524). Consider splitting into shorter parts or using Ollama."
+      "Heads up: very long messages often time out on Groq (HTTP 524). Consider using Ollama or shorten the text."
     );
   }
-  if (multiPart) {
+  if (useInternalChunk) {
     toast(
-      `Sending ${chunks.length} overlapping parts (${CHAT_CHUNK_MAX_CHARS} chars max per part, ${CHAT_CHUNK_OVERLAP} overlap).`
+      `Long message (${text.length} chars): one request — the server splits it into overlapping segments.`
     );
   }
 
   if (btn) btn.disabled = true;
   try {
-    for (let pi = 0; pi < chunks.length; pi++) {
-      const part = chunks[pi];
-      const userContent = multiPart
-        ? buildChunkedUserMessage(part, pi + 1, chunks.length, CHAT_CHUNK_OVERLAP)
-        : part;
+    appendChatMessage("user", text);
+    chatHistory.push({ role: "user", content: text });
 
-      appendChatMessage("user", userContent);
-      chatHistory.push({ role: "user", content: userContent });
-
-      const messagesForApi = chatHistory
-        .filter(
-          (m) =>
-            (m.role === "user" || m.role === "assistant") && String(m.content ?? "").trim()
-        )
-        .map((m) => ({ role: m.role, content: String(m.content).trim() }));
-      const payload = {
-        messages: messagesForApi,
-        provider,
-        model: modelSel?.value || undefined,
-      };
-      if (intentOverride === "query" || intentOverride === "ingest" || intentOverride === "both") {
-        payload.intent_override = intentOverride;
+    const messagesForApi = chatHistory
+      .filter(
+        (m) =>
+          (m.role === "user" || m.role === "assistant") && String(m.content ?? "").trim()
+      )
+      .map((m) => ({ role: m.role, content: String(m.content).trim() }));
+    const payload = {
+      messages: messagesForApi,
+      provider,
+      model: modelSel?.value || undefined,
+    };
+    if (useInternalChunk) {
+      payload.internal_chunk = true;
+    }
+    if (intentOverride === "query" || intentOverride === "ingest" || intentOverride === "both") {
+      payload.intent_override = intentOverride;
+    }
+    const it = document.getElementById("chat-intent-turns");
+    const kTurns = it ? parseInt(it.value, 10) : parseInt(localStorage.getItem(LS_CHAT_INTENT_TURNS) || "8", 10);
+    if (Number.isFinite(kTurns) && kTurns >= 1 && kTurns <= 64) {
+      payload.intent_turns = kTurns;
+    }
+    if (provider === "ollama") {
+      const u = ollamaUrl?.value?.trim();
+      if (u) {
+        payload.ollama_base_url = u;
+        localStorage.setItem(LS_OLLAMA_URL, u);
       }
-      const it = document.getElementById("chat-intent-turns");
-      const kTurns = it ? parseInt(it.value, 10) : parseInt(localStorage.getItem(LS_CHAT_INTENT_TURNS) || "8", 10);
-      if (Number.isFinite(kTurns) && kTurns >= 1 && kTurns <= 64) {
-        payload.intent_turns = kTurns;
-      }
-      if (provider === "ollama") {
-        const u = ollamaUrl?.value?.trim();
-        if (u) {
-          payload.ollama_base_url = u;
-          localStorage.setItem(LS_OLLAMA_URL, u);
-        }
-        localStorage.setItem(LS_MODEL_OLLAMA, modelSel?.value || "");
-      } else {
-        localStorage.setItem(LS_MODEL_GROQ, modelSel?.value || "");
-      }
-      const data = await api("/api/llm/chat", {
-        method: "POST",
-        body: JSON.stringify(payload),
-      });
-      const replyText = data.reply || "(no reply)";
-      chatHistory.push({ role: "assistant", content: replyText });
-      appendAssistantMessage(
-        multiPart ? `[Reply — part ${pi + 1}/${chunks.length}]\n\n${replyText}` : replyText,
-        {
-          provider: data.provider,
-          model: data.model,
-          intent: data.intent,
-          intent_source: data.intent_source,
-          tool_log: data.tool_log || [],
-        }
-      );
-      if (data.tool_log && data.tool_log.length) {
-        await refreshGraph();
-      }
+      localStorage.setItem(LS_MODEL_OLLAMA, modelSel?.value || "");
+    } else {
+      localStorage.setItem(LS_MODEL_GROQ, modelSel?.value || "");
+    }
+    const data = await api("/api/llm/chat", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+    const replyText = data.reply || "(no reply)";
+    chatHistory.push({ role: "assistant", content: replyText });
+    appendAssistantMessage(replyText, {
+      provider: data.provider,
+      model: data.model,
+      intent: data.intent,
+      intent_source: data.intent_source,
+      tool_log: data.tool_log || [],
+      internal_chunked: data.internal_chunked,
+      segments: data.segments,
+    });
+    if (data.tool_log && data.tool_log.length) {
+      await refreshGraph();
     }
   } catch (err) {
     appendChatMessage("assistant", "Error: " + err.message);
