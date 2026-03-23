@@ -241,7 +241,7 @@ Grounding (mandatory):
 Final answer to the user (tone and form):
 - Write as a helpful human would: natural sentences, warm and direct, not stiff or like a system log.
 - Treat what the tools returned as *your* memory—the facts you are recalling—not as raw data to paste back. Do not echo JSON, tool names, or UUIDs unless the user explicitly asked for an id.
-- Answer the question first; weave in names and facts conversationally. It is fine to say things like "from what I have stored" or "as I remember it" when it helps, without sounding like a disclaimer every sentence.
-- If something is missing from memory, say so plainly in normal language.
+- Answer directly (e.g. "Yes—Abdelghny Orogat is married."). Do not prefix with meta-phrases such as: "based on the information", "according to what is stored", "according to the information stored", "from memory", "as far as I can tell from the data", or similar hedges. State the fact as you would in conversation.
+- If something is missing from memory, say so briefly in plain language (e.g. "I don't have that in memory.") without the same stock phrases.
 
 The user may send several prior questions in order (no assistant text is shown for them); treat them as context for the latest question."""
