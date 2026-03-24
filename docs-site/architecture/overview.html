@@ -1,0 +1,148 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Architecture - runtime overview</title>
+    <link rel="stylesheet" href="../styles.css" />
+  </head>
+  <body class="has-sidebar" data-doc-page="architecture/overview">
+    <div class="doc-layout">
+      <aside id="doc-sidebar" aria-label="Documentation navigation"></aside>
+      <div class="doc-inner">
+        <header class="page-header">
+          <h1>Runtime architecture overview</h1>
+        </header>
+        <main class="page-main">
+          <p>
+            MemState runs as a single FastAPI process and keeps all durable state in one embedded Kuzu database file. All API surfaces share the same in-process
+            store handle, so state is immediately consistent across <code>/v1</code>, <code>/api/ui</code>, and <code>/api/llm/chat</code>.
+          </p>
+
+          <h2>Deployment and process model</h2>
+          <ul>
+            <li><strong>Single service binary path</strong>: <code>python -m memstate.api.cli</code> launches Uvicorn with <code>memstate.api.main:app</code>.</li>
+            <li><strong>Single process ownership</strong>: one OS process owns the listening socket and shared graph handle for a database path.</li>
+            <li><strong>No external DB tier</strong>: Kuzu is embedded and opened from <code>MEMSTATE_KUZU_PATH</code>.</li>
+            <li><strong>No separate queue/worker</strong>: post-response background work uses FastAPI <code>BackgroundTasks</code>.</li>
+          </ul>
+
+          <h2>Core components and responsibilities</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>Component</th>
+                <th>Primary role</th>
+                <th>Called by</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>api.main</code></td>
+                <td>Route layer, health endpoints, auth dependency wiring, router mounting.</td>
+                <td>HTTP clients</td>
+              </tr>
+              <tr>
+                <td><code>api.deps</code></td>
+                <td>Cached singleton providers for settings, executor, reasoner, shared store.</td>
+                <td>FastAPI dependency injection</td>
+              </tr>
+              <tr>
+                <td><code>core.Executor</code></td>
+                <td><code>/v1</code> business semantics: ingest placements, staged query, salience bump.</td>
+                <td><code>/v1/ingest</code>, <code>/v1/query</code></td>
+              </tr>
+              <tr>
+                <td><code>reasoner.Reasoner</code></td>
+                <td>Rule-based maintenance (forget low salience, merge duplicate titles).</td>
+                <td>Background tasks after ingest/query</td>
+              </tr>
+              <tr>
+                <td><code>store.GraphStore</code></td>
+                <td>Kuzu Cypher facade for topic, field, edge, and vector operations.</td>
+                <td>Executor, UI API, tool runner</td>
+              </tr>
+              <tr>
+                <td><code>llm.MemoryToolRunner</code></td>
+                <td>Executes LLM tool calls against the same shared store.</td>
+                <td><code>/api/llm/chat</code>, MCP server</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <h2>Request lifecycle diagrams</h2>
+          <h3>Ingest path (<code>POST /v1/ingest</code>)</h3>
+          <pre class="sequence"><code>Client -> FastAPI route -> Executor.ingest
+  -> GraphStore writes (topic/fields/edges, embedding update)
+  -> HTTP response returned
+  -> BackgroundTasks callback -> Reasoner.run("ingest_complete")
+      -> run_forget_low_salience? (policy threshold)
+      -> run_revise_duplicates? (duplicate-title heuristic)</code></pre>
+
+          <h3>Query path (<code>POST /v1/query</code>)</h3>
+          <pre class="sequence"><code>Client -> FastAPI route -> Executor.query
+  -> embed query text
+  -> semantic candidate selection (vector KNN or cosine fallback)
+  -> optional structural expansion (neighbors + fields)
+  -> optional temporal expansion (history when explain=true)
+  -> salience bump + topic history append per returned topic
+  -> HTTP response returned
+  -> BackgroundTasks callback -> Reasoner.run("query_complete")</code></pre>
+
+          <h2>Shared singleton model</h2>
+          <div class="figure-block">
+            <svg class="diagram-svg" viewBox="0 0 860 210" xmlns="http://www.w3.org/2000/svg" aria-label="Singleton dependency graph">
+              <defs>
+                <marker id="arr" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L0,6 L7,3 z" fill="#8b949e" /></marker>
+              </defs>
+              <rect x="20" y="72" width="150" height="64" rx="8" fill="#10161d" stroke="#30363d"/>
+              <text x="95" y="100" text-anchor="middle" fill="#e6edf3" font-size="13" font-family="Segoe UI, sans-serif">get_executor()</text>
+              <text x="95" y="120" text-anchor="middle" fill="#8b949e" font-size="11" font-family="Segoe UI, sans-serif">@lru_cache</text>
+
+              <line x1="170" y1="104" x2="220" y2="104" stroke="#8b949e" stroke-width="1.3" marker-end="url(#arr)"/>
+
+              <rect x="225" y="52" width="160" height="104" rx="8" fill="#10161d" stroke="#2ea043"/>
+              <text x="305" y="84" text-anchor="middle" fill="#2ea043" font-size="13" font-family="Segoe UI, sans-serif">Executor</text>
+              <text x="305" y="106" text-anchor="middle" fill="#c9d1d9" font-size="11" font-family="Segoe UI, sans-serif">holds shared store</text>
+              <text x="305" y="126" text-anchor="middle" fill="#c9d1d9" font-size="11" font-family="Segoe UI, sans-serif">policy + embedder</text>
+
+              <line x1="385" y1="104" x2="435" y2="104" stroke="#8b949e" stroke-width="1.3" marker-end="url(#arr)"/>
+
+              <rect x="440" y="72" width="145" height="64" rx="8" fill="#10161d" stroke="#d29922"/>
+              <text x="512" y="98" text-anchor="middle" fill="#d29922" font-size="13" font-family="Segoe UI, sans-serif">GraphStore</text>
+              <text x="512" y="118" text-anchor="middle" fill="#8b949e" font-size="11" font-family="Segoe UI, sans-serif">shared instance</text>
+
+              <line x1="585" y1="104" x2="635" y2="104" stroke="#8b949e" stroke-width="1.3" marker-end="url(#arr)"/>
+
+              <rect x="640" y="72" width="200" height="64" rx="8" fill="#10161d" stroke="#a371f7"/>
+              <text x="740" y="99" text-anchor="middle" fill="#a371f7" font-size="13" font-family="Segoe UI, sans-serif">KuzuGraph (path-cached)</text>
+              <text x="740" y="119" text-anchor="middle" fill="#8b949e" font-size="11" font-family="Segoe UI, sans-serif">one handle per resolved path</text>
+
+              <line x1="95" y1="72" x2="95" y2="28" stroke="#8b949e" stroke-width="1.1" marker-end="url(#arr)"/>
+              <rect x="20" y="8" width="150" height="20" rx="5" fill="#10161d" stroke="#30363d"/>
+              <text x="95" y="22" text-anchor="middle" fill="#8b949e" font-size="10" font-family="Segoe UI, sans-serif">get_graph_store() reuses executor.store</text>
+            </svg>
+            <p class="diagram-caption">Dependency cache guarantees all major surfaces use one shared store object and one path-scoped Kuzu handle.</p>
+          </div>
+
+          <h2>Boundary and error behavior</h2>
+          <ul>
+            <li><strong>Validation errors</strong>: <code>ValueError</code> becomes HTTP 400 through a global exception handler.</li>
+            <li><strong>Auth errors</strong>: optional API key mismatch becomes HTTP 401 from <code>verify_api_key</code>.</li>
+            <li><strong>Graph health failures</strong>: <code>/health/graph</code> returns 503 with path and operator hint text.</li>
+            <li><strong>Background failures</strong>: reasoner failures do not change the already-sent ingest/query response status.</li>
+          </ul>
+
+          <h2>Related pages</h2>
+          <ul>
+            <li><a href="storage.html">Storage and schema</a></li>
+            <li><a href="reasoning.html">Reasoner behavior</a></li>
+            <li><a href="http-stack.html">HTTP, UI, and LLM integration</a></li>
+          </ul>
+        </main>
+        <footer class="page-footer">Architecture reference: runtime topology, component boundaries, and request lifecycles.</footer>
+      </div>
+    </div>
+    <script src="../js/nav.js" defer></script>
+  </body>
+</html>

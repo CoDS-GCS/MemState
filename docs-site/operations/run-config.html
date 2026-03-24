@@ -1,0 +1,96 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Operations - run and configuration</title>
+    <link rel="stylesheet" href="../styles.css" />
+  </head>
+  <body class="has-sidebar" data-doc-page="operations/run-config">
+    <div class="doc-layout">
+      <aside id="doc-sidebar" aria-label="Documentation navigation"></aside>
+      <div class="doc-inner">
+        <header class="page-header">
+          <h1>Run and configuration</h1>
+        </header>
+        <main class="page-main">
+          <p>
+            This page documents startup, runtime settings, and operational checks for MemState deployments.
+          </p>
+
+          <h2>Boot sequence</h2>
+          <ol>
+            <li>Load settings from environment and optional <code>.env</code> (<code>MEMSTATE_*</code> prefix, plus <code>GROQ_API_KEY</code> fallback).</li>
+            <li>Start Uvicorn with import path <code>memstate.api.main:app</code> and configured host/port.</li>
+            <li>Lazy-create singleton executor and reasoner when first route call requests dependencies.</li>
+            <li>Open and initialize Kuzu schema through <code>get_store()</code> on first store access.</li>
+          </ol>
+
+          <h2>Local run</h2>
+          <pre><code>pip install -e .
+python -m memstate.api.cli</code></pre>
+          <p>Default bind: <code>0.0.0.0:8765</code>. UI: <code>http://127.0.0.1:8765/ui/</code></p>
+
+          <h2>Core environment variables</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>Variable</th>
+                <th>Default</th>
+                <th>Purpose</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr><td><code>MEMSTATE_KUZU_PATH</code></td><td><code>memstate.kuzu</code></td><td>Embedded database file path.</td></tr>
+              <tr><td><code>MEMSTATE_API_HOST</code></td><td><code>0.0.0.0</code></td><td>HTTP bind host.</td></tr>
+              <tr><td><code>MEMSTATE_API_PORT</code></td><td><code>8765</code></td><td>HTTP bind port.</td></tr>
+              <tr><td><code>MEMSTATE_API_KEY</code></td><td>unset</td><td>Optional API key for protected JSON routes.</td></tr>
+              <tr><td><code>MEMSTATE_OLLAMA_BASE_URL</code></td><td><code>http://127.0.0.1:11434</code></td><td>Ollama provider endpoint.</td></tr>
+              <tr><td><code>MEMSTATE_OLLAMA_MODEL</code></td><td><code>llama3.2:latest</code></td><td>Default Ollama model id.</td></tr>
+              <tr><td><code>MEMSTATE_GROQ_MODEL</code></td><td><code>openai/gpt-oss-20b</code></td><td>Default Groq model id.</td></tr>
+              <tr><td><code>GROQ_API_KEY</code></td><td>unset</td><td>Groq credential (loaded without prefix).</td></tr>
+            </tbody>
+          </table>
+
+          <h2>Chat/Study operational tuning</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>Variable</th>
+                <th>Default</th>
+                <th>Operational impact</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr><td><code>MEMSTATE_CHAT_INTENT_TURNS</code></td><td>8</td><td>Intent classifier context depth.</td></tr>
+              <tr><td><code>MEMSTATE_CHAT_MAX_TOOL_ROUNDS</code></td><td>32</td><td>Max tool-loop rounds for normal chat flow.</td></tr>
+              <tr><td><code>MEMSTATE_CHAT_CHUNK_THRESHOLD_CHARS</code></td><td>10000</td><td>Threshold for Study two-phase ingest.</td></tr>
+              <tr><td><code>MEMSTATE_CHAT_CHUNK_PER_SEGMENT_TOOL_ROUNDS</code></td><td>72</td><td>Tool budget used in Study phase A.</td></tr>
+              <tr><td><code>MEMSTATE_STUDY_PHASE_DELAY_SECONDS</code></td><td>8.0</td><td>Pause between Study phase A and phase B.</td></tr>
+            </tbody>
+          </table>
+
+          <h2>Health and diagnostics</h2>
+          <ul>
+            <li><code>GET /health</code>: process liveness.</li>
+            <li><code>GET /health/graph</code>: verifies graph open and read query against configured path.</li>
+            <li><code>GET /health/falkordb</code>: compatibility alias to graph health endpoint.</li>
+          </ul>
+
+          <div class="callout warn">
+            If graph health reports lock errors, ensure no duplicate MemState process is using the same DB path and avoid cloud-sync locked folders.
+          </div>
+
+          <h2>Client integration environment</h2>
+          <p><code>MemoryClient</code> reads:</p>
+          <ul>
+            <li><code>MEMSTATE_API_URL</code> (default <code>http://127.0.0.1:8765</code>)</li>
+            <li><code>MEMSTATE_API_KEY</code> (optional)</li>
+          </ul>
+        </main>
+        <footer class="page-footer">Operations reference: startup, configuration matrix, and health checks.</footer>
+      </div>
+    </div>
+    <script src="../js/nav.js" defer></script>
+  </body>
+</html>

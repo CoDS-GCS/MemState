@@ -1,0 +1,96 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Operations - low-level UI API</title>
+    <link rel="stylesheet" href="../styles.css" />
+  </head>
+  <body class="has-sidebar" data-doc-page="operations/low-level">
+    <div class="doc-layout">
+      <aside id="doc-sidebar" aria-label="Documentation navigation"></aside>
+      <div class="doc-inner">
+        <header class="page-header">
+          <h1>Low-level UI API (<code>/api/ui</code>)</h1>
+        </header>
+        <main class="page-main">
+          <p>
+            The UI API exposes direct graph operations intended for interactive editing, migrations, and tooling. Unlike <code>/v1</code>, it does not enforce ingest
+            placement semantics.
+          </p>
+
+          <h2>Endpoint groups</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>Group</th>
+                <th>Endpoints</th>
+                <th>Notes</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Model and graph payload</td>
+                <td><code>GET /api/ui/datamodel</code>, <code>GET /api/ui/graph</code></td>
+                <td>Model diagram source and graph snapshot for visual clients.</td>
+              </tr>
+              <tr>
+                <td>Topic CRUD</td>
+                <td><code>POST/GET/PATCH/DELETE /api/ui/topics...</code></td>
+                <td>Create, list, fetch, patch, and delete topics directly.</td>
+              </tr>
+              <tr>
+                <td>Relationships</td>
+                <td><code>POST/DELETE /api/ui/topics/{id}/relationships</code></td>
+                <td>Direct <code>RELATED</code> management.</td>
+              </tr>
+              <tr>
+                <td>Fields</td>
+                <td><code>POST/GET/DELETE /api/ui/topics/{id}/fields...</code></td>
+                <td>Field history append/read/delete and ref updates.</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <h2>Graph snapshot details</h2>
+          <p><code>GET /api/ui/graph</code> returns:</p>
+          <ul>
+            <li><code>nodes[]</code> with topic metadata, summarized fields, and <code>community</code> cluster id.</li>
+            <li><code>edges[]</code> with both <code>related</code> and <code>field_ref</code> edge types.</li>
+          </ul>
+          <p>
+            Community ids are computed by blending structural links (RELATED + refs) with embedding-similarity neighborhoods.
+          </p>
+
+          <h2>Field operations behavior</h2>
+          <ul>
+            <li><code>POST /fields</code> appends history and can create missing fields.</li>
+            <li><code>GET /fields/{name}</code> can return full history (<code>with_history=true</code>) or current snapshot only.</li>
+            <li><code>PUT /fields/{name}/ref</code> sets or clears <code>ref_topic_id</code>.</li>
+            <li>Field operations update topic salience via field-average synchronization.</li>
+          </ul>
+
+          <h2>Low-level flow diagram</h2>
+          <pre class="sequence"><code>UI client request -> /api/ui handler
+  -> GraphStore direct method call
+  -> Kuzu update/read
+  -> optional graph snapshot normalization
+  -> JSON response (no Executor placement layer)</code></pre>
+
+          <h2>When to use this surface</h2>
+          <ul>
+            <li>Interactive editors that need immediate, precise control over graph shape.</li>
+            <li>Migration and repair tooling.</li>
+            <li>Debugging or inspection scripts that need direct topic/field endpoints.</li>
+          </ul>
+
+          <div class="callout warn">
+            For product-facing ingestion/query behavior, prefer <code>/v1</code>. The UI API intentionally exposes lower-level primitives and fewer guardrails.
+          </div>
+        </main>
+        <footer class="page-footer">Low-level operations reference: direct topic/field/relationship API behavior.</footer>
+      </div>
+    </div>
+    <script src="../js/nav.js" defer></script>
+  </body>
+</html>

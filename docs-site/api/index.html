@@ -1,0 +1,111 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>HTTP API - endpoint index</title>
+    <link rel="stylesheet" href="../styles.css" />
+  </head>
+  <body class="has-sidebar" data-doc-page="api/index">
+    <div class="doc-layout">
+      <aside id="doc-sidebar" aria-label="Documentation navigation"></aside>
+      <div class="doc-inner">
+        <header class="page-header">
+          <h1>HTTP endpoint index</h1>
+        </header>
+        <main class="page-main">
+          <p>
+            Complete endpoint map for MemState API surfaces, including auth behavior and module ownership.
+          </p>
+
+          <h2>Auth summary</h2>
+          <ul>
+            <li>When <code>MEMSTATE_API_KEY</code> is set, protected JSON routes require <code>X-API-Key</code> or <code>Authorization: Bearer</code>.</li>
+            <li><code>/health</code>, <code>/health/graph</code>, <code>/health/falkordb</code>, and static <code>/ui</code> remain unauthenticated.</li>
+          </ul>
+
+          <h2>Core app routes</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>Method</th>
+                <th>Path</th>
+                <th>Auth</th>
+                <th>Module</th>
+                <th>Description</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr><td>GET</td><td><code>/</code></td><td>No</td><td><code>api.main</code></td><td>Redirect to <code>/ui/</code>.</td></tr>
+              <tr><td>GET</td><td><code>/health</code></td><td>No</td><td><code>api.main</code></td><td>Process liveness.</td></tr>
+              <tr><td>GET</td><td><code>/health/graph</code></td><td>No</td><td><code>api.main</code></td><td>Graph-open and basic read check.</td></tr>
+              <tr><td>GET</td><td><code>/health/falkordb</code></td><td>No</td><td><code>api.main</code></td><td>Compatibility alias to graph health check.</td></tr>
+              <tr><td>POST</td><td><code>/v1/ingest</code></td><td>Yes*</td><td><code>api.main</code></td><td>Placement-based ingestion.</td></tr>
+              <tr><td>POST</td><td><code>/v1/query</code></td><td>Yes*</td><td><code>api.main</code></td><td>Staged retrieval query.</td></tr>
+            </tbody>
+          </table>
+
+          <h2>UI API routes (<code>/api/ui</code>)</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>Method</th>
+                <th>Path</th>
+                <th>Description</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr><td>GET</td><td><code>/api/ui/datamodel</code></td><td>Returns canonical Mermaid model diagram string.</td></tr>
+              <tr><td>GET</td><td><code>/api/ui/graph</code></td><td>Graph snapshot with nodes, edges, communities.</td></tr>
+              <tr><td>POST</td><td><code>/api/ui/topics</code></td><td>Create topic.</td></tr>
+              <tr><td>GET</td><td><code>/api/ui/topics</code></td><td>List topic ids.</td></tr>
+              <tr><td>GET</td><td><code>/api/ui/topics/{topic_id}</code></td><td>Fetch topic and fields payload.</td></tr>
+              <tr><td>PATCH</td><td><code>/api/ui/topics/{topic_id}</code></td><td>Patch topic metadata.</td></tr>
+              <tr><td>DELETE</td><td><code>/api/ui/topics/{topic_id}</code></td><td>Delete topic.</td></tr>
+              <tr><td>POST</td><td><code>/api/ui/topics/{from_id}/relationships</code></td><td>Add RELATED edge.</td></tr>
+              <tr><td>DELETE</td><td><code>/api/ui/topics/{from_id}/relationships</code></td><td>Remove RELATED edge (query params).</td></tr>
+              <tr><td>POST</td><td><code>/api/ui/topics/{topic_id}/fields</code></td><td>Append field history entry.</td></tr>
+              <tr><td>GET</td><td><code>/api/ui/topics/{topic_id}/fields/{field_name}</code></td><td>Read field (current/history option).</td></tr>
+              <tr><td>DELETE</td><td><code>/api/ui/topics/{topic_id}/fields/{field_name}</code></td><td>Delete field.</td></tr>
+              <tr><td>PUT</td><td><code>/api/ui/topics/{topic_id}/fields/{field_name}/ref</code></td><td>Set/clear <code>ref_topic_id</code>.</td></tr>
+            </tbody>
+          </table>
+
+          <h2>LLM routes</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>Method</th>
+                <th>Path</th>
+                <th>Description</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>POST</td>
+                <td><code>/api/llm/chat</code></td>
+                <td>Intent-routed chat with provider selection (Ollama/Groq), tool loops, and optional Study ingest pipeline.</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <h2>Static UI mount</h2>
+          <p>
+            <code>/ui/*</code> serves files from <code>src/memstate/api/static/ui</code> when directory exists.
+          </p>
+
+          <h2>Cross-reference</h2>
+          <ul>
+            <li><a href="../operations/ingest.html">Operation: ingest</a></li>
+            <li><a href="../operations/query.html">Operation: query</a></li>
+            <li><a href="../operations/revision.html">Operation: revision</a></li>
+            <li><a href="../operations/forget.html">Operation: forget</a></li>
+            <li><a href="../architecture/http-stack.html">HTTP, UI, and LLM stack</a></li>
+          </ul>
+        </main>
+        <footer class="page-footer">HTTP reference index: routes, auth boundary, and module ownership.</footer>
+      </div>
+    </div>
+    <script src="../js/nav.js" defer></script>
+  </body>
+</html>

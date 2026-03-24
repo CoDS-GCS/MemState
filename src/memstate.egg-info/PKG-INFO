@@ -4,6 +4,7 @@ Version: 0.1.0
 Summary: Topic graph memory on embedded Kuzu (UEM-style ingest + query)
 Requires-Python: >=3.11
 Description-Content-Type: text/markdown
+Requires-Dist: tiktoken>=0.7.0
 Requires-Dist: kuzu>=0.11.0
 Requires-Dist: pydantic>=2.5
 Requires-Dist: pydantic-settings>=2.0

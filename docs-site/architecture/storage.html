@@ -1,0 +1,151 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Architecture - storage and schema</title>
+    <link rel="stylesheet" href="../styles.css" />
+  </head>
+  <body class="has-sidebar" data-doc-page="architecture/storage">
+    <div class="doc-layout">
+      <aside id="doc-sidebar" aria-label="Documentation navigation"></aside>
+      <div class="doc-inner">
+        <header class="page-header">
+          <h1>Storage and schema (Kuzu)</h1>
+        </header>
+        <main class="page-main">
+          <p>
+            MemState stores all durable state in embedded Kuzu through <code>GraphStore</code>. The adapter initializes schema idempotently and caches one
+            <code>KuzuGraph</code> per resolved file path.
+          </p>
+
+          <h2>Storage model and schema bootstrap</h2>
+          <ul>
+            <li><strong>Database path source</strong>: <code>MEMSTATE_KUZU_PATH</code> (default <code>memstate.kuzu</code>).</li>
+            <li><strong>Parent directory behavior</strong>: created automatically by the adapter when missing.</li>
+            <li><strong>Schema bootstrap</strong>: <code>bootstrap_kuzu_schema()</code> runs at store init and tolerates already-existing tables.</li>
+            <li><strong>Schema version marker</strong>: <code>MemStateMeta {key: "schema", version: "3"}</code>.</li>
+          </ul>
+
+          <h2>Physical schema</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>Entity</th>
+                <th>Type</th>
+                <th>Purpose</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>Topic</code></td>
+                <td>Node table</td>
+                <td>Primary memory object: scalar metadata, JSON fields/history, embedding vector, archive flag.</td>
+              </tr>
+              <tr>
+                <td><code>RELATED</code></td>
+                <td>Relationship table</td>
+                <td>Explicit graph links between topics with free-form <code>kind</code>.</td>
+              </tr>
+              <tr>
+                <td><code>FieldHead</code>, <code>FieldVersion</code>, <code>HAS_FIELD</code>, <code>LATEST</code>, <code>PREV</code></td>
+                <td>Legacy structures</td>
+                <td>Backward compatibility path; active writes use <code>fields_json</code> on Topic.</td>
+              </tr>
+              <tr>
+                <td><code>MemStateMeta</code></td>
+                <td>Node table</td>
+                <td>Schema version and migration metadata.</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <h2>Storage access diagram</h2>
+          <div class="figure-block">
+            <svg class="diagram-svg" viewBox="0 0 860 260" xmlns="http://www.w3.org/2000/svg" aria-label="Storage access diagram">
+              <defs>
+                <marker id="arr" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L0,6 L7,3 z" fill="#8b949e" /></marker>
+              </defs>
+              <rect x="28" y="48" width="190" height="70" rx="8" fill="#10161d" stroke="#30363d"/>
+              <text x="123" y="76" text-anchor="middle" fill="#e6edf3" font-size="13" font-family="Segoe UI, sans-serif">Executor / UI API / LLM tools</text>
+              <text x="123" y="95" text-anchor="middle" fill="#8b949e" font-size="11" font-family="Segoe UI, sans-serif">all call one GraphStore</text>
+
+              <line x1="218" y1="83" x2="282" y2="83" stroke="#8b949e" stroke-width="1.4" marker-end="url(#arr)"/>
+
+              <rect x="286" y="28" width="190" height="110" rx="8" fill="#10161d" stroke="#d29922"/>
+              <text x="381" y="57" text-anchor="middle" fill="#d29922" font-size="13" font-family="Segoe UI, sans-serif">GraphStore</text>
+              <text x="381" y="79" text-anchor="middle" fill="#c9d1d9" font-size="11" font-family="Segoe UI, sans-serif">topic CRUD</text>
+              <text x="381" y="96" text-anchor="middle" fill="#c9d1d9" font-size="11" font-family="Segoe UI, sans-serif">field history append</text>
+              <text x="381" y="113" text-anchor="middle" fill="#c9d1d9" font-size="11" font-family="Segoe UI, sans-serif">edge add/remove + KNN</text>
+
+              <line x1="476" y1="83" x2="540" y2="83" stroke="#8b949e" stroke-width="1.4" marker-end="url(#arr)"/>
+
+              <rect x="544" y="24" width="184" height="118" rx="8" fill="#10161d" stroke="#a371f7"/>
+              <text x="636" y="53" text-anchor="middle" fill="#a371f7" font-size="13" font-family="Segoe UI, sans-serif">KuzuGraph</text>
+              <text x="636" y="74" text-anchor="middle" fill="#c9d1d9" font-size="11" font-family="Segoe UI, sans-serif">query() / ro_query()</text>
+              <text x="636" y="92" text-anchor="middle" fill="#c9d1d9" font-size="11" font-family="Segoe UI, sans-serif">kuzu.Connection execute</text>
+              <text x="636" y="110" text-anchor="middle" fill="#8b949e" font-size="11" font-family="Segoe UI, sans-serif">path-cached handle</text>
+
+              <line x1="728" y1="83" x2="792" y2="83" stroke="#8b949e" stroke-width="1.4" marker-end="url(#arr)"/>
+
+              <rect x="796" y="35" width="40" height="96" rx="6" fill="#10161d" stroke="#58a6ff"/>
+              <text x="816" y="83" text-anchor="middle" fill="#58a6ff" font-size="11" font-family="Segoe UI, sans-serif" transform="rotate(-90 816 83)">memstate.kuzu</text>
+
+              <rect x="286" y="168" width="442" height="56" rx="8" fill="#10161d" stroke="#30363d"/>
+              <text x="507" y="192" text-anchor="middle" fill="#e6edf3" font-size="12" font-family="Segoe UI, sans-serif">Schema on open: Topic + RELATED + legacy tables + MemStateMeta</text>
+              <text x="507" y="211" text-anchor="middle" fill="#8b949e" font-size="11" font-family="Segoe UI, sans-serif">Idempotent DDL, safe across restarts against same path</text>
+            </svg>
+            <p class="diagram-caption">All state transitions pass through the same GraphStore facade, regardless of API surface.</p>
+          </div>
+
+          <h2>Key data write patterns</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>Operation</th>
+                <th>Store behavior</th>
+                <th>Notes</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Create topic</td>
+                <td><code>create_topic()</code> inserts scalar columns plus serialized <code>fields_json</code> and embedding columns.</td>
+                <td>Initial topic history event (<code>kind=created</code>) is written.</td>
+              </tr>
+              <tr>
+                <td>Append field history</td>
+                <td><code>append_field_history()</code> prepends revision, caps history length, persists <code>fields_json</code>.</td>
+                <td>Also re-syncs topic salience from average field salience.</td>
+              </tr>
+              <tr>
+                <td>Update topic metadata</td>
+                <td><code>update_topic_meta()</code> patches only provided columns and always updates <code>updated_at</code>.</td>
+                <td>Used by query salience bump and UI patch endpoint.</td>
+              </tr>
+              <tr>
+                <td>Relationship merge</td>
+                <td><code>add_related_edge()</code> uses Cypher <code>MERGE</code> on <code>(from,to,kind)</code>.</td>
+                <td>Idempotent for repeated writes with same key.</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <h2>Vector retrieval path</h2>
+          <ol>
+            <li>Executor embeds query text or topic title/summary.</li>
+            <li><code>vector_knn_topic_ids()</code> reads candidate topic embeddings (excluding archived by default).</li>
+            <li>Similarity fallback is local cosine if native vector index behavior is unavailable.</li>
+            <li>Candidate list is returned to query/ingest flows for ranking or suggestions.</li>
+          </ol>
+
+          <div class="callout warn">
+            Operational note: cloud-synced folders can hold file locks. If health checks report lock errors, move <code>MEMSTATE_KUZU_PATH</code> to a non-synced path.
+          </div>
+        </main>
+        <footer class="page-footer">Storage reference: schema, access patterns, and Kuzu lifecycle details.</footer>
+      </div>
+    </div>
+    <script src="../js/nav.js" defer></script>
+  </body>
+</html>

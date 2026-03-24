@@ -1,0 +1,32 @@
+---
+description: MemState web docs — interfaces, approaches, and internal behavior
+globs: docs-site/**/*
+alwaysApply: false
+---
+
+# MemState web documentation (`docs-site/`)
+
+Static HTML; **left sidebar** = `js/nav.js`; **`data-doc-page`** on `<body>`; subfolders `architecture/`, `data-model/`, `operations/`, `api/`.
+
+## Required content on every page
+
+Each page must include:
+
+1. **Approach** — design choices and tradeoffs for that area (why this pattern).
+2. **How it works internally** — concrete flow: which modules, data paths, and mechanisms (Executor, GraphStore, Kuzu, reasoner, etc.). Stay accurate to `src/memstate/`; avoid dumping source line-by-line.
+
+Add **SVG** or **Mermaid** when a diagram clarifies control or data flow.
+
+## Site map
+
+- `index.html` — product + how this doc maps to packages
+- **Architecture/** — overview (SVG), storage (Kuzu schema/connection), reasoning (events + rules), http-stack (routers, deps singletons)
+- **Data model/** — overview, fields/history (types & nesting), relationships, **limits-and-config** (Policies, semantic/structural/temporal, env), diagram (Mermaid)
+- **Operations/** — run-config (settings), high-level (ingest/query/reasoner/async), low-level (ui_api + snapshot builder)
+- **api/index.html** — route map to modules
+
+Update **`js/nav.js`** when adding pages. Root **redirect** HTML files for old flat URLs.
+
+## When code changes
+
+Diff `src/` for behavior changes; update the affected page’s **Approach** / **Internal** sections and any diagrams.

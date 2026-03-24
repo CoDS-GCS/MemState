@@ -1,0 +1,104 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Operations - forget</title>
+    <link rel="stylesheet" href="../styles.css" />
+  </head>
+  <body class="has-sidebar" data-doc-page="operations/forget">
+    <div class="doc-layout">
+      <aside id="doc-sidebar" aria-label="Documentation navigation"></aside>
+      <div class="doc-inner">
+        <header class="page-header">
+          <h1>Operation: forget (internal, policy-triggered)</h1>
+        </header>
+        <main class="page-main">
+          <p>
+            Forget is an internal retention operation. In code, its objective is to bound active memory by archiving topics whose salience is below a policy threshold,
+            primarily when topic volume crosses soft limits.
+          </p>
+
+          <h2>Access and trigger</h2>
+          <ul>
+            <li><strong>Not client-accessible</strong>: no public route directly runs forget.</li>
+            <li><strong>Triggered by reasoner</strong> from events: <code>ingest_complete</code>, <code>query_complete</code>, <code>cron</code>, <code>memory_pressure</code>.</li>
+            <li><strong>Execution path</strong>: <code>Reasoner.run(event)</code> -> <code>Executor.run_forget_low_salience()</code>.</li>
+          </ul>
+
+          <h2>Objective in code</h2>
+          <div class="callout">
+            <strong>Objective:</strong> deactivate low-value topics by setting <code>archived=true</code> and reducing their salience, so active retrieval focuses on higher-signal memory.
+          </div>
+
+          <h2>Trigger conditions (current implementation)</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>Event</th>
+                <th>Condition for forget execution</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr><td><code>ingest_complete</code></td><td>Run when total topic count >= <code>Policies.topic_count_soft_limit</code>.</td></tr>
+              <tr><td><code>query_complete</code></td><td>Run when total topic count >= soft limit.</td></tr>
+              <tr><td><code>cron</code></td><td>Run when total topic count >= soft limit.</td></tr>
+              <tr><td><code>memory_pressure</code></td><td>Always run (explicit pressure signal bypasses count gate).</td></tr>
+            </tbody>
+          </table>
+
+          <h2>Forget algorithm (current implementation)</h2>
+          <ol>
+            <li>Load non-archived topics via <code>list_topics_for_embedding_scan(include_archived=False)</code>.</li>
+            <li>For each topic, compare <code>salience</code> to <code>forget_salience_threshold</code>.</li>
+            <li>If <code>salience &lt; threshold</code>, set <code>archived=true</code> and <code>salience = salience * 0.5</code>.</li>
+            <li>Append action marker <code>archived:{topic_id}</code>.</li>
+          </ol>
+
+          <h2>Execution sequence</h2>
+          <pre class="sequence"><code>reasoner event
+  -> Reasoner.run(event)
+  -> if event + policy conditions satisfied
+      -> Executor.run_forget_low_salience()
+      -> scan active topics
+      -> archive low-salience topics
+  -> return forget_actions[] in ReasonerResult</code></pre>
+
+          <h2>Policy knobs that control forget</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>Policy</th>
+                <th>Default</th>
+                <th>Current role</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr><td><code>topic_count_soft_limit</code></td><td>500</td><td>Primary gate for forget triggers on ingest/query/cron events.</td></tr>
+              <tr><td><code>forget_salience_threshold</code></td><td>0.05</td><td>Topic salience cut-off for archive decisions.</td></tr>
+              <tr><td><code>max_topics_for_forget_scan</code></td><td>10000</td><td>Defined in policy model but not actively enforced in current forget loop.</td></tr>
+            </tbody>
+          </table>
+
+          <h2>Operational implications</h2>
+          <ul>
+            <li>Archived topics are skipped by default in active retrieval scans.</li>
+            <li>Forget decisions are currently based only on topic salience, not recency or semantic redundancy.</li>
+            <li>Because query operation bumps salience on touched topics, frequent reads can protect topics from archival.</li>
+          </ul>
+
+          <h2>Code map</h2>
+          <ul>
+            <li><code>memstate.reasoner.engine.Reasoner.run</code></li>
+            <li><code>memstate.core.executor.Executor.run_forget_low_salience</code></li>
+            <li><code>memstate.store.graph_store.update_topic_meta</code></li>
+          </ul>
+
+          <p><a href="ingest.html">Back to operation start: ingest</a></p>
+        </main>
+        <footer class="page-footer">Core operation reference: internal forget trigger rules and retention-state transitions.</footer>
+      </div>
+    </div>
+    <script src="../js/nav.js" defer></script>
+  </body>
+</html>

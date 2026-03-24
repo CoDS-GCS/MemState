@@ -148,6 +148,12 @@
 
       <main>
         <div class="graph-wrap">
+          <div class="graph-toolbar" aria-label="Graph actions">
+            <button type="button" class="btn-graph-delete" id="btn-delete-selected-topic" disabled title="Delete the selected topic node (click a topic first)">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
+              Remove topic
+            </button>
+          </div>
           <div id="network"></div>
           <div id="empty-state" class="empty-state">
             <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" opacity="0.4">
@@ -160,7 +166,7 @@
           <div class="legend">
             <span><i class="rel"></i> RELATED</span>
             <span><i class="ref"></i> field ref</span>
-            <span class="legend-hint">Wheel zoom · pan · drag · topic: field nodes; field: timeline panel; field/topic again: collapse · ring = community</span>
+            <span class="legend-hint">Wheel zoom · pan · drag · topic: field nodes; field: timeline panel; field/topic again: collapse · ring = community · layout seeds by community cluster</span>
           </div>
           <aside id="field-timeline-panel" class="field-timeline-panel" hidden aria-label="Field history timeline">
             <div class="field-timeline-head">
@@ -208,6 +214,26 @@
             <span>Context turns</span>
             <input id="chat-intent-turns" type="number" min="1" max="64" step="1" value="8" aria-label="Dialogue turns for intent" />
           </label>
+        </div>
+        <div
+          id="study-progress-inline"
+          class="study-progress-inline"
+          hidden
+          aria-live="polite"
+          aria-label="Study ingest status"
+        >
+          <div class="study-progress-inline-top">
+            <span class="study-progress-title">Study ingest</span>
+            <span class="study-progress-badge">Running</span>
+          </div>
+          <p class="study-progress-status" id="study-progress-status">Building document hierarchy…</p>
+          <div class="study-progress-bar-track" role="progressbar" aria-label="Study progress">
+            <div class="study-progress-bar-indeterminate"></div>
+          </div>
+          <p class="study-progress-hint">
+            Runs on the server. You can pan the graph and use the rest of the UI; only Send is paused until this
+            finishes. Groq may pause briefly—the server retries.
+          </p>
         </div>
         <div id="chat-log" class="chat-log"></div>
         <form id="form-chat" class="chat-input-row">

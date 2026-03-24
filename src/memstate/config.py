@@ -26,12 +26,18 @@ class Settings(BaseSettings):
     chat_intent_turns: int = Field(default=8, ge=1, le=64)
     # Max assistant↔API iterations while the model keeps requesting tool calls (reorganize flows need more).
     chat_max_tool_rounds: int = Field(default=32, ge=1, le=256)
-    # When POST /api/llm/chat uses internal_chunk=True, split the last user message into segments (same as UI limits).
+    # Study ingest: when the last user message exceeds this length and intent is ingest/both, run Study (two phases).
     chat_chunk_threshold_chars: int = Field(default=10000, ge=2000, le=500_000)
+    # Legacy overlap chunking parameters (unused by default Study pipeline).
     chat_chunk_max_chars: int = Field(default=10000, ge=1000, le=100_000)
     chat_chunk_overlap: int = Field(default=800, ge=0, le=5000)
-    # Per-segment tool budget for internal chunking (each segment is a separate LLM run; graph persists between).
+    # Tool budget for Study phase A (and any legacy per-segment runs).
     chat_chunk_per_segment_tool_rounds: int = Field(default=72, ge=8, le=256)
+    # Pause between Study phase A and B (seconds) to reduce Groq TPM bursts; 0 disables.
+    study_phase_delay_seconds: float = Field(default=8.0, ge=0.0, le=600.0)
+    # Groq: retry after rate_limit_exceeded / HTTP 429 with backoff (caps single sleep).
+    groq_rate_limit_max_retries: int = Field(default=20, ge=1, le=100)
+    groq_rate_limit_backoff_cap_seconds: float = Field(default=120.0, ge=1.0, le=600.0)
     # On query intent: bump field salience when read tools return field data (cap field_salience_max).
     query_field_salience_bump: float = Field(default=0.1, ge=0.0, le=2.0)
     field_salience_max: float = Field(default=10.0, ge=0.1, le=10.0)

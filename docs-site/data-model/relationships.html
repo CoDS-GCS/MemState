@@ -1,0 +1,116 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Data model - relationships and refs</title>
+    <link rel="stylesheet" href="../styles.css" />
+  </head>
+  <body class="has-sidebar" data-doc-page="data-model/relationships">
+    <div class="doc-layout">
+      <aside id="doc-sidebar" aria-label="Documentation navigation"></aside>
+      <div class="doc-inner">
+        <header class="page-header">
+          <h1>Relationships and field refs</h1>
+        </header>
+        <main class="page-main">
+          <p>
+            MemState supports two complementary linking mechanisms: graph-native <code>RELATED</code> edges and field-level pointers via <code>ref_topic_id</code>.
+          </p>
+
+          <h2>Mechanism comparison</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>Mechanism</th>
+                <th>Stored as</th>
+                <th>Best for</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>RELATED</code></td>
+                <td>Kuzu relationship <code>(Topic)-[:RELATED {kind}]-&gt;(Topic)</code></td>
+                <td>Explicit graph traversal and neighborhood queries.</td>
+              </tr>
+              <tr>
+                <td><code>ref_topic_id</code></td>
+                <td>Field attribute inside <code>fields_json</code></td>
+                <td>Document-style references embedded in attribute payload.</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <h2><code>RELATED</code> semantics</h2>
+          <ul>
+            <li><strong>Directed by storage</strong>: edge is written from <code>from_id</code> to <code>to_id</code>.</li>
+            <li><strong>Idempotent key</strong>: <code>MERGE</code> yields at most one edge for a given <code>(from, to, kind)</code>.</li>
+            <li><strong>Multi-kind support</strong>: same pair can have several relationship kinds.</li>
+            <li><strong>Neighborhood queries</strong>: structural query stage and UI graph builder read these edges directly.</li>
+          </ul>
+
+          <h2><code>ref_topic_id</code> semantics</h2>
+          <ul>
+            <li>Pointer lives on a field record, not as native edge in Kuzu tables.</li>
+            <li>Useful when a field value naturally points to another entity topic.</li>
+            <li>UI graph snapshot synthesizes <code>field_ref</code> edges so refs are visible in visualization.</li>
+            <li><code>REF_UNCHANGED</code> sentinel allows appending field history without overwriting ref.</li>
+          </ul>
+
+          <h2>Diagram: structural edge vs field ref</h2>
+          <div class="figure-block">
+            <svg class="diagram-svg" viewBox="0 0 860 240" xmlns="http://www.w3.org/2000/svg" aria-label="relationship mechanism diagram">
+              <defs>
+                <marker id="arr" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L0,6 L7,3 z" fill="#8b949e"/></marker>
+              </defs>
+              <rect x="80" y="54" width="220" height="120" rx="10" fill="#10161d" stroke="#58a6ff"/>
+              <text x="190" y="82" text-anchor="middle" fill="#58a6ff" font-size="14" font-family="Segoe UI, sans-serif">Topic A</text>
+              <text x="100" y="108" fill="#c9d1d9" font-size="11" font-family="Segoe UI, sans-serif">fields_json:</text>
+              <text x="100" y="126" fill="#2ea043" font-size="11" font-family="Segoe UI, sans-serif">manager.ref_topic_id = "topic-b"</text>
+
+              <rect x="560" y="54" width="220" height="120" rx="10" fill="#10161d" stroke="#58a6ff"/>
+              <text x="670" y="82" text-anchor="middle" fill="#58a6ff" font-size="14" font-family="Segoe UI, sans-serif">Topic B</text>
+
+              <line x1="300" y1="96" x2="560" y2="96" stroke="#d29922" stroke-width="1.8" marker-end="url(#arr)"/>
+              <text x="430" y="86" text-anchor="middle" fill="#d29922" font-size="11" font-family="Segoe UI, sans-serif">RELATED {kind: associated_with}</text>
+
+              <line x1="300" y1="132" x2="560" y2="132" stroke="#2ea043" stroke-width="1.5" stroke-dasharray="6 4" marker-end="url(#arr)"/>
+              <text x="430" y="154" text-anchor="middle" fill="#2ea043" font-size="11" font-family="Segoe UI, sans-serif">synthetic UI edge from field ref_topic_id</text>
+            </svg>
+            <p class="diagram-caption">The model can use both mechanisms simultaneously for the same topic pair.</p>
+          </div>
+
+          <h2>Guidance</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>Use case</th>
+                <th>Prefer</th>
+                <th>Reason</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Global graph navigation between entities</td>
+                <td><code>RELATED</code></td>
+                <td>Explicit edge semantics and easy neighbor traversal.</td>
+              </tr>
+              <tr>
+                <td>Attribute-level pointer inside one field</td>
+                <td><code>ref_topic_id</code></td>
+                <td>Keeps reference close to field meaning and revision history.</td>
+              </tr>
+              <tr>
+                <td>Need both typed reference and graph traversability</td>
+                <td>Both</td>
+                <td>Use <code>ref_topic_id</code> for schema meaning and <code>RELATED</code> for graph ops.</td>
+              </tr>
+            </tbody>
+          </table>
+        </main>
+        <footer class="page-footer">Relationship reference: structural edges, field refs, and modeling guidance.</footer>
+      </div>
+    </div>
+    <script src="../js/nav.js" defer></script>
+  </body>
+</html>

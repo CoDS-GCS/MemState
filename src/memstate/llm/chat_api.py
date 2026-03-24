@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any, Literal
 
 import httpx
@@ -14,9 +15,16 @@ from memstate.llm.groq_chat import run_groq_chat
 from memstate.llm.intent_router import classify_intent, dialogue_text_for_classifier
 from memstate.llm.ollama_chat import run_ollama_chat
 from memstate.llm.ollama_url import normalize_ollama_base_url, validate_client_ollama_url
-from memstate.llm.text_chunking import build_internal_chunk_user_message, chunk_text_with_overlap
+from memstate.llm.study_hierarchy import build_study_hierarchy, format_study_catalog_for_prompt, study_topic_kind
 from memstate.llm.tool_runner import MemoryToolRunner
-from memstate.llm.tools_schema import IntentRoute, build_chat_system_prompt, tools_for_intent_route
+from memstate.llm.tools_schema import (
+    IntentRoute,
+    build_chat_system_prompt,
+    build_study_phase_a_system_prompt,
+    build_study_phase_b_system_prompt,
+    tools_for_intent_route,
+    tools_for_study_phase_a,
+)
 from memstate.store.graph_store import GraphStore
 
 router = APIRouter(prefix="/api/llm", tags=["llm"])
@@ -125,8 +133,15 @@ class ChatBody(BaseModel):
     internal_chunk: bool = Field(
         False,
         description=(
-            "If True and the last user message exceeds the chunk threshold, split it server-side into "
-            "overlapping segments (one LLM run per segment; graph persists). Avoids multi-request client loops."
+            "Legacy hint for long messages; the server now uses Study ingest when length and intent match "
+            "(see study_ingest). Kept for older clients."
+        ),
+    )
+    study_ingest: bool = Field(
+        True,
+        description=(
+            "When True (default), long last user messages with ingest/both intent use the Study pipeline "
+            "(hierarchy + two phases). Set False to force one LLM call (may hit context limits)."
         ),
     )
 
@@ -200,7 +215,20 @@ def _intent_dialogue_for_long_last_message(
     return dialogue[:-1] + [{"role": "user", "content": clipped}]
 
 
-async def _chat_internal_chunked(
+def _should_use_study(
+    body: ChatBody,
+    settings: Settings,
+    last_user_len: int,
+    route: IntentRoute,
+) -> bool:
+    if not body.study_ingest:
+        return False
+    if route not in ("ingest", "both"):
+        return False
+    return last_user_len > settings.chat_chunk_threshold_chars
+
+
+async def _chat_study_ingest(
     body: ChatBody,
     dialogue: list[dict[str, Any]],
     store: GraphStore,
@@ -209,81 +237,105 @@ async def _chat_internal_chunked(
     groq_key: str,
     ollama_base: str,
     base_tool_rounds: int,
+    route: IntentRoute,
+    intent_source: IntentSource,
 ) -> dict[str, Any]:
-    """One LLM run per segment; graph store persists. Prior dialogue turns are preserved; only the last user message was split."""
+    """Study pipeline: phase A sandbox topics, phase B integrate with existing memory."""
     prior = dialogue[:-1]
     last_full = str(dialogue[-1].get("content") or "")
-    chunks = chunk_text_with_overlap(
-        last_full,
-        settings.chat_chunk_max_chars,
-        settings.chat_chunk_overlap,
+    hierarchy = build_study_hierarchy(last_full)
+    sk = study_topic_kind(hierarchy.session_id)
+    catalog = hierarchy.to_catalog_dict(max_units=500)
+    catalog_block = format_study_catalog_for_prompt(hierarchy, max_units=200)
+
+    phase_a_user = (
+        "Study ingest — phase A (sandbox). Document follows the catalog. "
+        f"All new topics must use topic_kind `{sk}` (enforced by tools).\n\n"
+        f"{catalog_block}\n\n---DOCUMENT---\n\n{last_full}"
     )
-    dialogue_for_route = _intent_dialogue_for_long_last_message(dialogue)
-    route, intent_source = await _resolve_intent_route(
-        body,
-        dialogue=dialogue_for_route,
-        settings=settings,
-        ollama_base=ollama_base,
-        groq_key=groq_key,
-        model=model,
-    )
+    messages_a = prior + [{"role": "user", "content": phase_a_user}]
     seg_rounds = max(base_tool_rounds, settings.chat_chunk_per_segment_tool_rounds)
-    tool_defs = tools_for_intent_route(route)
-    sys_prompt = build_chat_system_prompt(route)
-
-    replies: list[str] = []
-    merged_log: list[dict[str, Any]] = []
-    used_model = model
-
-    for i, chunk in enumerate(chunks):
-        user_msg = build_internal_chunk_user_message(
-            chunk,
-            i + 1,
-            len(chunks),
-            settings.chat_chunk_overlap,
+    tools_a = tools_for_study_phase_a()
+    sys_a = build_study_phase_a_system_prompt(route)
+    runner_a = MemoryToolRunner(
+        store,
+        chat_route=route,
+        query_field_salience_bump=settings.query_field_salience_bump,
+        field_salience_max=settings.field_salience_max,
+        study_session_kind=sk,
+        study_catalog=catalog,
+    )
+    if body.provider == "groq":
+        reply_a, log_a, used_model = await run_groq_chat(
+            api_key=groq_key,
+            model=model,
+            messages=messages_a,
+            runner=runner_a,
+            system_prompt=sys_a,
+            tools=tools_a,
+            max_tool_rounds=seg_rounds,
         )
-        messages = prior + [{"role": "user", "content": user_msg}]
-        runner = MemoryToolRunner(
-            store,
-            chat_route=route,
-            query_field_salience_bump=settings.query_field_salience_bump,
-            field_salience_max=settings.field_salience_max,
-        )
-        if body.provider == "groq":
-            reply, tool_log, used = await run_groq_chat(
-                api_key=groq_key,
-                model=model,
-                messages=messages,
-                runner=runner,
-                system_prompt=sys_prompt,
-                tools=tool_defs,
-                max_tool_rounds=seg_rounds,
-            )
-        else:
-            reply, tool_log, used = await run_ollama_chat(
-                base_url=ollama_base,
-                model=model,
-                messages=messages,
-                runner=runner,
-                system_prompt=sys_prompt,
-                tools=tool_defs,
-                max_tool_rounds=seg_rounds,
-            )
-        used_model = used
-        replies.append(reply)
-        for entry in tool_log:
-            merged_log.append({"segment": i + 1, **entry})
-
-    if len(chunks) == 1:
-        combined = replies[0]
     else:
-        combined = (
-            f"(Long message processed in {len(chunks)} internal segments.)\n\n"
-            + "\n\n---\n\n".join(
-                f"[Segment {si + 1}/{len(chunks)}]\n{r}" for si, r in enumerate(replies)
-            )
+        reply_a, log_a, used_model = await run_ollama_chat(
+            base_url=ollama_base,
+            model=model,
+            messages=messages_a,
+            runner=runner_a,
+            system_prompt=sys_a,
+            tools=tools_a,
+            max_tool_rounds=seg_rounds,
         )
 
+    delay = float(settings.study_phase_delay_seconds)
+    if delay > 0:
+        await asyncio.sleep(delay)
+
+    phase_b_user = (
+        f"Study ingest — phase B (integrate). Session topic_kind: `{sk}`. "
+        "Link these Study topics to the rest of memory; merge or consolidate when it improves organization. "
+        "You may update topic_kind away from study:… when integrated."
+    )
+    messages_b = prior + [{"role": "user", "content": phase_b_user}]
+    runner_b = MemoryToolRunner(
+        store,
+        chat_route=route,
+        query_field_salience_bump=settings.query_field_salience_bump,
+        field_salience_max=settings.field_salience_max,
+    )
+    tools_b = tools_for_intent_route(route)
+    sys_b = build_study_phase_b_system_prompt(route)
+    if body.provider == "groq":
+        reply_b, log_b, used_b = await run_groq_chat(
+            api_key=groq_key,
+            model=model,
+            messages=messages_b,
+            runner=runner_b,
+            system_prompt=sys_b,
+            tools=tools_b,
+            max_tool_rounds=base_tool_rounds,
+        )
+    else:
+        reply_b, log_b, used_b = await run_ollama_chat(
+            base_url=ollama_base,
+            model=model,
+            messages=messages_b,
+            runner=runner_b,
+            system_prompt=sys_b,
+            tools=tools_b,
+            max_tool_rounds=base_tool_rounds,
+        )
+    used_model = used_b or used_model
+
+    merged_log: list[dict[str, Any]] = []
+    for entry in log_a:
+        merged_log.append({"phase": "study_a", **entry})
+    for entry in log_b:
+        merged_log.append({"phase": "study_b", **entry})
+
+    combined = (
+        "(Study ingest: two phases — sandbox, then integrate with memory.)\n\n"
+        f"--- Phase A ---\n\n{reply_a}\n\n--- Phase B ---\n\n{reply_b}"
+    )
     return {
         "reply": combined,
         "tool_log": merged_log,
@@ -292,8 +344,9 @@ async def _chat_internal_chunked(
         "intent": route,
         "intent_source": intent_source,
         "max_tool_rounds": seg_rounds,
-        "internal_chunked": True,
-        "segments": len(chunks),
+        "study_ingest": True,
+        "study_session_kind": sk,
+        "study_phases": 2,
     }
 
 
@@ -311,14 +364,50 @@ async def llm_chat(body: ChatBody, store: GraphStore = Depends(get_graph_store))
     tool_rounds = _resolve_max_tool_rounds(body, settings)
 
     last_full = str(dialogue[-1].get("content") or "")
-    if body.internal_chunk and len(last_full) > settings.chat_chunk_threshold_chars:
-        if body.provider == "groq" and not groq_key:
+    if body.provider == "groq" and not groq_key:
+        raise HTTPException(
+            status_code=503,
+            detail="Groq is not configured. Set GROQ_API_KEY in .env (see .env.example).",
+        )
+
+    dialogue_for_route = _intent_dialogue_for_long_last_message(dialogue)
+    try:
+        route, intent_source = await _resolve_intent_route(
+            body,
+            dialogue=dialogue_for_route,
+            settings=settings,
+            ollama_base=ollama_base,
+            groq_key=groq_key,
+            model=model,
+        )
+    except httpx.HTTPStatusError as e:
+        if body.provider == "groq":
+            detail = _groq_upstream_error_message(e.response)
+        else:
+            detail = e.response.text if e.response is not None else str(e)
+            detail = f"Ollama error: {detail}"
+        raise HTTPException(status_code=502, detail=detail) from e
+    except httpx.RequestError as e:
+        if body.provider == "groq":
             raise HTTPException(
                 status_code=503,
-                detail="Groq is not configured. Set GROQ_API_KEY in .env (see .env.example).",
-            )
+                detail=f"Cannot reach Groq API. Check network and API key. ({e})",
+            ) from e
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                f"Cannot reach Ollama at {ollama_base}. "
+                "Start the Ollama app (or run `ollama serve`), pull a model (`ollama pull llama3.2`), "
+                "then set the Ollama URL in the sidebar or MEMSTATE_OLLAMA_BASE_URL. "
+                f"Details: {e}"
+            ),
+        ) from e
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    if _should_use_study(body, settings, len(last_full), route):
         try:
-            return await _chat_internal_chunked(
+            return await _chat_study_ingest(
                 body,
                 dialogue,
                 store,
@@ -327,6 +416,8 @@ async def llm_chat(body: ChatBody, store: GraphStore = Depends(get_graph_store))
                 groq_key,
                 ollama_base,
                 tool_rounds,
+                route,
+                intent_source,
             )
         except httpx.HTTPStatusError as e:
             if body.provider == "groq":
@@ -354,15 +445,7 @@ async def llm_chat(body: ChatBody, store: GraphStore = Depends(get_graph_store))
             raise HTTPException(status_code=400, detail=str(e)) from e
 
     if body.provider == "groq":
-        if not groq_key:
-            raise HTTPException(
-                status_code=503,
-                detail="Groq is not configured. Set GROQ_API_KEY in .env (see .env.example).",
-            )
         try:
-            route, intent_source = await _resolve_intent_route(
-                body, dialogue=dialogue, settings=settings, ollama_base=ollama_base, groq_key=groq_key, model=model
-            )
             runner = MemoryToolRunner(
                 store,
                 chat_route=route,
@@ -400,9 +483,6 @@ async def llm_chat(body: ChatBody, store: GraphStore = Depends(get_graph_store))
 
     # Ollama
     try:
-        route, intent_source = await _resolve_intent_route(
-            body, dialogue=dialogue, settings=settings, ollama_base=ollama_base, groq_key=groq_key, model=model
-        )
         runner = MemoryToolRunner(
             store,
             chat_route=route,

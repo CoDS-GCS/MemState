@@ -1,0 +1,110 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Operations - revision</title>
+    <link rel="stylesheet" href="../styles.css" />
+  </head>
+  <body class="has-sidebar" data-doc-page="operations/revision">
+    <div class="doc-layout">
+      <aside id="doc-sidebar" aria-label="Documentation navigation"></aside>
+      <div class="doc-inner">
+        <header class="page-header">
+          <h1>Operation: revision (internal, policy-triggered)</h1>
+        </header>
+        <main class="page-main">
+          <p>
+            Revision is an internal maintenance operation. In code, its objective is to reduce obvious duplication by merging topics that share the same non-empty title,
+            using store-level merge rules.
+          </p>
+
+          <h2>Access and trigger</h2>
+          <ul>
+            <li><strong>Not client-accessible</strong>: no public HTTP route directly calls revision.</li>
+            <li><strong>Triggered by reasoner</strong>: <code>Reasoner.run()</code> invokes revision on <code>ingest_complete</code> and <code>cron</code> when topic count is positive.</li>
+            <li><strong>Path</strong>: <code>reasoner.run(event)</code> -> <code>executor.run_revise_duplicates()</code>.</li>
+          </ul>
+
+          <h2>Objective in code</h2>
+          <div class="callout">
+            <strong>Objective:</strong> collapse duplicate-title topic pairs to keep memory graph less fragmented, while preserving reachable edges/fields on the surviving topic.
+          </div>
+
+          <h2>Revision algorithm (current implementation)</h2>
+          <ol>
+            <li>Find duplicate-title pairs via <code>GraphStore.find_duplicate_titles()</code>.</li>
+            <li>For each pair <code>(title, id_a, id_b)</code>, call <code>merge_topics(keep_id=id_a, drop_id=id_b)</code>.</li>
+            <li>Record action string: <code>merged:{drop_id}->:{keep_id}:{title}</code>.</li>
+          </ol>
+
+          <h2>Duplicate candidate criteria</h2>
+          <ul>
+            <li>Only pairs where <code>a.id &lt; b.id</code> and <code>a.title == b.title</code>.</li>
+            <li>Empty-title topics are excluded.</li>
+            <li>Result set is limited to 50 pairs per run.</li>
+          </ul>
+
+          <h2>Merge behavior details</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>Merge step</th>
+                <th>What code does</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Outgoing RELATED edges</td>
+                <td>Rewrites edges from drop topic to keep topic using <code>MERGE</code>, then deletes old edges.</td>
+              </tr>
+              <tr>
+                <td>Incoming RELATED edges</td>
+                <td>Rewrites incoming edges to point to keep topic, then deletes old edges.</td>
+              </tr>
+              <tr>
+                <td><code>fields_json</code> merge</td>
+                <td>Copies only missing field names from drop into keep; existing-name conflicts are left unchanged.</td>
+              </tr>
+              <tr>
+                <td>Legacy field chains</td>
+                <td>Moves legacy <code>HAS_FIELD</code> heads when field name absent on keep topic.</td>
+              </tr>
+              <tr>
+                <td>Drop topic removal</td>
+                <td><code>DETACH DELETE</code> drop topic after transfer steps.</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <h2>Execution sequence</h2>
+          <pre class="sequence"><code>reasoner event (ingest_complete or cron)
+  -> Reasoner.run(event)
+  -> Executor.run_revise_duplicates()
+  -> GraphStore.find_duplicate_titles()
+  -> for each duplicate pair: GraphStore.merge_topics(keep, drop)
+  -> return revise_actions[] in ReasonerResult</code></pre>
+
+          <h2>Current limitations and implications</h2>
+          <ul>
+            <li>Revision heuristic is title-only. It does not compare summaries, fields, embeddings, or entity identity.</li>
+            <li>Field merge is "missing-name only"; same-name field histories are not merged today.</li>
+            <li>No client-facing dry-run endpoint exists for revision decisions.</li>
+          </ul>
+
+          <h2>Code map</h2>
+          <ul>
+            <li><code>memstate.reasoner.engine.Reasoner.run</code></li>
+            <li><code>memstate.core.executor.Executor.run_revise_duplicates</code></li>
+            <li><code>memstate.store.graph_store.find_duplicate_titles</code></li>
+            <li><code>memstate.store.graph_store.merge_topics</code></li>
+          </ul>
+
+          <p><a href="forget.html">Next operation: forget (internal)</a></p>
+        </main>
+        <footer class="page-footer">Core operation reference: internal revision trigger, duplicate heuristic, and merge semantics.</footer>
+      </div>
+    </div>
+    <script src="../js/nav.js" defer></script>
+  </body>
+</html>

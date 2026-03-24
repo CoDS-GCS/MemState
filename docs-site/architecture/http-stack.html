@@ -1,0 +1,137 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Architecture - HTTP, UI, and LLM stack</title>
+    <link rel="stylesheet" href="../styles.css" />
+  </head>
+  <body class="has-sidebar" data-doc-page="architecture/http-stack">
+    <div class="doc-layout">
+      <aside id="doc-sidebar" aria-label="Documentation navigation"></aside>
+      <div class="doc-inner">
+        <header class="page-header">
+          <h1>HTTP, UI, and LLM stack</h1>
+        </header>
+        <main class="page-main">
+          <p>
+            The HTTP layer is intentionally thin. It validates inputs, applies optional API-key auth, and delegates all graph behavior to shared internal services.
+            Static UI and JSON APIs are served from the same FastAPI app instance.
+          </p>
+
+          <h2>Route families and ownership</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>Surface</th>
+                <th>Owner module</th>
+                <th>Notes</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>/v1/ingest</code>, <code>/v1/query</code></td>
+                <td><code>memstate.api.main</code></td>
+                <td>High-level memory semantics through <code>Executor</code>.</td>
+              </tr>
+              <tr>
+                <td><code>/api/ui/*</code></td>
+                <td><code>memstate.api.ui_api</code></td>
+                <td>Low-level topic/field/edge CRUD and graph snapshot payloads.</td>
+              </tr>
+              <tr>
+                <td><code>/api/llm/chat</code></td>
+                <td><code>memstate.llm.chat_api</code></td>
+                <td>Intent routing, provider calls, tool loops, optional Study pipeline.</td>
+              </tr>
+              <tr>
+                <td><code>/ui/*</code></td>
+                <td><code>StaticFiles</code> mount in <code>api.main</code></td>
+                <td>Dev graph explorer frontend assets.</td>
+              </tr>
+              <tr>
+                <td><code>/health*</code></td>
+                <td><code>api.main</code></td>
+                <td>Operational liveness and graph-open check.</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <h2>Auth behavior</h2>
+          <ul>
+            <li>If <code>MEMSTATE_API_KEY</code> is unset: all routes are open.</li>
+            <li>If set: protected routes require either <code>X-API-Key</code> or <code>Authorization: Bearer &lt;key&gt;</code>.</li>
+            <li>Health endpoints and static UI remain reachable without auth for operational usability.</li>
+          </ul>
+
+          <h2>LLM chat pipeline</h2>
+          <pre class="sequence"><code>POST /api/llm/chat
+  -> normalize and clip dialogue turns
+  -> resolve provider/model/base URL and tool round budget
+  -> classify latest-turn intent: query | ingest | both
+  -> choose tool set for route
+  -> run provider chat loop (Ollama or Groq) with MemoryToolRunner
+  -> optional Study mode (long ingest):
+       Phase A sandbox ingest (study topic_kind)
+       Phase B integrate with full memory
+  -> return reply, tool log, routing metadata</code></pre>
+
+          <div class="callout">
+            Shared-state guarantee: LLM tools call the same <code>GraphStore</code> instance used by UI and <code>/v1</code>. There is no separate memory cache for chat.
+          </div>
+
+          <h2>UI graph payload contract</h2>
+          <p><code>GET /api/ui/graph</code> and LLM graph tools both rely on <code>build_ui_graph_snapshot()</code> and return the same shape:</p>
+          <ul>
+            <li><code>nodes[]</code>: id, label/title, topic metadata, field summaries, computed <code>community</code>.</li>
+            <li><code>edges[]</code>: structural <code>RELATED</code> edges and synthetic field-ref edges.</li>
+          </ul>
+
+          <h2>Error translation at HTTP boundary</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>Error source</th>
+                <th>Status mapping</th>
+                <th>Typical case</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>ValueError</code> in core/store</td>
+                <td>400</td>
+                <td>Invalid placement payload or missing required topic id.</td>
+              </tr>
+              <tr>
+                <td><code>verify_api_key</code></td>
+                <td>401</td>
+                <td>Missing or incorrect API key header.</td>
+              </tr>
+              <tr>
+                <td>Upstream LLM HTTP errors</td>
+                <td>502 / 503</td>
+                <td>Provider timeout, invalid credentials, unreachable host.</td>
+              </tr>
+              <tr>
+                <td>Graph open failure on health check</td>
+                <td>503</td>
+                <td>Locked or inaccessible Kuzu path.</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <h2>Cross-links</h2>
+          <ul>
+            <li><a href="../operations/ingest.html">Operation: ingest</a></li>
+            <li><a href="../operations/query.html">Operation: query</a></li>
+            <li><a href="../operations/revision.html">Operation: revision</a></li>
+            <li><a href="../operations/forget.html">Operation: forget</a></li>
+            <li><a href="../api/index.html">HTTP endpoint index</a></li>
+          </ul>
+        </main>
+        <footer class="page-footer">HTTP stack reference: route families, auth, LLM flow, and payload contracts.</footer>
+      </div>
+    </div>
+    <script src="../js/nav.js" defer></script>
+  </body>
+</html>

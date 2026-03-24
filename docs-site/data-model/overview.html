@@ -1,0 +1,132 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Data model - topic model</title>
+    <link rel="stylesheet" href="../styles.css" />
+  </head>
+  <body class="has-sidebar" data-doc-page="data-model/overview">
+    <div class="doc-layout">
+      <aside id="doc-sidebar" aria-label="Documentation navigation"></aside>
+      <div class="doc-inner">
+        <header class="page-header">
+          <h1>Topic model overview</h1>
+        </header>
+        <main class="page-main">
+          <p>
+            The fundamental memory unit is a <strong>Topic</strong>. Every topic combines scalar metadata, JSON field records with revision history, and one embedding vector
+            for semantic retrieval.
+          </p>
+
+          <h2>Topic entity contract</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>Property</th>
+                <th>Type</th>
+                <th>Role in behavior</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>id</code></td>
+                <td>STRING (PK)</td>
+                <td>Stable topic identity used by APIs, edges, and field references.</td>
+              </tr>
+              <tr>
+                <td><code>title</code>, <code>summary</code></td>
+                <td>STRING</td>
+                <td>Human-readable metadata and default text source for embedding generation.</td>
+              </tr>
+              <tr>
+                <td><code>topic_kind</code></td>
+                <td>STRING</td>
+                <td>Optional classification label for filtering or workflow grouping (for example Study sessions).</td>
+              </tr>
+              <tr>
+                <td><code>salience</code>, <code>failed_salience</code></td>
+                <td>DOUBLE</td>
+                <td>Importance and failure-signaling channels used by query touch logic and maintenance policy.</td>
+              </tr>
+              <tr>
+                <td><code>fields_json</code></td>
+                <td>STRING (JSON)</td>
+                <td>Typed field map with per-field history and optional <code>ref_topic_id</code>.</td>
+              </tr>
+              <tr>
+                <td><code>topic_history_json</code></td>
+                <td>STRING (JSON)</td>
+                <td>Append-only topic-level event trail (created/salience/meta/embedding/failed_signal).</td>
+              </tr>
+              <tr>
+                <td><code>embedding</code></td>
+                <td>DOUBLE[]</td>
+                <td>Semantic search vector used by KNN or cosine fallback ranking.</td>
+              </tr>
+              <tr>
+                <td><code>archived</code></td>
+                <td>BOOLEAN</td>
+                <td>Exclusion flag for default active scans and query candidate generation.</td>
+              </tr>
+              <tr>
+                <td><code>created_at</code>, <code>updated_at</code></td>
+                <td>STRING (ISO timestamp)</td>
+                <td>Temporal metadata for operations and debugging.</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <h2>Conceptual shape</h2>
+          <div class="figure-block">
+            <svg class="diagram-svg" viewBox="0 0 850 260" xmlns="http://www.w3.org/2000/svg" aria-label="Topic conceptual diagram">
+              <rect x="40" y="30" width="350" height="200" rx="10" fill="#10161d" stroke="#58a6ff"/>
+              <text x="215" y="58" text-anchor="middle" fill="#58a6ff" font-size="14" font-family="Segoe UI, sans-serif">Topic node</text>
+              <text x="70" y="88" fill="#c9d1d9" font-size="12" font-family="Segoe UI, sans-serif">id, title, summary, topic_kind</text>
+              <text x="70" y="108" fill="#c9d1d9" font-size="12" font-family="Segoe UI, sans-serif">salience, failed_salience, archived</text>
+              <text x="70" y="128" fill="#c9d1d9" font-size="12" font-family="Segoe UI, sans-serif">created_at, updated_at</text>
+              <text x="70" y="148" fill="#c9d1d9" font-size="12" font-family="Segoe UI, sans-serif">embedding (DOUBLE[])</text>
+              <text x="70" y="175" fill="#2ea043" font-size="12" font-family="Segoe UI, sans-serif">fields_json -> dynamic field map</text>
+              <text x="70" y="195" fill="#d29922" font-size="12" font-family="Segoe UI, sans-serif">topic_history_json -> topic-level events</text>
+
+              <rect x="500" y="56" width="300" height="70" rx="10" fill="#10161d" stroke="#2ea043"/>
+              <text x="650" y="84" text-anchor="middle" fill="#2ea043" font-size="13" font-family="Segoe UI, sans-serif">Field record</text>
+              <text x="650" y="104" text-anchor="middle" fill="#c9d1d9" font-size="11" font-family="Segoe UI, sans-serif">field_type, ref_topic_id, salience, history[]</text>
+
+              <rect x="500" y="152" width="300" height="70" rx="10" fill="#10161d" stroke="#d29922"/>
+              <text x="650" y="180" text-anchor="middle" fill="#d29922" font-size="13" font-family="Segoe UI, sans-serif">History entry</text>
+              <text x="650" y="200" text-anchor="middle" fill="#c9d1d9" font-size="11" font-family="Segoe UI, sans-serif">id, valid_from, value, provenance, why_changed</text>
+
+              <line x1="390" y1="88" x2="500" y2="88" stroke="#8b949e" stroke-width="1.3"/>
+              <line x1="390" y1="188" x2="500" y2="188" stroke="#8b949e" stroke-width="1.3"/>
+            </svg>
+            <p class="diagram-caption">Topic-level structure is fixed for indexing and policy, while field payload remains flexible and versioned.</p>
+          </div>
+
+          <h2>Two distinct history channels</h2>
+          <ul>
+            <li><strong>Topic history (<code>topic_history_json</code>)</strong>: audit events about topic-level changes (creation, salience updates, metadata updates).</li>
+            <li><strong>Field history (<code>fields_json.*.history[]</code>)</strong>: value-level temporal revisions for each field.</li>
+          </ul>
+
+          <h2>Modeling principles</h2>
+          <ul>
+            <li>Use scalar topic columns for properties frequently used in filtering, ranking, or maintenance.</li>
+            <li>Use fields for domain-specific attributes that evolve without schema migrations.</li>
+            <li>Use <code>RELATED</code> for structural graph relationships and <code>ref_topic_id</code> for field-level references.</li>
+          </ul>
+
+          <h2>Next pages</h2>
+          <ul>
+            <li><a href="fields.html">Fields and history</a></li>
+            <li><a href="relationships.html">Relationships and refs</a></li>
+            <li><a href="limits-and-config.html">Limits and query stages</a></li>
+            <li><a href="diagram.html">Diagram gallery</a></li>
+          </ul>
+        </main>
+        <footer class="page-footer">Data model reference: Topic schema, field contract, and persistence shape.</footer>
+      </div>
+    </div>
+    <script src="../js/nav.js" defer></script>
+  </body>
+</html>

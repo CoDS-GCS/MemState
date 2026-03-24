@@ -1,0 +1,108 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Operations - high-level API flow</title>
+    <link rel="stylesheet" href="../styles.css" />
+  </head>
+  <body class="has-sidebar" data-doc-page="operations/high-level">
+    <div class="doc-layout">
+      <aside id="doc-sidebar" aria-label="Documentation navigation"></aside>
+      <div class="doc-inner">
+        <header class="page-header">
+          <h1>High-level API flow (<code>/v1</code> and SDK)</h1>
+        </header>
+        <main class="page-main">
+          <p>
+            The <code>/v1</code> surface is the canonical product-facing memory interface. It provides controlled write semantics and staged retrieval behavior through
+            <code>Executor</code>.
+          </p>
+
+          <h2><code>POST /v1/ingest</code> semantics</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>Placement</th>
+                <th>Required fields</th>
+                <th>Behavior</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>new_topic</code></td>
+                <td>title recommended</td>
+                <td>Creates topic with generated UUID, optional fields and edges, embedding from title+summary.</td>
+              </tr>
+              <tr>
+                <td><code>extend_topic</code></td>
+                <td><code>topic_id</code></td>
+                <td>Appends/updates fields and edges on existing topic; refreshes embedding from existing title+summary.</td>
+              </tr>
+              <tr>
+                <td><code>version_field</code></td>
+                <td><code>topic_id</code> and exactly one field</td>
+                <td>Appends one revision entry to one field on existing topic; refreshes embedding.</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <h2><code>POST /v1/query</code> semantics</h2>
+          <ul>
+            <li>Always embeds query text first.</li>
+            <li>Stage-aware bundle assembly (<code>semantic</code>, <code>structural</code>, <code>temporal</code>).</li>
+            <li>Per-returned-topic salience bump and topic history append (<code>query_bump</code> reason).</li>
+            <li>Response includes machine-friendly candidates and a lightweight summary text block.</li>
+          </ul>
+
+          <h2>Ingest and query sequence</h2>
+          <pre class="sequence"><code>ingest:
+  validate request -> apply placement transition -> write topic/field/edge updates
+  -> return IngestResponse(topic_id, applied, version_ids, optional similar_topic_ids)
+  -> schedule reasoner ingest_complete
+
+query:
+  validate request -> semantic candidate ranking
+  -> optional structural + temporal expansion
+  -> salience touch side-effect
+  -> return QueryResponse(query, candidates, summary_text)
+  -> schedule reasoner query_complete</code></pre>
+
+          <h2>SDK usage (<code>MemoryClient</code>)</h2>
+          <pre><code>from memstate.client import MemoryClient
+
+client = MemoryClient(base_url="http://127.0.0.1:8765", api_key=None)
+
+ing = client.ingest({
+  "placement": "new_topic",
+  "title": "Project Atlas",
+  "summary": "Migration plan",
+  "fields": [{"name": "status", "value": "active", "field_type": "string"}]
+})
+
+res = client.query({
+  "q": "what is project atlas status",
+  "stages": ["semantic", "structural", "temporal"],
+  "explain": True,
+  "top_k": 5
+})</code></pre>
+
+          <h2>When to use high-level API</h2>
+          <ul>
+            <li>Automation pipelines that want stable, validated memory semantics.</li>
+            <li>Integrations that should not manipulate low-level graph primitives directly.</li>
+            <li>Workflows where placement constraints and stage behavior are part of product contract.</li>
+          </ul>
+
+          <h2>Related low-level surfaces</h2>
+          <ul>
+            <li><a href="low-level.html">Low-level UI API</a> for direct topic/field/edge manipulations.</li>
+            <li><a href="../api/index.html">HTTP endpoint index</a> for complete route map.</li>
+          </ul>
+        </main>
+        <footer class="page-footer">High-level operations reference: v1 ingestion/query contract and client integration path.</footer>
+      </div>
+    </div>
+    <script src="../js/nav.js" defer></script>
+  </body>
+</html>

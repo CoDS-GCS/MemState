@@ -510,26 +510,50 @@ class GraphStore:
     def delete_topic(self, topic_id: str) -> None:
         self._q("MATCH (t:Topic {id: $id}) DETACH DELETE t", {"id": topic_id})
 
-    def list_topic_ids(self, *, include_archived: bool = False) -> list[str]:
-        r = self._q(
-            "MATCH (t:Topic) RETURN t.id AS id, t.archived AS archived",
-            read_only=True,
-        )
+    def list_topic_ids(
+        self, *, include_archived: bool = False, topic_kind: str | None = None
+    ) -> list[str]:
+        if topic_kind is not None and str(topic_kind).strip() != "":
+            tk = str(topic_kind).strip()
+            r = self._q(
+                "MATCH (t:Topic {topic_kind: $tk}) RETURN t.id AS id, t.archived AS archived",
+                {"tk": tk},
+                read_only=True,
+            )
+        else:
+            r = self._q(
+                "MATCH (t:Topic) RETURN t.id AS id, t.archived AS archived",
+                read_only=True,
+            )
         rows = _rows(r)
         if not include_archived:
             rows = [x for x in rows if not x.get("archived")]
         return [str(x["id"]) for x in rows if x.get("id")]
 
-    def list_topics_meta(self, *, include_archived: bool = False) -> list[dict[str, Any]]:
+    def list_topics_meta(
+        self, *, include_archived: bool = False, topic_kind: str | None = None
+    ) -> list[dict[str, Any]]:
         """Id, title, summary, and light metadata for each topic (for LLM discovery)."""
-        r = self._q(
-            """
-            MATCH (t:Topic)
-            RETURN t.id AS id, t.title AS title, t.summary AS summary,
-                   t.topic_kind AS topic_kind, t.archived AS archived
-            """,
-            read_only=True,
-        )
+        if topic_kind is not None and str(topic_kind).strip() != "":
+            tk = str(topic_kind).strip()
+            r = self._q(
+                """
+                MATCH (t:Topic {topic_kind: $tk})
+                RETURN t.id AS id, t.title AS title, t.summary AS summary,
+                       t.topic_kind AS topic_kind, t.archived AS archived
+                """,
+                {"tk": tk},
+                read_only=True,
+            )
+        else:
+            r = self._q(
+                """
+                MATCH (t:Topic)
+                RETURN t.id AS id, t.title AS title, t.summary AS summary,
+                       t.topic_kind AS topic_kind, t.archived AS archived
+                """,
+                read_only=True,
+            )
         rows = _rows(r)
         if not include_archived:
             rows = [x for x in rows if not x.get("archived")]

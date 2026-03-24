@@ -338,6 +338,69 @@ function computeClusters(nodes, links) {
   return { clusterOf, clusterCount: cid };
 }
 
+/**
+ * Deterministic (x, y) per topic so each community sits in its own region (easier to scan large graphs).
+ * Uses API `community` when present; otherwise connected-component ids from `computeClusters`.
+ */
+function computeCommunityClusterPositions(nodes, links) {
+  const { clusterOf } = computeClusters(nodes, links);
+  /** @type {Map<number, typeof nodes>} */
+  const byComm = new Map();
+  for (const n of nodes) {
+    const cid =
+      n.community != null && Number.isFinite(Number(n.community))
+        ? Number(n.community)
+        : clusterOf.get(n.id) ?? 0;
+    if (!byComm.has(cid)) byComm.set(cid, []);
+    byComm.get(cid).push(n);
+  }
+  const commIds = [...byComm.keys()].sort((a, b) => a - b);
+  const nc = Math.max(commIds.length, 1);
+  const nTopics = nodes.length;
+  /** @type {Array<{ cx: number, cy: number }>} */
+  const centers = [];
+  if (nc <= 12) {
+    const R = 240 + Math.sqrt(nTopics) * 34;
+    for (let i = 0; i < nc; i++) {
+      const theta = (2 * Math.PI * i) / nc;
+      centers.push({ cx: R * Math.cos(theta), cy: R * Math.sin(theta) });
+    }
+  } else {
+    const cols = Math.ceil(Math.sqrt(nc));
+    const rows = Math.ceil(nc / cols);
+    const cell = 260 + Math.min(70, nTopics / Math.max(nc, 1));
+    for (let i = 0; i < nc; i++) {
+      const row = Math.floor(i / cols);
+      const col = i % cols;
+      centers.push({
+        cx: (col - (cols - 1) / 2) * cell,
+        cy: (row - (rows - 1) / 2) * cell,
+      });
+    }
+  }
+
+  /** @type {Map<string, { x: number, y: number }>} */
+  const positions = new Map();
+  commIds.forEach((cid, idx) => {
+    const { cx, cy } = centers[idx];
+    const members = byComm.get(cid);
+    const nm = members.length;
+    const rLocal = 32 + Math.sqrt(nm) * 28;
+    members.forEach((node, j) => {
+      const phi = nm <= 1 ? 0 : (2 * Math.PI * j) / nm + idx * 0.11;
+      let h = 0;
+      for (let k = 0; k < node.id.length; k++) h = (h * 31 + node.id.charCodeAt(k)) | 0;
+      const jx = ((h >>> 0) % 19) - 9;
+      const jy = (((h >>> 8) % 23) - 11) * 0.9;
+      positions.set(node.id, {
+        x: cx + rLocal * Math.cos(phi) + jx * 2.8,
+        y: cy + rLocal * Math.sin(phi) + jy * 2.2,
+      });
+    });
+  });
+  return positions;
+}
+
 function tooltip(n) {
   const lines = [
     n.title || n.label,
@@ -466,6 +529,7 @@ function collapseGraphExpand({ restorePositions = true } = {}) {
   const pre = document.getElementById("detail");
   if (pre) pre.textContent = "Click a node to inspect its topic + fields.";
   if (net && typeof net.unselectAll === "function") net.unselectAll();
+  updateGraphDeleteTopicButton();
 }
 
 function layoutFieldNodesBelowTopic(topicId, fieldNodeIds) {
@@ -664,6 +728,7 @@ async function expandGraphNode(topicId) {
 
 function buildVisDatasets(nodes, links) {
   const { clusterOf } = computeClusters(nodes, links);
+  const layoutPos = computeCommunityClusterPositions(nodes, links);
   const visNodes = nodes.map((n) => {
     const lines = n.labelLines || ["—"];
     const label = `${lines.join("\n")}\n${n.salienceLabel}`;
@@ -675,7 +740,8 @@ function buildVisDatasets(nodes, links) {
     const bg = n.archived
       ? `rgba(51, 65, 85, ${0.55 + n.fillOpacity * 0.45})`
       : `rgba(30, 64, 175, ${n.fillOpacity})`;
-    return {
+    const p = layoutPos.get(n.id);
+    const vis = {
       id: n.id,
       label,
       title: n.title,
@@ -692,6 +758,11 @@ function buildVisDatasets(nodes, links) {
       borderWidth: 2,
       margin: 12,
     };
+    if (p) {
+      vis.x = p.x;
+      vis.y = p.y;
+    }
+    return vis;
   });
   const visEdges = links.map((e, i) => ({
     id: `e${i}`,
@@ -712,20 +783,20 @@ const VIS_NETWORK_OPTIONS = {
     enabled: true,
     stabilization: {
       enabled: true,
-      iterations: 220,
-      updateInterval: 25,
+      iterations: 420,
+      updateInterval: 30,
       fit: true,
     },
     barnesHut: {
-      gravitationalConstant: -2200,
-      centralGravity: 0.14,
-      springLength: 130,
-      springConstant: 0.055,
-      damping: 0.52,
-      avoidOverlap: 0.45,
+      gravitationalConstant: -5200,
+      centralGravity: 0.06,
+      springLength: 195,
+      springConstant: 0.042,
+      damping: 0.58,
+      avoidOverlap: 0.72,
     },
   },
-  layout: { improvedLayout: true },
+  layout: { improvedLayout: true, randomSeed: 42 },
   interaction: {
     dragNodes: true,
     dragView: true,
@@ -751,6 +822,66 @@ function initGraph(container) {
     graphView.network.setSize(w, h);
   });
   graphView.resizeObserver.observe(container);
+}
+
+/**
+ * Selected topic on the graph (ignores synthetic field nodes).
+ * Falls back to expanded topic when the network has no selection (e.g. after partial updates).
+ */
+function getPrimarySelectedTopicId() {
+  const net = graphView.network;
+  if (!net) return null;
+  const ids = net.getSelectedNodes();
+  for (const id of ids) {
+    if (id && !id.startsWith(FIELD_NODE_PREFIX)) return id;
+  }
+  const exp = graphView.expandedId;
+  if (exp && !exp.startsWith(FIELD_NODE_PREFIX)) return exp;
+  return null;
+}
+
+function updateGraphDeleteTopicButton() {
+  const btn = document.getElementById("btn-delete-selected-topic");
+  if (!btn) return;
+  btn.disabled = !getPrimarySelectedTopicId();
+}
+
+function wireGraphDeleteTopicButton() {
+  const btn = document.getElementById("btn-delete-selected-topic");
+  if (!btn) return;
+  btn.addEventListener("click", async () => {
+    const tid = getPrimarySelectedTopicId();
+    if (!tid) {
+      toast("Select a topic on the graph first (click a node).", "error");
+      return;
+    }
+    let titleHint = tid.slice(0, 8) + "…";
+    const ds = graphView.visDataSets?.nodes;
+    if (ds) {
+      try {
+        const n = ds.get(tid);
+        if (n && n.label) {
+          titleHint = String(n.label).split("\n")[0].trim().slice(0, 56) || titleHint;
+        }
+      } catch (_) {
+        /* ignore */
+      }
+    }
+    if (!confirm(`Delete topic “${titleHint}”?\n\nThis removes the topic and cannot be undone.`)) return;
+    try {
+      if (graphView.expandedId === tid) {
+        collapseGraphExpand({ restorePositions: false });
+      }
+      await api(`/api/ui/topics/${encodeURIComponent(tid)}`, { method: "DELETE" });
+      setStatus("Deleted topic");
+      const pre = document.getElementById("detail");
+      if (pre) pre.textContent = "";
+      await refreshGraph();
+      updateGraphDeleteTopicButton();
+    } catch (e) {
+      setStatus(String(e.message), true);
+    }
+  });
 }
 
 function renderGraph(apiData) {
@@ -779,7 +910,10 @@ function renderGraph(apiData) {
   }
   if (graphView.container) graphView.container.innerHTML = "";
 
-  if (!nodeIn.length) return;
+  if (!nodeIn.length) {
+    updateGraphDeleteTopicButton();
+    return;
+  }
 
   const nodes = nodeIn.map((d) => ({ ...d }));
   const links = linkIn.map((d) => ({ ...d }));
@@ -834,6 +968,10 @@ function renderGraph(apiData) {
     }
   });
 
+  net.on("select", () => updateGraphDeleteTopicButton());
+  net.on("deselect", () => updateGraphDeleteTopicButton());
+  updateGraphDeleteTopicButton();
+
   const w = graphView.container.clientWidth;
   const h = graphView.container.clientHeight;
   net.setSize(`${w}px`, `${h}px`);
@@ -871,8 +1009,45 @@ const LS_MODEL_GROQ = "memstate_llm_model_groq";
 const LS_CHAT_INTENT_TURNS = "memstate_chat_intent_turns";
 /** Groq edge timeouts are common above ~tens of k chars—warn before send (single-shot only). */
 const GROQ_LONG_MESSAGE_WARN_CHARS = 28000;
-/** Above this character count, POST once with internal_chunk=true (server splits into overlapping segments). */
+/** Above this character count, long ingest uses server-side Study (hierarchy + two phases). */
 const CHAT_CHUNK_THRESHOLD = 10000;
+
+const STUDY_STAGE_MESSAGES = [
+  "Building document hierarchy…",
+  "Study phase A — writing sandbox topics…",
+  "Spacing requests (reduces Groq rate limits)…",
+  "Study phase B — integrating with memory…",
+];
+
+function showStudyProgressInline() {
+  const el = document.getElementById("study-progress-inline");
+  if (!el) return;
+  el.hidden = false;
+  const status = document.getElementById("study-progress-status");
+  let i = 0;
+  if (status) status.textContent = STUDY_STAGE_MESSAGES[0];
+  const interval = setInterval(() => {
+    i = (i + 1) % STUDY_STAGE_MESSAGES.length;
+    if (status) status.textContent = STUDY_STAGE_MESSAGES[i];
+  }, 4800);
+  el.dataset.studyInterval = String(interval);
+}
+
+function setStudyProgressLabel(text) {
+  const status = document.getElementById("study-progress-status");
+  if (status) status.textContent = text;
+}
+
+function hideStudyProgressInline() {
+  const el = document.getElementById("study-progress-inline");
+  if (!el) return;
+  const id = el.dataset.studyInterval;
+  if (id) {
+    clearInterval(Number(id));
+    delete el.dataset.studyInterval;
+  }
+  el.hidden = true;
+}
 
 const OLLAMA_MODELS = [
   { value: "llama3.2:latest", label: "llama3.2" },
@@ -1042,9 +1217,11 @@ function appendAssistantMessage(text, meta) {
   const metaLine = document.createElement("div");
   metaLine.className = "chat-thinking-meta";
   const segHint =
-    meta?.internal_chunked && meta?.segments != null
-      ? ` · ${meta.segments} server segment${meta.segments !== 1 ? "s" : ""}`
-      : "";
+    meta?.study_ingest && meta?.study_phases != null
+      ? ` · Study (${meta.study_phases} phases)`
+      : meta?.internal_chunked && meta?.segments != null
+        ? ` · ${meta.segments} server segment${meta.segments !== 1 ? "s" : ""}`
+        : "";
   metaLine.textContent = `${meta?.provider || "—"} · ${meta?.model || "—"}${segHint}`;
   panel.appendChild(metaLine);
 
@@ -1135,11 +1312,12 @@ async function runChatTurn(userText, options = {}) {
   }
   if (useInternalChunk) {
     toast(
-      `Long message (${text.length} chars): one request — the server splits it into overlapping segments.`
+      `Long message (${text.length} chars): one request — the server runs Study ingest (hierarchy, two phases).`
     );
   }
 
   if (btn) btn.disabled = true;
+  if (useInternalChunk) showStudyProgressInline();
   try {
     appendChatMessage("user", text);
     chatHistory.push({ role: "user", content: text });
@@ -1155,9 +1333,6 @@ async function runChatTurn(userText, options = {}) {
       provider,
       model: modelSel?.value || undefined,
     };
-    if (useInternalChunk) {
-      payload.internal_chunk = true;
-    }
     if (intentOverride === "query" || intentOverride === "ingest" || intentOverride === "both") {
       payload.intent_override = intentOverride;
     }
@@ -1180,6 +1355,9 @@ async function runChatTurn(userText, options = {}) {
       method: "POST",
       body: JSON.stringify(payload),
     });
+    if (useInternalChunk) {
+      setStudyProgressLabel("Visualizing graph…");
+    }
     const replyText = data.reply || "(no reply)";
     chatHistory.push({ role: "assistant", content: replyText });
     appendAssistantMessage(replyText, {
@@ -1190,6 +1368,8 @@ async function runChatTurn(userText, options = {}) {
       tool_log: data.tool_log || [],
       internal_chunked: data.internal_chunked,
       segments: data.segments,
+      study_ingest: data.study_ingest,
+      study_phases: data.study_phases,
     });
     if (data.tool_log && data.tool_log.length) {
       await refreshGraph();
@@ -1198,6 +1378,7 @@ async function runChatTurn(userText, options = {}) {
     appendChatMessage("assistant", "Error: " + err.message);
     toast(err.message, "error");
   } finally {
+    hideStudyProgressInline();
     if (btn) btn.disabled = false;
   }
 }
@@ -1441,6 +1622,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   wireCollapsible();
   wireForms();
+  wireGraphDeleteTopicButton();
   wireChat();
   wireReorganize();
   wireCopyDetail();

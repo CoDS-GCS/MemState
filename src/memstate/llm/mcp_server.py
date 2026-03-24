@@ -14,6 +14,9 @@ mcp = FastMCP(
     instructions=(
         "MemState topic graph memory: use these tools to read and edit topics, fields, "
         "and RELATED relationships. Call memory_graph_snapshot for the full graph with values. "
+        "Study long-document ingest (HTTP API) uses two phases: phase A sandbox (topic_kind study:<uuid>) "
+        "then phase B integration. For MCP, use study_graph_snapshot(study_topic_kind) to view a session subgraph; "
+        "study_unit_catalog is populated only when the runner carries a catalog (HTTP Study chat). "
         "For reorganization, use memory_reorganize_consolidation, memory_reorganize_merge_topics, "
         "memory_reorganize_split_topics, memory_reorganize_connect_topics, or "
         "memory_reorganize_retention_trim—each returns topics_schema_snapshot (structure only). "
@@ -198,6 +201,19 @@ def memory_reorganize_connect_topics(criteria: str = "") -> dict[str, Any]:
 def memory_reorganize_retention_trim(criteria: str = "") -> dict[str, Any]:
     """Retention trim (RTC): guidelines + topics_schema_snapshot (structure only)."""
     return _runner().execute("memory_reorganize_retention_trim", {"criteria": criteria})
+
+
+@mcp.tool()
+def study_unit_catalog() -> dict[str, Any]:
+    """Study mode: precomputed unit hierarchy (empty unless catalog was attached to the runner)."""
+    return _runner().execute("study_unit_catalog", {})
+
+
+@mcp.tool()
+def study_graph_snapshot(study_topic_kind: str) -> dict[str, Any]:
+    """Study phase A: subgraph for topics with this topic_kind (e.g. study:<session_uuid>)."""
+    r = MemoryToolRunner(get_store(), study_session_kind=study_topic_kind.strip())
+    return r.execute("study_graph_snapshot", {})
 
 
 def main() -> None:

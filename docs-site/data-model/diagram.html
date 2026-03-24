@@ -1,0 +1,89 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Data model - diagram gallery</title>
+    <link rel="stylesheet" href="../styles.css" />
+  </head>
+  <body class="has-sidebar" data-doc-page="data-model/diagram">
+    <div class="doc-layout">
+      <aside id="doc-sidebar" aria-label="Documentation navigation"></aside>
+      <div class="doc-inner">
+        <header class="page-header">
+          <h1>Diagram gallery</h1>
+        </header>
+        <main class="page-main">
+          <p>
+            This page collects canonical diagrams for schema shape, query-stage behavior, and salience flow. The first Mermaid block mirrors the payload returned by
+            <code>GET /api/ui/datamodel</code>.
+          </p>
+
+          <h2>Canonical topic graph shape</h2>
+          <div class="mermaid-wrap">
+            <div class="mermaid">
+flowchart LR
+  subgraph TopicA[Topic A]
+    metaA[title summary salience topic_kind embedding]
+    fieldsA[fields_json]
+  end
+  subgraph TopicB[Topic B]
+    metaB[...]
+    fieldsB[fields_json]
+  end
+  TopicA -->|RELATED kind| TopicB
+  fieldsA -.->|ref_topic_id| TopicB
+            </div>
+          </div>
+
+          <h2>Query execution stages</h2>
+          <div class="mermaid-wrap">
+            <div class="mermaid">
+flowchart TD
+  A[POST /v1/query] --> B{semantic stage on?}
+  B -- yes --> C[embedding rank by KNN/cosine]
+  B -- no --> D[use topic_ids allowlist or fallback]
+  C --> E[build topic bundles]
+  D --> E
+  E --> F{structural stage on?}
+  F -- yes --> G[add neighbors + fields]
+  F -- no --> H[skip structural expansion]
+  G --> I{temporal + explain?}
+  H --> I
+  I -- yes --> J[include full field history]
+  I -- no --> K[current snapshot only]
+  J --> L[salience bump + topic history append]
+  K --> L
+  L --> M[QueryResponse]
+            </div>
+          </div>
+
+          <h2>Reasoner trigger view</h2>
+          <div class="mermaid-wrap">
+            <div class="mermaid">
+flowchart LR
+  ingest_complete --> R1[reasoner.run]
+  query_complete --> R1
+  cron --> R1
+  memory_pressure --> R1
+  R1 --> F1[forget low salience]
+  R1 --> F2[revise duplicate titles]
+            </div>
+          </div>
+
+          <div class="callout">
+            If Mermaid does not load (for example offline environment), the source text remains visible in page HTML and can be rendered in any Mermaid-compatible viewer.
+          </div>
+        </main>
+        <footer class="page-footer">Visual reference set for data model and execution-stage behavior.</footer>
+      </div>
+    </div>
+    <script src="../js/nav.js" defer></script>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js" crossorigin="anonymous"></script>
+    <script>
+      if (window.mermaid) {
+        mermaid.initialize({ startOnLoad: true, theme: "dark", securityLevel: "loose" });
+      }
+    </script>
+  </body>
+</html>

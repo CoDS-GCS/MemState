@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "hooks": {
+    "afterFileEdit": [
+      {
+        "command": "powershell -NoProfile -ExecutionPolicy Bypass -File .cursor/hooks/after-file-edit-doc-flag.ps1",
+        "timeout": 15
+      }
+    ],
+    "stop": [
+      {
+        "command": "powershell -NoProfile -ExecutionPolicy Bypass -File .cursor/hooks/stop-doc-followup.ps1",
+        "timeout": 30,
+        "loop_limit": 3
+      }
+    ]
+  }
+}

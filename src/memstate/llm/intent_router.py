@@ -7,7 +7,7 @@ from typing import Any, Literal
 
 import httpx
 
-from memstate.llm.groq_chat import GROQ_CHAT_URL
+from memstate.llm.groq_chat import GROQ_CHAT_URL, groq_post_chat_completions_with_retries
 from memstate.llm.tools_schema import INTENT_CLASSIFY_SYSTEM, IntentRoute
 
 Provider = Literal["ollama", "groq"]
@@ -59,9 +59,11 @@ async def _classify_groq(*, api_key: str, model: str, user_content: str) -> Inte
         "max_tokens": 16,
     }
     async with httpx.AsyncClient(timeout=60.0) as client:
-        r = await client.post(GROQ_CHAT_URL, headers=headers, json=payload)
-        r.raise_for_status()
-        data = r.json()
+        data = await groq_post_chat_completions_with_retries(
+            client,
+            headers=headers,
+            payload=payload,
+        )
     choice = (data.get("choices") or [{}])[0]
     msg = choice.get("message") or {}
     text = (msg.get("content") or "").strip()

@@ -1,0 +1,131 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Operations - ingest</title>
+    <link rel="stylesheet" href="../styles.css" />
+  </head>
+  <body class="has-sidebar" data-doc-page="operations/ingest">
+    <div class="doc-layout">
+      <aside id="doc-sidebar" aria-label="Documentation navigation"></aside>
+      <div class="doc-inner">
+        <header class="page-header">
+          <h1>Operation: ingest (client-accessible)</h1>
+        </header>
+        <main class="page-main">
+          <p>
+            Ingest is the write entrypoint for external clients. In code, its objective is to convert an <code>IngestRequest</code> into validated topic/field/edge
+            mutations through <code>Executor.ingest()</code>, while enforcing placement rules and preparing downstream maintenance triggers.
+          </p>
+
+          <h2>Access and trigger</h2>
+          <ul>
+            <li><strong>HTTP route</strong>: <code>POST /v1/ingest</code> in <code>memstate.api.main</code>.</li>
+            <li><strong>SDK route</strong>: <code>MemoryClient.ingest()</code> in <code>memstate.client</code>.</li>
+            <li><strong>Auth</strong>: guarded by API key only when <code>MEMSTATE_API_KEY</code> is configured.</li>
+          </ul>
+
+          <h2>Objective in code</h2>
+          <div class="callout">
+            <strong>Objective:</strong> apply controlled write transitions (<code>new_topic</code>, <code>extend_topic</code>, <code>version_field</code>) so all client writes pass one
+            semantics layer before touching <code>GraphStore</code>.
+          </div>
+
+          <h2>Input contract (current implementation)</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>Field</th>
+                <th>Used by ingest</th>
+                <th>Notes</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr><td><code>placement</code></td><td>Yes</td><td>Required: <code>new_topic</code>, <code>extend_topic</code>, or <code>version_field</code>.</td></tr>
+              <tr><td><code>topic_id</code></td><td>Conditional</td><td>Required for <code>extend_topic</code> and <code>version_field</code>.</td></tr>
+              <tr><td><code>title</code>, <code>summary</code></td><td>Yes</td><td>Used for create and embedding text generation.</td></tr>
+              <tr><td><code>fields[]</code></td><td>Yes</td><td>Each field becomes a history append operation.</td></tr>
+              <tr><td><code>edges[]</code></td><td>Yes</td><td>Each edge becomes <code>RELATED</code> merge.</td></tr>
+              <tr><td><code>suggest_similar</code></td><td>Optional</td><td>If true, computes top-k similar topic ids before placement writes.</td></tr>
+            </tbody>
+          </table>
+
+          <h2>Placement behavior details</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>Placement</th>
+                <th>Write behavior</th>
+                <th>Validation and constraints</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>new_topic</code></td>
+                <td>Generate UUID topic id, create topic row, append each provided field history item, add each provided edge.</td>
+                <td>No <code>topic_id</code> required from client; default title fallback is <code>untitled</code>.</td>
+              </tr>
+              <tr>
+                <td><code>extend_topic</code></td>
+                <td>Append/update fields and edges on an existing topic, then refresh topic embedding from current title+summary.</td>
+                <td>Fails if <code>topic_id</code> missing or topic does not exist.</td>
+              </tr>
+              <tr>
+                <td><code>version_field</code></td>
+                <td>Append exactly one new field history entry to one field, then refresh embedding.</td>
+                <td>Requires existing topic and exactly one item in <code>fields[]</code>.</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <h2>Execution sequence</h2>
+          <pre class="sequence"><code>Client -> POST /v1/ingest -> Executor.ingest(req)
+  -> optional similar-topic pass (KNN then cosine fallback; k=8)
+  -> apply placement transition
+      -> GraphStore.create_topic / append_field_history / add_related_edge
+      -> update_topic_embedding for extend/version paths
+  -> return IngestResponse(topic_id, applied[], version_ids{}, similar_topic_ids[])
+  -> FastAPI BackgroundTasks schedules reasoner.run("ingest_complete")</code></pre>
+
+          <h2>Side effects and policy coupling</h2>
+          <ul>
+            <li>Each field write creates a <code>FieldHistoryEntry</code> (UUID + timestamp + provenance metadata).</li>
+            <li>Field history length is capped by <code>Policies.max_field_history</code> (default 500).</li>
+            <li>Reference behavior uses <code>REF_UNCHANGED</code> sentinel so omitted refs are preserved on append.</li>
+            <li>Ingest completion always enqueues internal maintenance (<code>ingest_complete</code> reasoner event).</li>
+          </ul>
+
+          <h2>Failure modes</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>Condition</th>
+                <th>Raised in code</th>
+                <th>HTTP result</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr><td>Unknown placement</td><td><code>ValueError("unknown placement")</code></td><td>400</td></tr>
+              <tr><td>Missing required <code>topic_id</code></td><td><code>ValueError</code></td><td>400</td></tr>
+              <tr><td>Topic not found for extend/version</td><td><code>ValueError("topic not found")</code></td><td>400</td></tr>
+              <tr><td>Unauthorized key</td><td><code>HTTPException(401)</code></td><td>401</td></tr>
+            </tbody>
+          </table>
+
+          <h2>Code map</h2>
+          <ul>
+            <li><code>memstate.api.main.ingest</code></li>
+            <li><code>memstate.core.executor.Executor.ingest</code></li>
+            <li><code>memstate.store.graph_store.append_field_history</code></li>
+            <li><code>memstate.reasoner.engine.Reasoner.run</code> (event <code>ingest_complete</code>)</li>
+          </ul>
+
+          <p><a href="query.html">Next operation: query</a></p>
+        </main>
+        <footer class="page-footer">Core operation reference: ingest write semantics, constraints, and lifecycle behavior.</footer>
+      </div>
+    </div>
+    <script src="../js/nav.js" defer></script>
+  </body>
+</html>

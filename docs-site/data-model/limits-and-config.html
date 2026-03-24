@@ -1,0 +1,116 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Data model - limits, stages, and configuration</title>
+    <link rel="stylesheet" href="../styles.css" />
+  </head>
+  <body class="has-sidebar" data-doc-page="data-model/limits-and-config">
+    <div class="doc-layout">
+      <aside id="doc-sidebar" aria-label="Documentation navigation"></aside>
+      <div class="doc-inner">
+        <header class="page-header">
+          <h1>Limits, query stages, and configuration</h1>
+        </header>
+        <main class="page-main">
+          <p>
+            MemState behavior is controlled by two distinct configuration layers:
+            <strong>Policies</strong> (code-level defaults used by executor/reasoner) and <strong>Settings</strong> (environment-driven runtime options).
+          </p>
+
+          <h2>Policies (core behavior defaults)</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>Policy field</th>
+                <th>Default</th>
+                <th>Behavior impact</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr><td><code>max_field_history</code></td><td>500</td><td>Max revisions retained per field.</td></tr>
+              <tr><td><code>embedding_dimension</code></td><td>384</td><td>Expected vector size for embedding providers.</td></tr>
+              <tr><td><code>query_salience_bump</code></td><td>0.1</td><td>Added to topic salience when topic appears in query results.</td></tr>
+              <tr><td><code>forget_salience_threshold</code></td><td>0.05</td><td>Below this, reasoner can archive topic in forget flow.</td></tr>
+              <tr><td><code>topic_count_soft_limit</code></td><td>500</td><td>Threshold for more aggressive reasoner forget behavior.</td></tr>
+              <tr><td><code>max_topics_for_forget_scan</code></td><td>10000</td><td>Bound for forget-scan operations.</td></tr>
+            </tbody>
+          </table>
+
+          <div class="callout">
+            By default these policy values are code defaults, not direct environment variables. Override by constructing custom policy objects in integration code/tests.
+          </div>
+
+          <h2>Query stages</h2>
+          <p><code>POST /v1/query</code> accepts stage subsets from <code>semantic</code>, <code>structural</code>, and <code>temporal</code> (default is all three).</p>
+          <table>
+            <thead>
+              <tr>
+                <th>Stage</th>
+                <th>What executor does</th>
+                <th>Output effect</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>semantic</code></td>
+                <td>Embeds query, runs vector KNN or cosine fallback over topic embeddings.</td>
+                <td>Candidate ranking and <code>similarity</code> scores in topic bundles.</td>
+              </tr>
+              <tr>
+                <td><code>structural</code></td>
+                <td>Loads topic neighbors (<code>RELATED</code>) and selected fields.</td>
+                <td>Populates <code>neighbors[]</code> and field entries in response.</td>
+              </tr>
+              <tr>
+                <td><code>temporal</code></td>
+                <td>Controls whether field history can be expanded.</td>
+                <td>Full history only when <code>temporal</code> stage is enabled and <code>explain=true</code>.</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <h2>Stage interaction diagram</h2>
+          <pre class="sequence"><code>query request
+  -> build candidate topic ids
+       semantic on  -> vector/cosine ranking
+       semantic off -> topic_ids allowlist or embedding scan order
+  -> for each candidate topic
+       structural on -> neighbors + selected fields
+       temporal on + explain=true -> full field history
+       otherwise -> current field snapshot only
+  -> salience bump and topic history append
+  -> response summary_text + candidates[]</code></pre>
+
+          <h2>Settings relevant to data and retrieval</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>Environment variable</th>
+                <th>Default</th>
+                <th>Usage</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr><td><code>MEMSTATE_QUERY_FIELD_SALIENCE_BUMP</code></td><td>0.1</td><td>Per-field salience bump for query-routed LLM read tools.</td></tr>
+              <tr><td><code>MEMSTATE_FIELD_SALIENCE_MAX</code></td><td>10.0</td><td>Upper bound for field salience values.</td></tr>
+              <tr><td><code>MEMSTATE_CHAT_INTENT_TURNS</code></td><td>8</td><td>Dialogue turns included during intent classification context.</td></tr>
+              <tr><td><code>MEMSTATE_CHAT_MAX_TOOL_ROUNDS</code></td><td>32</td><td>Maximum tool-call loop iterations in chat flow.</td></tr>
+              <tr><td><code>MEMSTATE_CHAT_CHUNK_THRESHOLD_CHARS</code></td><td>10000</td><td>Threshold for entering Study-mode ingest flow.</td></tr>
+            </tbody>
+          </table>
+
+          <h2>Practical limits and caveats</h2>
+          <ul>
+            <li><code>top_k</code> bounds the number of candidate topics returned/processed in query response construction.</li>
+            <li><code>version_field</code> ingest placement requires exactly one field and a valid <code>topic_id</code>.</li>
+            <li>Large nested <code>json</code> fields are allowed, but payload size affects memory/IO and API response latency.</li>
+          </ul>
+        </main>
+        <footer class="page-footer">Configuration reference: policy defaults, query-stage semantics, and runtime tuning knobs.</footer>
+      </div>
+    </div>
+    <script src="../js/nav.js" defer></script>
+  </body>
+</html>

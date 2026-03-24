@@ -360,6 +360,28 @@ OLLAMA_TOOLS: list[dict] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "study_unit_catalog",
+            "description": (
+                "Study mode (phase A): returns the precomputed hierarchical unit catalog (levels coarse/medium/fine) "
+                "with token counts and neighbor context. Use when the prompt catalog was truncated."
+            ),
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "study_graph_snapshot",
+            "description": (
+                "Study mode (phase A): graph snapshot for this Study session only (topic_kind study:<session_id>). "
+                "Same shape as the UI graph; edges only between session topics. Do not use memory_graph_snapshot in phase A."
+            ),
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
 ]
 
 
@@ -406,6 +428,19 @@ INGEST_READ_HELPER_NAMES: frozenset[str] = frozenset(
 )
 INGEST_TOOL_NAMES: frozenset[str] = INGEST_WRITE_TOOL_NAMES | INGEST_READ_HELPER_NAMES
 
+# Study phase A: ingest writes + targeted reads + study helpers; no full graph, no reorganize.
+STUDY_PHASE_A_TOOL_NAMES: frozenset[str] = frozenset(
+    INGEST_WRITE_TOOL_NAMES
+    | {
+        "memory_list_topics",
+        "memory_get_topic_schema",
+        "memory_get_topic",
+        "memory_get_field",
+        "study_unit_catalog",
+        "study_graph_snapshot",
+    }
+)
+
 IntentRoute = Literal["query", "ingest", "both"]
 
 
@@ -416,6 +451,10 @@ def tools_for_intent_route(route: IntentRoute) -> list[dict]:
     if route == "ingest":
         return [t for t in OLLAMA_TOOLS if _tool_function_name(t) in INGEST_TOOL_NAMES]
     return list(OLLAMA_TOOLS)
+
+
+def tools_for_study_phase_a() -> list[dict]:
+    return [t for t in OLLAMA_TOOLS if _tool_function_name(t) in STUDY_PHASE_A_TOOL_NAMES]
 
 
 INTENT_CLASSIFY_SYSTEM = """You classify the *latest user message* for a topic-graph memory assistant.
@@ -458,6 +497,46 @@ Use read tools in whatever order fits: the reorganize snapshot first, then targe
 def build_chat_system_prompt(route: IntentRoute) -> str:
     """Full system prompt for /api/llm/chat after intent routing."""
     parts = [SYSTEM_PROMPT, INTENT_ROUTING_PROMPT]
+    if route == "query":
+        parts.append(QUERY_ROUTE_PROMPT)
+    elif route == "ingest":
+        parts.append(INGEST_ROUTE_PROMPT)
+        parts.append(REORGANIZE_PROMPT)
+    else:
+        parts.append(BOTH_ROUTE_PROMPT)
+        parts.append(REORGANIZE_PROMPT)
+    return "\n\n".join(parts)
+
+
+STUDY_PHASE_A_PROMPT = """Study mode — phase A (sandbox ingest only).
+You are materializing a long document into new topics that are **isolated** from the rest of memory until phase B.
+- Use the unit catalog (coarse / medium / fine) to choose granularity: use finer units where detail matters; coarser where content is redundant or structural only.
+- Create topics with clear titles and summaries; put verbatim or detailed text in fields as needed.
+- **Only** connect topics that share this Study session’s topic_kind. Use memory_add_relationship with RELATED between siblings or sequence; use kind `study_child` from a **section** parent to a **detail** child when you need one level of nesting—never chain study_child deeper (no grandchild sections).
+- Do **not** link to any topic outside this session. Do not call memory_graph_snapshot—use study_graph_snapshot.
+- You may call study_unit_catalog if the catalog in the message was truncated."""
+
+
+STUDY_PHASE_B_PROMPT = """Study mode — phase B (integrate with existing memory).
+The user’s long document was ingested in phase A as Study topics (topic_kind study:<session_id>). Your job now:
+- Link these topics to existing memory where appropriate (memory_add_relationship, field ref_topic_id).
+- Use memory_reorganize_* helpers as needed, then apply writes: merge duplicates, consolidate, connect patterns—same discipline as normal reorganize (compare values before merge).
+- Optionally set topic_kind via memory_update_topic to a normal label (e.g. notes) when a topic is fully integrated, or leave study:… as provenance."""
+
+
+def build_study_phase_a_system_prompt(route: IntentRoute) -> str:
+    """Phase A: sandbox tools; route should be ingest or both (writes)."""
+    parts = [SYSTEM_PROMPT, STUDY_PHASE_A_PROMPT, INTENT_ROUTING_PROMPT]
+    if route == "ingest":
+        parts.append(INGEST_ROUTE_PROMPT)
+    elif route == "both":
+        parts.append(BOTH_ROUTE_PROMPT)
+    return "\n\n".join(parts)
+
+
+def build_study_phase_b_system_prompt(route: IntentRoute) -> str:
+    """Phase B: full graph + reorganize; same route as the original intent."""
+    parts = [SYSTEM_PROMPT, STUDY_PHASE_B_PROMPT, INTENT_ROUTING_PROMPT]
     if route == "query":
         parts.append(QUERY_ROUTE_PROMPT)
     elif route == "ingest":

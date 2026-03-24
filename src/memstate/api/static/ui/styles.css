@@ -822,6 +822,43 @@ select {
   background: var(--bg);
 }
 
+.graph-toolbar {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.btn-graph-delete {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.35rem 0.65rem;
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: rgba(21, 29, 43, 0.95);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background var(--transition), border-color var(--transition), color var(--transition);
+}
+
+.btn-graph-delete:hover:not(:disabled) {
+  background: var(--danger-subtle);
+  border-color: rgba(239, 68, 68, 0.35);
+  color: var(--danger);
+}
+
+.btn-graph-delete:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 #network {
   flex: 1 1 auto;
   min-height: 200px;
@@ -1180,6 +1217,90 @@ pre.raw {
     opacity: 0;
     transform: translateY(8px) scale(0.96);
   }
+}
+
+/* ── Study ingest: inline strip in Assistant column (does not block the graph) ── */
+.study-progress-inline {
+  flex-shrink: 0;
+  padding: 0.5rem 0.55rem 0.55rem;
+  margin: 0.15rem 0 0.35rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--accent-subtle);
+  pointer-events: auto;
+}
+
+.study-progress-inline[hidden] {
+  display: none !important;
+}
+
+.study-progress-inline-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.35rem;
+}
+
+.study-progress-title {
+  font-weight: 600;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-secondary);
+}
+
+.study-progress-badge {
+  font-size: 0.58rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--accent);
+  background: var(--bg);
+  padding: 0.12rem 0.4rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+}
+
+.study-progress-status {
+  margin: 0 0 0.45rem;
+  font-size: 0.72rem;
+  line-height: 1.4;
+  color: var(--text);
+  min-height: 1.35em;
+}
+
+.study-progress-bar-track {
+  height: 4px;
+  border-radius: 999px;
+  background: var(--border);
+  overflow: hidden;
+  margin-bottom: 0.45rem;
+}
+
+.study-progress-bar-indeterminate {
+  height: 100%;
+  width: 40%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--accent), var(--accent-hover), var(--accent));
+  background-size: 200% 100%;
+  animation: study-bar-slide 1.35s ease-in-out infinite;
+}
+
+@keyframes study-bar-slide {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(320%);
+  }
+}
+
+.study-progress-hint {
+  margin: 0;
+  font-size: 0.6rem;
+  line-height: 1.4;
+  color: var(--muted);
 }
 
 /* ── Responsive ── */

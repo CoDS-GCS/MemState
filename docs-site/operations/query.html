@@ -1,0 +1,141 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Operations - query</title>
+    <link rel="stylesheet" href="../styles.css" />
+  </head>
+  <body class="has-sidebar" data-doc-page="operations/query">
+    <div class="doc-layout">
+      <aside id="doc-sidebar" aria-label="Documentation navigation"></aside>
+      <div class="doc-inner">
+        <header class="page-header">
+          <h1>Operation: query (client-accessible)</h1>
+        </header>
+        <main class="page-main">
+          <p>
+            Query is the read entrypoint for external clients. In code, its objective is to assemble ranked topic bundles from semantic retrieval + optional structural and
+            temporal expansion, then reinforce relevance through salience-touch side effects.
+          </p>
+
+          <h2>Access and trigger</h2>
+          <ul>
+            <li><strong>HTTP route</strong>: <code>POST /v1/query</code> in <code>memstate.api.main</code>.</li>
+            <li><strong>SDK route</strong>: <code>MemoryClient.query()</code>.</li>
+            <li><strong>Auth</strong>: guarded by API key only when configured.</li>
+          </ul>
+
+          <h2>Objective in code</h2>
+          <div class="callout">
+            <strong>Objective:</strong> produce <code>QueryResponse.candidates[]</code> with controllable stage depth while updating topic salience based on read access to keep
+            active memory discoverable.
+          </div>
+
+          <h2>Input contract (current implementation)</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>Field</th>
+                <th>Role</th>
+                <th>Default</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr><td><code>q</code></td><td>Query text used for embedding and summary generation.</td><td>Required</td></tr>
+              <tr><td><code>stages[]</code></td><td>Execution switches for <code>semantic</code>, <code>structural</code>, <code>temporal</code>.</td><td>All three</td></tr>
+              <tr><td><code>explain</code></td><td>Enables full field history emission when temporal stage is present.</td><td><code>false</code></td></tr>
+              <tr><td><code>top_k</code></td><td>Maximum candidate count considered/returned.</td><td>8</td></tr>
+              <tr><td><code>topic_ids</code></td><td>Optional allowlist / fallback source depending on stage setup.</td><td>None</td></tr>
+              <tr><td><code>field_names</code></td><td>Optional field subset for field bundle generation.</td><td>All topic fields</td></tr>
+            </tbody>
+          </table>
+
+          <h2>Stage behavior (current implementation)</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>Stage</th>
+                <th>Implementation logic</th>
+                <th>Bundle impact</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>semantic</code></td>
+                <td>Embed query, rank by <code>vector_knn_topic_ids()</code>; fallback to cosine on loaded vectors.</td>
+                <td>Determines candidate ids and sets <code>similarity</code>.</td>
+              </tr>
+              <tr>
+                <td><code>structural</code></td>
+                <td>Loads <code>neighbors()</code> and field bundles for each candidate.</td>
+                <td>Populates <code>neighbors[]</code> and fields with current snapshots (or more if temporal+explain).</td>
+              </tr>
+              <tr>
+                <td><code>temporal</code></td>
+                <td>History expansion occurs only if <code>explain=true</code>.</td>
+                <td>Controls whether field <code>history[]</code> is full or current-only.</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <h2>Execution sequence</h2>
+          <pre class="sequence"><code>Client -> POST /v1/query -> Executor.query(req)
+  -> embed query text
+  -> build candidate ids (semantic rank or fallback)
+  -> for each candidate topic id
+      -> skip missing/archived topics
+      -> create TopicBundle metadata
+      -> optional neighbors (structural)
+      -> optional fields / histories (structural + temporal logic)
+      -> salience bump and append topic_history event
+  -> build summary_text
+  -> return QueryResponse
+  -> BackgroundTasks schedules reasoner.run("query_complete")</code></pre>
+
+          <h2>Important side effects</h2>
+          <ul>
+            <li>Query is not read-only in implementation: each returned topic gets a salience bump (<code>Policies.query_salience_bump</code>).</li>
+            <li>A topic-history event is appended per touched topic with reason <code>query_bump</code>.</li>
+            <li>These side effects influence future forget decisions in reasoner policy.</li>
+          </ul>
+
+          <h2>Candidate selection details</h2>
+          <ul>
+            <li>If semantic stage is enabled: ranking starts with vector KNN, then cosine fallback if needed.</li>
+            <li>If semantic stage is disabled and <code>topic_ids</code> provided: candidate list is that allowlist slice.</li>
+            <li>If semantic stage disabled and no allowlist: fallback is first <code>top_k</code> loaded embedding topics.</li>
+            <li>When semantic stage is enabled and <code>topic_ids</code> is provided, allowlist filtering is applied after ranking.</li>
+          </ul>
+
+          <h2>Failure and edge behavior</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>Condition</th>
+                <th>Behavior</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr><td>No embeddings available</td><td>Falls back to allowlist or empty candidate list depending on request fields.</td></tr>
+              <tr><td>Archived candidate topic</td><td>Skipped from result bundles.</td></tr>
+              <tr><td>Invalid auth key</td><td>HTTP 401 before executor is called.</td></tr>
+            </tbody>
+          </table>
+
+          <h2>Code map</h2>
+          <ul>
+            <li><code>memstate.api.main.query_op</code></li>
+            <li><code>memstate.core.executor.Executor.query</code></li>
+            <li><code>memstate.core.executor.Executor._field_bundle</code></li>
+            <li><code>memstate.store.graph_store.vector_knn_topic_ids</code></li>
+          </ul>
+
+          <p><a href="revision.html">Next operation: revision (internal)</a></p>
+        </main>
+        <footer class="page-footer">Core operation reference: query retrieval stages, ranking logic, and side effects.</footer>
+      </div>
+    </div>
+    <script src="../js/nav.js" defer></script>
+  </body>
+</html>

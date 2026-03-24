@@ -14,8 +14,10 @@ src/memstate.egg-info/top_level.txt
 src/memstate/api/__init__.py
 src/memstate/api/cli.py
 src/memstate/api/deps.py
+src/memstate/api/graph_viz_communities.py
 src/memstate/api/main.py
 src/memstate/api/ui_api.py
+src/memstate/api/ui_graph_payload.py
 src/memstate/api/static/ui/app.js
 src/memstate/api/static/ui/index.html
 src/memstate/api/static/ui/styles.css
@@ -34,8 +36,13 @@ src/memstate/embeddings/base.py
 src/memstate/embeddings/fastembed_provider.py
 src/memstate/llm/__init__.py
 src/memstate/llm/chat_api.py
+src/memstate/llm/groq_chat.py
+src/memstate/llm/intent_router.py
 src/memstate/llm/mcp_server.py
 src/memstate/llm/ollama_chat.py
+src/memstate/llm/ollama_url.py
+src/memstate/llm/study_hierarchy.py
+src/memstate/llm/text_chunking.py
 src/memstate/llm/tool_runner.py
 src/memstate/llm/tools_schema.py
 src/memstate/reasoner/__init__.py
@@ -43,4 +50,5 @@ src/memstate/reasoner/engine.py
 src/memstate/store/__init__.py
 src/memstate/store/graph_store.py
 src/memstate/store/kuzu_adapter.py
+tests/test_text_chunking.py
 tests/test_topic_fields.py

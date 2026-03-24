@@ -105,6 +105,45 @@ def build_ui_graph_snapshot(store: GraphStore) -> dict[str, Any]:
     return {"nodes": nodes, "edges": edges}
 
 
+def build_study_graph_snapshot(store: GraphStore, study_topic_kind: str) -> dict[str, Any]:
+    """
+    Same shape as :func:`build_ui_graph_snapshot`, but only topics with the given
+    ``topic_kind`` (e.g. ``study:<session_uuid>``) and edges between those topics only.
+    """
+    tk = str(study_topic_kind).strip()
+    topic_ids = store.list_topic_ids(include_archived=True, topic_kind=tk)
+    allowed = set(topic_ids)
+    if not allowed:
+        return {"nodes": [], "edges": []}
+    full = build_ui_graph_snapshot(store)
+    nodes = [n for n in full.get("nodes", []) if n.get("id") in allowed]
+    edges = [
+        e for e in full.get("edges", []) if e.get("from") in allowed and e.get("to") in allowed
+    ]
+    # Recompute community only on subgraph nodes (structural edges among allowed).
+    structural: set[tuple[str, str]] = set()
+    for e in edges:
+        a, b = str(e.get("from")), str(e.get("to"))
+        if a and b and a != b:
+            structural.add((a, b) if a < b else (b, a))
+    embeddings: dict[str, list[float]] = {}
+    for n in nodes:
+        sid = str(n["id"])
+        row = store.get_topic(sid)
+        if row and row.get("embedding"):
+            emb = row.get("embedding")
+            if isinstance(emb, list) and emb:
+                embeddings[sid] = [float(x) for x in emb]
+    comm = compute_topic_communities(
+        [n["id"] for n in nodes],
+        list(structural),
+        embeddings,
+    )
+    for n in nodes:
+        n["community"] = int(comm.get(n["id"], 0))
+    return {"nodes": nodes, "edges": edges}
+
+
 def build_topics_schema_snapshot(store: GraphStore) -> dict[str, Any]:
     """
     Structural view for reorganization: topic id, title, kind, salience, archived,
