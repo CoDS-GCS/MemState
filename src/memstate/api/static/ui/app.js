@@ -178,125 +178,6 @@ function formatSalience(s) {
   return s.toFixed(2).replace(/\.?0+$/, "");
 }
 
-const FIELD_NODE_PREFIX = "memstate_field:";
-const FIELD_TIMELINE_MAX_ENTRIES = 50;
-
-function truncateText(s, max) {
-  const t = String(s ?? "");
-  if (t.length <= max) return t;
-  return t.slice(0, Math.max(0, max - 1)) + "…";
-}
-
-function makeFieldNodeId(topicId, fieldName) {
-  return `${FIELD_NODE_PREFIX}${topicId}||${encodeURIComponent(fieldName)}`;
-}
-
-function parseFieldNodeId(id) {
-  if (!id.startsWith(FIELD_NODE_PREFIX)) return null;
-  const rest = id.slice(FIELD_NODE_PREFIX.length);
-  const sep = "||";
-  const i = rest.indexOf(sep);
-  if (i === -1) return null;
-  const topicId = rest.slice(0, i);
-  const fieldName = decodeURIComponent(rest.slice(i + sep.length));
-  return { topicId, fieldName };
-}
-
-/**
- * @param {string} fieldName
- * @param {Record<string, unknown>} f
- */
-function formatFieldCompactLabel(fieldName, f) {
-  const lines = [fieldName, `(${f.field_type || "?"})`];
-  const hist = Array.isArray(f.history) ? f.history : [];
-  const cur = hist[0] || {};
-  const v = cur.value;
-  const vs = typeof v === "object" && v !== null ? JSON.stringify(v) : String(v ?? "—");
-  lines.push(truncateText(vs, 48));
-  if (f.ref_topic_id) lines.push(`→ ${String(f.ref_topic_id).slice(0, 10)}…`);
-  return lines.join("\n");
-}
-
-function hideFieldTimelinePanel() {
-  const panel = document.getElementById("field-timeline-panel");
-  const track = document.getElementById("field-timeline-track");
-  const ctx = document.getElementById("field-timeline-context");
-  if (panel) panel.hidden = true;
-  if (track) track.innerHTML = "";
-  if (ctx) ctx.textContent = "";
-}
-
-/**
- * @param {string} topicTitle
- * @param {string} fieldName
- * @param {Record<string, unknown>} f
- */
-function showFieldTimelinePanel(topicTitle, fieldName, f) {
-  const panel = document.getElementById("field-timeline-panel");
-  const track = document.getElementById("field-timeline-track");
-  const ctx = document.getElementById("field-timeline-context");
-  if (!panel || !track || !ctx) return;
-
-  ctx.textContent = `${topicTitle || "Topic"} · ${fieldName}`;
-  track.innerHTML = "";
-
-  const hist = Array.isArray(f.history) ? f.history : [];
-  if (hist.length === 0) {
-    const empty = document.createElement("div");
-    empty.className = "field-timeline-empty";
-    empty.textContent = "No history entries.";
-    track.appendChild(empty);
-  } else {
-    const cap = Math.min(hist.length, FIELD_TIMELINE_MAX_ENTRIES);
-    for (let i = 0; i < cap; i++) {
-      const e = hist[i];
-      const row = document.createElement("div");
-      row.className = "field-timeline-entry";
-      const time = document.createElement("div");
-      time.className = "field-timeline-time";
-      const when = e && typeof e === "object" && e.valid_from ? String(e.valid_from) : `Entry ${i + 1}`;
-      time.textContent = when;
-      const val = document.createElement("div");
-      val.className = "field-timeline-value";
-      const v = e && typeof e === "object" ? e.value : e;
-      let text = typeof v === "object" && v !== null ? JSON.stringify(v, null, 2) : String(v ?? "—");
-      if (text.length > 2000) text = text.slice(0, 1999) + "…";
-      val.textContent = text;
-      row.appendChild(time);
-      row.appendChild(val);
-      track.appendChild(row);
-    }
-    if (hist.length > cap) {
-      const more = document.createElement("div");
-      more.className = "field-timeline-empty";
-      more.textContent = `… ${hist.length - cap} more entries not shown`;
-      track.appendChild(more);
-    }
-  }
-  panel.hidden = false;
-}
-
-function resetFieldNodeStyle(fieldNodeId) {
-  const ds = graphView.visDataSets;
-  const t = graphView.topicExpandCache;
-  const parsed = parseFieldNodeId(fieldNodeId);
-  if (!ds || !t || !parsed) return;
-  const f = t.fields && typeof t.fields === "object" ? t.fields[parsed.fieldName] : null;
-  if (!f || typeof f !== "object") return;
-  ds.nodes.update({
-    id: fieldNodeId,
-    label: formatFieldCompactLabel(parsed.fieldName, f),
-    widthConstraint: { maximum: 210 },
-    font: { color: "#e8f5f3", size: 10, multi: true, face: "Inter, Segoe UI, system-ui, sans-serif" },
-    borderWidth: 2,
-    color: {
-      background: "rgba(20, 90, 85, 0.92)",
-      border: "#2dd4bf",
-      highlight: { background: "#134e4a", border: "#5eead4" },
-    },
-  });
-}
-
 /** Map salience to fill opacity: low salience → more transparent. */
 function salienceToFillOpacity(salience, minS, maxS) {
   const lo = 0.32;
@@ -401,22 +282,126 @@ function computeCommunityClusterPositions(nodes, links) {
   return positions;
 }
 
-function tooltip(n) {
-  const lines = [
-    n.title || n.label,
-    `kind: ${n.topic_kind || "—"}`,
-    `salience: ${n.salience}`,
-    `fields: ${(n.fields || []).length}`,
-  ];
-  if (n.community != null && Number.isFinite(Number(n.community))) {
-    lines.push(`community: ${n.community} (embedding + refs)`);
+/**
+ * @param {Record<string, unknown>} apiNode
+ * @param {number | null} community
+ */
+function buildTopicTooltipPayload(apiNode, community) {
+  const head =
+    (apiNode.title && String(apiNode.title).trim()) ||
+    String(apiNode.label || "").trim() ||
+    String(apiNode.id || "").slice(0, 8);
+  const fields = (apiNode.fields || []).map((f) => ({
+    name: String(f.name || ""),
+    type: String(f.field_type || "—"),
+    ref: f.ref_topic_id ? String(f.ref_topic_id).slice(0, 10) + "…" : null,
+  }));
+  return {
+    kind: "topic",
+    head,
+    topicKind: apiNode.topic_kind || "—",
+    salience: apiNode.salience,
+    fieldCount: (apiNode.fields || []).length,
+    community,
+    archived: !!apiNode.archived,
+    fields,
+    idShort: String(apiNode.id || "").slice(0, 8) + "…",
+  };
+}
+
+function renderTopicTooltipHtml(p) {
+  const parts = [];
+  parts.push(`<div class="graph-tooltip-head">${escapeHtml(p.head)}</div>`);
+  parts.push('<dl class="graph-tooltip-meta">');
+  parts.push(`<dt>Kind</dt><dd>${escapeHtml(String(p.topicKind))}</dd>`);
+  parts.push(`<dt>Salience</dt><dd>${escapeHtml(String(p.salience ?? "—"))}</dd>`);
+  parts.push(`<dt>Fields</dt><dd>${p.fieldCount}</dd>`);
+  if (p.archived) parts.push("<dt>Status</dt><dd>archived</dd>");
+  if (p.community != null && Number.isFinite(Number(p.community))) {
+    parts.push(`<dt>Community</dt><dd>${escapeHtml(String(p.community))}</dd>`);
   }
-  for (const f of n.fields || []) {
-    lines.push(
-      `  ${f.name} (${f.field_type})${f.ref_topic_id ? " → " + f.ref_topic_id.slice(0, 8) : ""}`
-    );
+  parts.push(`<dt>ID</dt><dd>${escapeHtml(p.idShort)}</dd>`);
+  parts.push("</dl>");
+  if (p.fields && p.fields.length) {
+    parts.push('<ul class="graph-tooltip-fields">');
+    const max = 12;
+    for (let i = 0; i < Math.min(p.fields.length, max); i++) {
+      const f = p.fields[i];
+      const ref = f.ref
+        ? ` <span style="opacity:.88">→ ${escapeHtml(f.ref)}</span>`
+        : "";
+      parts.push(
+        `<li><strong>${escapeHtml(f.name)}</strong> (${escapeHtml(f.type)})${ref}</li>`
+      );
+    }
+    if (p.fields.length > max) {
+      parts.push(
+        `<li style="border-left-color:var(--muted);opacity:.88">… +${p.fields.length - max} more</li>`
+      );
+    }
+    parts.push("</ul>");
   }
-  return lines.join("\n");
+  return parts.join("");
+}
+
+function hideGraphTooltip() {
+  const tip = document.getElementById("graph-tooltip");
+  if (tip) {
+    tip.hidden = true;
+    tip.innerHTML = "";
+  }
+}
+
+/**
+ * @param {HTMLElement} tipEl
+ * @param {Record<string, unknown>} params
+ */
+function positionGraphTooltip(tipEl, params) {
+  const wrap = graphView.container?.closest(".graph-wrap");
+  if (!wrap || !tipEl) return;
+  const r = wrap.getBoundingClientRect();
+  const e = params.event;
+  let x = 16;
+  let y = 16;
+  if (e && typeof e.clientX === "number") {
+    x = e.clientX - r.left + 12;
+    y = e.clientY - r.top + 12;
+  } else {
+    const p = params.pointer?.DOM;
+    if (p && graphView.container) {
+      const nr = graphView.container.getBoundingClientRect();
+      x = nr.left - r.left + p.x + 12;
+      y = nr.top - r.top + p.y + 12;
+    }
+  }
+  tipEl.style.left = `${x}px`;
+  tipEl.style.top = `${y}px`;
+  const pad = 8;
+  const tw = tipEl.offsetWidth;
+  const th = tipEl.offsetHeight;
+  if (x + tw > wrap.clientWidth - pad) x = Math.max(pad, wrap.clientWidth - tw - pad);
+  if (y + th > wrap.clientHeight - pad) y = Math.max(pad, wrap.clientHeight - th - pad);
+  tipEl.style.left = `${x}px`;
+  tipEl.style.top = `${y}px`;
+}
+
+function wireGraphTooltip(net) {
+  const tip = document.getElementById("graph-tooltip");
+  if (!tip) return;
+
+  net.on("hoverNode", (params) => {
+    const id = params.node;
+    const payload = graphView.nodeTooltipPayload?.get(id);
+    const html = payload ? renderTopicTooltipHtml(payload) : "";
+    if (!html) return;
+    tip.innerHTML = html;
+    tip.hidden = false;
+    requestAnimationFrame(() => positionGraphTooltip(tip, params));
+  });
+
+  net.on("blurNode", () => hideGraphTooltip());
+  net.on("dragStart", () => hideGraphTooltip());
+  net.on("zoom", () => hideGraphTooltip());
 }
 
 function buildGraphData(data) {
@@ -437,7 +422,7 @@ function buildGraphData(data) {
       salience,
       salienceLabel: formatSalience(salience),
       fillOpacity: salienceToFillOpacity(salience, minS, maxS),
-      title: tooltip({ ...n, community: comm }),
+      tooltipPayload: buildTopicTooltipPayload(n, comm),
       archived: !!n.archived,
       community: comm,
     };
@@ -478,30 +463,104 @@ const graphView = {
   compactNodeBackup: null,
   /** @type {string | null} */
   expandPending: null,
-  /** @type {string[] | null} */
-  syntheticFieldNodeIds: null,
-  /** @type {string[] | null} */
-  syntheticFieldEdgeIds: null,
-  /** @type {string | null} */
-  expandedFieldHistoryId: null,
   /** @type {Record<string, unknown> | null} */
-  topicExpandCache: null,
+  wizardTopicPayload: null,
+  /** @type {Map<string, Record<string, unknown>> | null} */
+  nodeTooltipPayload: null,
 };
 
-function removeSyntheticFieldGraph() {
-  hideFieldTimelinePanel();
-  const ds = graphView.visDataSets;
-  if (!ds) return;
-  if (graphView.syntheticFieldEdgeIds && graphView.syntheticFieldEdgeIds.length) {
-    ds.edges.remove(graphView.syntheticFieldEdgeIds);
+/**
+ * @param {Record<string, unknown>} t
+ */
+function renderTopicWizardBody(t) {
+  const parts = [];
+  parts.push('<section class="topic-wizard-section"><h3 class="topic-wizard-h3">Topic</h3><dl class="topic-wizard-dl">');
+  const meta = [
+    ["ID", t.id],
+    ["Title", t.title],
+    ["Summary", t.summary],
+    ["Kind", t.topic_kind],
+    ["Salience", t.salience],
+    ["Failed salience", t.failed_salience],
+    ["Archived", t.archived],
+    ["Created", t.created_at],
+    ["Updated", t.updated_at],
+  ];
+  for (const [k, v] of meta) {
+    if (v === undefined || v === null || v === "") continue;
+    const disp = typeof v === "object" ? JSON.stringify(v) : String(v);
+    parts.push(`<dt>${escapeHtml(k)}</dt><dd>${escapeHtml(disp)}</dd>`);
   }
-  if (graphView.syntheticFieldNodeIds && graphView.syntheticFieldNodeIds.length) {
-    ds.nodes.remove(graphView.syntheticFieldNodeIds);
+  parts.push("</dl></section>");
+
+  const fields = t.fields && typeof t.fields === "object" ? t.fields : {};
+  const names = Object.keys(fields).sort();
+  if (names.length) {
+    parts.push('<section class="topic-wizard-section"><h3 class="topic-wizard-h3">Fields</h3>');
+    for (const name of names) {
+      const f = fields[name];
+      if (!f || typeof f !== "object") continue;
+      parts.push(`<div class="topic-wizard-field-card"><h4 class="topic-wizard-h4">${escapeHtml(name)}</h4>`);
+      parts.push('<dl class="topic-wizard-dl topic-wizard-field-meta">');
+      parts.push(`<dt>Type</dt><dd>${escapeHtml(String(f.field_type ?? "—"))}</dd>`);
+      if (f.ref_topic_id) {
+        parts.push(`<dt>Ref topic</dt><dd>${escapeHtml(String(f.ref_topic_id))}</dd>`);
+      }
+      parts.push("</dl>");
+      const hist = Array.isArray(f.history) ? f.history : [];
+      if (hist.length) {
+        parts.push('<div class="topic-wizard-history"><div class="topic-wizard-history-label">History</div>');
+        for (let i = 0; i < hist.length; i++) {
+          const e = hist[i];
+          const when =
+            e && typeof e === "object" && e.valid_from != null
+              ? String(e.valid_from)
+              : `Entry ${i + 1}`;
+          const val = e && typeof e === "object" ? e.value : e;
+          const valStr =
+            typeof val === "object" && val !== null ? JSON.stringify(val, null, 2) : String(val ?? "—");
+          parts.push(
+            `<div class="topic-wizard-hist-row"><span class="topic-wizard-hist-time">${escapeHtml(when)}</span><pre class="topic-wizard-hist-val">${escapeHtml(valStr)}</pre></div>`
+          );
+        }
+        parts.push("</div>");
+      }
+      parts.push("</div>");
+    }
+    parts.push("</section>");
   }
-  graphView.syntheticFieldEdgeIds = null;
-  graphView.syntheticFieldNodeIds = null;
-  graphView.expandedFieldHistoryId = null;
-  graphView.topicExpandCache = null;
+
+  parts.push(
+    '<section class="topic-wizard-section topic-wizard-section-raw"><h3 class="topic-wizard-h3">Raw JSON</h3><pre class="topic-wizard-pre">'
+  );
+  parts.push(escapeHtml(JSON.stringify(t, null, 2)));
+  parts.push("</pre></section>");
+  return parts.join("");
+}
+
+/**
+ * @param {Record<string, unknown>} t
+ */
+function showTopicWizard(t) {
+  graphView.wizardTopicPayload = t;
+  const root = document.getElementById("topic-wizard");
+  const titleEl = document.getElementById("topic-wizard-title");
+  const body = document.getElementById("topic-wizard-body");
+  if (!root || !titleEl || !body) return;
+  const title = (t.title && String(t.title).trim()) || String(t.id || "Topic");
+  titleEl.textContent = title;
+  body.innerHTML = renderTopicWizardBody(t);
+  root.hidden = false;
+  document.body.classList.add("topic-wizard-open");
+}
+
+function hideTopicWizard() {
+  const root = document.getElementById("topic-wizard");
+  const body = document.getElementById("topic-wizard-body");
+  if (body) body.innerHTML = "";
+  graphView.wizardTopicPayload = null;
+  if (root) root.hidden = true;
+  document.body.classList.remove("topic-wizard-open");
 }
 
 function collapseGraphExpand({ restorePositions = true } = {}) {
@@ -510,7 +569,7 @@ function collapseGraphExpand({ restorePositions = true } = {}) {
   const id = graphView.expandedId;
   if (!id) return;
 
-  removeSyntheticFieldGraph();
+  hideTopicWizard();
 
   if (graphView.compactNodeBackup && ds) {
     ds.nodes.update(graphView.compactNodeBackup);
@@ -526,84 +585,8 @@ function collapseGraphExpand({ restorePositions = true } = {}) {
   graphView.compactNodeBackup = null;
   graphView.expandPending = null;
 
-  const pre = document.getElementById("detail");
-  if (pre) pre.textContent = "Click a node to inspect its topic + fields.";
   if (net && typeof net.unselectAll === "function") net.unselectAll();
   updateGraphDeleteTopicButton();
-}
-
-function layoutFieldNodesBelowTopic(topicId, fieldNodeIds) {
-  const net = graphView.network;
-  const saved = graphView.savedPositions;
-  if (!net || !saved || !fieldNodeIds.length) return;
-  const fp = saved[topicId];
-  if (!fp) return;
-  const cx = fp.x;
-  const cy = fp.y;
-  const n = fieldNodeIds.length;
-  const spacing = Math.min(150, Math.max(88, 720 / Math.max(n, 1)));
-  const dy = 130;
-  fieldNodeIds.forEach((fid, i) => {
-    const nx = cx + (i - (n - 1) / 2) * spacing;
-    net.moveNode(fid, nx, cy + dy);
-  });
-  net.moveNode(topicId, cx, cy);
-  net.fit({ animation: { duration: 380 } });
-}
-
-/**
- * @param {string} fieldNodeId
- */
-function toggleFieldHistory(fieldNodeId) {
-  const ds = graphView.visDataSets;
-  const net = graphView.network;
-  const t = graphView.topicExpandCache;
-  const parsed = parseFieldNodeId(fieldNodeId);
-  if (!ds || !net || !t || !parsed) return;
-  const f = t.fields && typeof t.fields === "object" ? t.fields[parsed.fieldName] : null;
-  if (!f || typeof f !== "object") return;
-
-  const pre = document.getElementById("detail");
-  const topicTitle = String(t.title || "").trim() || "Topic";
-
-  if (graphView.expandedFieldHistoryId === fieldNodeId) {
-    resetFieldNodeStyle(fieldNodeId);
-    graphView.expandedFieldHistoryId = null;
-    hideFieldTimelinePanel();
-    if (pre) pre.textContent = JSON.stringify(t, null, 2);
-    net.selectNodes([fieldNodeId]);
-    return;
-  }
-
-  if (graphView.expandedFieldHistoryId) {
-    resetFieldNodeStyle(graphView.expandedFieldHistoryId);
-  }
-
-  graphView.expandedFieldHistoryId = fieldNodeId;
-  ds.nodes.update({
-    id: fieldNodeId,
-    borderWidth: 3,
-    color: {
-      background: "rgba(20, 90, 85, 0.92)",
-      border: "#fbbf24",
-      highlight: { background: "#134e4a", border: "#5eead4" },
-    },
-  });
-  showFieldTimelinePanel(topicTitle, parsed.fieldName, f);
-  if (pre) {
-    pre.textContent = JSON.stringify(
-      {
-        topic_id: t.id,
-        field: parsed.fieldName,
-        field_type: f.field_type,
-        ref_topic_id: f.ref_topic_id,
-        history: f.history,
-      },
-      null,
-      2
-    );
-  }
-  net.selectNodes([fieldNodeId]);
 }
 
 /**
@@ -628,9 +611,6 @@ async function expandGraphNode(topicId) {
     const t = await loadDetail(topicId);
     if (graphView.expandPending !== topicId) return;
 
-    graphView.topicExpandCache = t;
-    graphView.expandedFieldHistoryId = null;
-
     const bg =
       prev && prev.color && prev.color.background
         ? prev.color.background
@@ -646,71 +626,14 @@ async function expandGraphNode(topicId) {
       },
     });
 
-    const fieldsObj = t.fields && typeof t.fields === "object" ? t.fields : {};
-    const fieldNames = Object.keys(fieldsObj).sort();
-    const fieldNodeIds = [];
-    const edgeIds = [];
-    const newNodes = [];
-    const newEdges = [];
-
-    fieldNames.forEach((fname, idx) => {
-      const f = fieldsObj[fname];
-      if (!f || typeof f !== "object") return;
-      const fid = makeFieldNodeId(topicId, fname);
-      fieldNodeIds.push(fid);
-      const eid = `memstate_fe_${topicId}_${idx}`;
-      edgeIds.push(eid);
-      newNodes.push({
-        id: fid,
-        label: formatFieldCompactLabel(fname, f),
-        title: `${fname} — opens timeline panel (top right); click field again or × to close`,
-        shape: "box",
-        margin: 10,
-        widthConstraint: { maximum: 210 },
-        font: {
-          color: "#e8f5f3",
-          size: 10,
-          multi: true,
-          face: "Inter, Segoe UI, system-ui, sans-serif",
-        },
-        color: {
-          background: "rgba(20, 90, 85, 0.92)",
-          border: "#2dd4bf",
-          highlight: { background: "#134e4a", border: "#5eead4" },
-        },
-        borderWidth: 2,
-      });
-      newEdges.push({
-        id: eid,
-        from: topicId,
-        to: fid,
-        label: "",
-        color: { color: "rgba(148, 163, 184, 0.55)" },
-        dashes: [3, 6],
-        arrows: { to: { enabled: false } },
-        smooth: { type: "cubicBezier", roundness: 0.35 },
-      });
-    });
-
-    graphView.syntheticFieldNodeIds = fieldNodeIds;
-    graphView.syntheticFieldEdgeIds = edgeIds;
-
-    if (newNodes.length) {
-      ds.nodes.add(newNodes);
-      ds.edges.add(newEdges);
-      layoutFieldNodesBelowTopic(topicId, fieldNodeIds);
-    } else {
-      net.fit({ animation: { duration: 320 } });
-    }
-
+    showTopicWizard(t);
     graphView.expandedId = topicId;
     net.selectNodes([topicId]);
+    net.fit({ animation: { duration: 320 } });
   } catch (e) {
     if (graphView.expandPending !== topicId) return;
-    const errPre = document.getElementById("detail");
-    if (errPre) errPre.textContent = "Error: " + e.message;
     toast(String(e.message), "error");
-    removeSyntheticFieldGraph();
+    hideTopicWizard();
     if (graphView.compactNodeBackup) {
       ds.nodes.update(graphView.compactNodeBackup);
     }
@@ -744,7 +667,6 @@ function buildVisDatasets(nodes, links) {
     const vis = {
       id: n.id,
       label,
-      title: n.title,
       color: {
         background: bg,
         border: n.archived ? "#64748b" : `hsl(${hue}, 62%, 72%)`,
@@ -825,7 +747,7 @@ function initGraph(container) {
 }
 
 /**
- * Selected topic on the graph (ignores synthetic field nodes).
+ * Selected topic on the graph.
  * Falls back to expanded topic when the network has no selection (e.g. after partial updates).
  */
 function getPrimarySelectedTopicId() {
@@ -833,11 +755,9 @@ function getPrimarySelectedTopicId() {
   if (!net) return null;
   const ids = net.getSelectedNodes();
   for (const id of ids) {
-    if (id && !id.startsWith(FIELD_NODE_PREFIX)) return id;
+    if (id) return id;
   }
-  const exp = graphView.expandedId;
-  if (exp && !exp.startsWith(FIELD_NODE_PREFIX)) return exp;
-  return null;
+  return graphView.expandedId;
 }
 
 function updateGraphDeleteTopicButton() {
@@ -874,8 +794,6 @@ function wireGraphDeleteTopicButton() {
       }
       await api(`/api/ui/topics/${encodeURIComponent(tid)}`, { method: "DELETE" });
       setStatus("Deleted topic");
-      const pre = document.getElementById("detail");
-      if (pre) pre.textContent = "";
       await refreshGraph();
       updateGraphDeleteTopicButton();
     } catch (e) {
@@ -889,15 +807,19 @@ function renderGraph(apiData) {
   graphView.savedPositions = null;
   graphView.compactNodeBackup = null;
   graphView.expandPending = null;
-  graphView.syntheticFieldNodeIds = null;
-  graphView.syntheticFieldEdgeIds = null;
-  graphView.expandedFieldHistoryId = null;
-  graphView.topicExpandCache = null;
+  graphView.wizardTopicPayload = null;
   graphView.nodeIds = null;
   graphView.lastRawLinks = null;
   graphView.visDataSets = null;
+  graphView.nodeTooltipPayload = null;
+  hideGraphTooltip();
+  hideTopicWizard();
 
   const { nodes: nodeIn, links: linkIn } = buildGraphData(apiData);
+  graphView.nodeTooltipPayload = new Map();
+  for (const n of nodeIn) {
+    if (n.tooltipPayload) graphView.nodeTooltipPayload.set(n.id, n.tooltipPayload);
+  }
   updateEmptyState(nodeIn.length);
 
   if (graphView.layoutFallbackTimer) {
@@ -911,6 +833,7 @@ function renderGraph(apiData) {
   if (graphView.container) graphView.container.innerHTML = "";
 
   if (!nodeIn.length) {
+    hideGraphTooltip();
     updateGraphDeleteTopicButton();
     return;
   }
@@ -951,10 +874,6 @@ function renderGraph(apiData) {
   net.on("click", (params) => {
     if (!params.nodes.length) return;
     const id = params.nodes[0];
-    if (id.startsWith(FIELD_NODE_PREFIX)) {
-      toggleFieldHistory(id);
-      return;
-    }
     if (graphView.expandedId === id) {
       collapseGraphExpand({ restorePositions: true });
       return;
@@ -971,6 +890,8 @@ function renderGraph(apiData) {
   net.on("select", () => updateGraphDeleteTopicButton());
   net.on("deselect", () => updateGraphDeleteTopicButton());
   updateGraphDeleteTopicButton();
+
+  wireGraphTooltip(net);
 
   const w = graphView.container.clientWidth;
   const h = graphView.container.clientHeight;
@@ -1497,28 +1418,37 @@ function wireChat() {
   });
 }
 
-/* ── Detail ── */
+/* ── Topic wizard (graph click) ── */
 
 async function loadDetail(topicId) {
-  const pre = document.getElementById("detail");
-  if (pre) pre.textContent = "Loading…";
-  const t = await api(`/api/ui/topics/${encodeURIComponent(topicId)}`);
-  if (pre) pre.textContent = JSON.stringify(t, null, 2);
-  return t;
+  return api(`/api/ui/topics/${encodeURIComponent(topicId)}`);
 }
 
-/* ── Copy detail ── */
-
-function wireCopyDetail() {
-  const btn = document.getElementById("btn-copy-detail");
-  if (!btn) return;
-  btn.addEventListener("click", () => {
-    const pre = document.getElementById("detail");
-    if (!pre || !pre.textContent) return;
-    navigator.clipboard.writeText(pre.textContent).then(
-      () => toast("Copied to clipboard"),
-      () => toast("Copy failed", "error")
-    );
+function wireTopicWizard() {
+  const backdrop = document.getElementById("topic-wizard-backdrop");
+  const closeBtn = document.getElementById("btn-topic-wizard-close");
+  const copyBtn = document.getElementById("btn-topic-wizard-copy");
+  if (backdrop) {
+    backdrop.addEventListener("click", () => collapseGraphExpand({ restorePositions: true }));
+  }
+  if (closeBtn) {
+    closeBtn.addEventListener("click", () => collapseGraphExpand({ restorePositions: true }));
+  }
+  if (copyBtn) {
+    copyBtn.addEventListener("click", () => {
+      const t = graphView.wizardTopicPayload;
+      if (!t) return;
+      navigator.clipboard.writeText(JSON.stringify(t, null, 2)).then(
+        () => toast("Copied topic JSON"),
+        () => toast("Copy failed", "error")
+      );
+    });
+  }
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape") return;
+    const w = document.getElementById("topic-wizard");
+    if (!w || w.hidden) return;
+    collapseGraphExpand({ restorePositions: true });
   });
 }
 
@@ -1602,7 +1532,7 @@ function wireForms() {
     try {
       await api(`/api/ui/topics/${encodeURIComponent(id)}`, { method: "DELETE" });
       setStatus("Deleted");
-      document.getElementById("detail").textContent = "";
+      if (graphView.expandedId === id) hideTopicWizard();
       await refreshGraph();
     } catch (err) {
       setStatus(err.message, true);
@@ -1625,15 +1555,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   wireGraphDeleteTopicButton();
   wireChat();
   wireReorganize();
-  wireCopyDetail();
-  const ftClose = document.getElementById("field-timeline-close");
-  if (ftClose) {
-    ftClose.addEventListener("click", () => {
-      const id = graphView.expandedFieldHistoryId;
-      if (id) toggleFieldHistory(id);
-      else hideFieldTimelinePanel();
-    });
-  }
+  wireTopicWizard();
   await checkBackendBanner();
   await refreshGraph();
 });

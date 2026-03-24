@@ -80,6 +80,102 @@
             Shared-state guarantee: LLM tools call the same <code>GraphStore</code> instance used by UI and <code>/v1</code>. There is no separate memory cache for chat.
           </div>
 
+          <h2>LLM and MCP usage (visual)</h2>
+          <div class="figure-block">
+            <svg class="diagram-svg" viewBox="0 0 940 300" xmlns="http://www.w3.org/2000/svg" aria-label="LLM and MCP integration flows">
+              <defs>
+                <marker id="arr-llm" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L0,6 L7,3 z" fill="#8b949e"/></marker>
+              </defs>
+
+              <text x="210" y="26" text-anchor="middle" fill="#58a6ff" font-size="13" font-family="Segoe UI, sans-serif">HTTP LLM chat path</text>
+              <rect x="24" y="42" width="116" height="52" rx="8" fill="#10161d" stroke="#30363d"/>
+              <text x="82" y="73" text-anchor="middle" fill="#e6edf3" font-size="11" font-family="Segoe UI, sans-serif">User client</text>
+              <line x1="140" y1="68" x2="188" y2="68" stroke="#8b949e" stroke-width="1.3" marker-end="url(#arr-llm)"/>
+              <rect x="192" y="32" width="188" height="72" rx="8" fill="#10161d" stroke="#58a6ff"/>
+              <text x="286" y="56" text-anchor="middle" fill="#58a6ff" font-size="11" font-family="Segoe UI, sans-serif">POST /api/llm/chat</text>
+              <text x="286" y="74" text-anchor="middle" fill="#c9d1d9" font-size="10" font-family="Segoe UI, sans-serif">intent classify + tool-set route</text>
+              <text x="286" y="90" text-anchor="middle" fill="#c9d1d9" font-size="10" font-family="Segoe UI, sans-serif">optional Study phase A/B</text>
+              <line x1="380" y1="68" x2="432" y2="68" stroke="#8b949e" stroke-width="1.3" marker-end="url(#arr-llm)"/>
+              <rect x="436" y="40" width="152" height="56" rx="8" fill="#10161d" stroke="#2ea043"/>
+              <text x="512" y="64" text-anchor="middle" fill="#2ea043" font-size="11" font-family="Segoe UI, sans-serif">MemoryToolRunner</text>
+              <text x="512" y="82" text-anchor="middle" fill="#c9d1d9" font-size="10" font-family="Segoe UI, sans-serif">execute selected tools</text>
+              <line x1="588" y1="68" x2="638" y2="68" stroke="#8b949e" stroke-width="1.3" marker-end="url(#arr-llm)"/>
+              <rect x="642" y="40" width="132" height="56" rx="8" fill="#10161d" stroke="#d29922"/>
+              <text x="708" y="64" text-anchor="middle" fill="#d29922" font-size="11" font-family="Segoe UI, sans-serif">GraphStore</text>
+              <text x="708" y="82" text-anchor="middle" fill="#c9d1d9" font-size="10" font-family="Segoe UI, sans-serif">topic/field/edge ops</text>
+              <line x1="774" y1="68" x2="822" y2="68" stroke="#8b949e" stroke-width="1.3" marker-end="url(#arr-llm)"/>
+              <rect x="826" y="44" width="92" height="48" rx="8" fill="#10161d" stroke="#a371f7"/>
+              <text x="872" y="72" text-anchor="middle" fill="#a371f7" font-size="11" font-family="Segoe UI, sans-serif">Kuzu file</text>
+
+              <text x="214" y="166" text-anchor="middle" fill="#58a6ff" font-size="13" font-family="Segoe UI, sans-serif">MCP stdio path</text>
+              <rect x="24" y="182" width="116" height="52" rx="8" fill="#10161d" stroke="#30363d"/>
+              <text x="82" y="213" text-anchor="middle" fill="#e6edf3" font-size="11" font-family="Segoe UI, sans-serif">MCP client</text>
+              <line x1="140" y1="208" x2="188" y2="208" stroke="#8b949e" stroke-width="1.3" marker-end="url(#arr-llm)"/>
+              <rect x="192" y="172" width="188" height="72" rx="8" fill="#10161d" stroke="#58a6ff"/>
+              <text x="286" y="196" text-anchor="middle" fill="#58a6ff" font-size="11" font-family="Segoe UI, sans-serif">memstate.llm.mcp_server</text>
+              <text x="286" y="214" text-anchor="middle" fill="#c9d1d9" font-size="10" font-family="Segoe UI, sans-serif">FastMCP tool wrapper</text>
+              <text x="286" y="230" text-anchor="middle" fill="#c9d1d9" font-size="10" font-family="Segoe UI, sans-serif">no intent router in this layer</text>
+              <line x1="380" y1="208" x2="432" y2="208" stroke="#8b949e" stroke-width="1.3" marker-end="url(#arr-llm)"/>
+              <rect x="436" y="180" width="152" height="56" rx="8" fill="#10161d" stroke="#2ea043"/>
+              <text x="512" y="204" text-anchor="middle" fill="#2ea043" font-size="11" font-family="Segoe UI, sans-serif">MemoryToolRunner</text>
+              <text x="512" y="222" text-anchor="middle" fill="#c9d1d9" font-size="10" font-family="Segoe UI, sans-serif">execute requested tool</text>
+              <line x1="588" y1="208" x2="638" y2="208" stroke="#8b949e" stroke-width="1.3" marker-end="url(#arr-llm)"/>
+              <rect x="642" y="180" width="132" height="56" rx="8" fill="#10161d" stroke="#d29922"/>
+              <text x="708" y="204" text-anchor="middle" fill="#d29922" font-size="11" font-family="Segoe UI, sans-serif">get_store()</text>
+              <text x="708" y="222" text-anchor="middle" fill="#c9d1d9" font-size="10" font-family="Segoe UI, sans-serif">GraphStore facade</text>
+              <line x1="774" y1="208" x2="822" y2="208" stroke="#8b949e" stroke-width="1.3" marker-end="url(#arr-llm)"/>
+              <rect x="826" y="184" width="92" height="48" rx="8" fill="#10161d" stroke="#a371f7"/>
+              <text x="872" y="212" text-anchor="middle" fill="#a371f7" font-size="11" font-family="Segoe UI, sans-serif">Kuzu file</text>
+            </svg>
+            <p class="diagram-caption">Both LLM chat and MCP use MemoryToolRunner and the same graph model; HTTP chat adds intent routing and provider orchestration.</p>
+          </div>
+
+          <h3>LLM vs MCP behavior in current code</h3>
+          <table>
+            <thead>
+              <tr>
+                <th>Aspect</th>
+                <th>HTTP LLM chat</th>
+                <th>MCP server</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Entry module</td>
+                <td><code>memstate.llm.chat_api</code></td>
+                <td><code>memstate.llm.mcp_server</code></td>
+              </tr>
+              <tr>
+                <td>Intent routing</td>
+                <td>Yes (<code>query|ingest|both</code>) via classifier/override.</td>
+                <td>No built-in classifier at server layer; client chooses tools directly.</td>
+              </tr>
+              <tr>
+                <td>Tool execution</td>
+                <td><code>MemoryToolRunner(store, chat_route=...)</code></td>
+                <td><code>MemoryToolRunner(get_store())</code> in MCP tool handlers.</td>
+              </tr>
+              <tr>
+                <td>Provider orchestration</td>
+                <td>Ollama or Groq chat loops, retries, Study two-phase flow.</td>
+                <td>None; MCP exposes local tools over stdio transport.</td>
+              </tr>
+              <tr>
+                <td>State backend</td>
+                <td>GraphStore -> Kuzu</td>
+                <td>GraphStore -> Kuzu</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <p>
+            Relation to the four operations: client-facing <code>ingest</code>/<code>query</code> are <code>/v1</code> routes. LLM and MCP paths execute tool-level store operations directly, so internal <code>revision</code>/<code>forget</code> are not auto-triggered unless reasoner is invoked through the <code>/v1</code> callback path.
+          </p>
+
+          <div class="callout warn">
+            Operational note: API server and MCP server are usually separate processes. If both point to the same <code>MEMSTATE_KUZU_PATH</code>, file-lock conflicts can occur depending on runtime overlap.
+          </div>
+
           <h2>UI graph payload contract</h2>
           <p><code>GET /api/ui/graph</code> and LLM graph tools both rely on <code>build_ui_graph_snapshot()</code> and return the same shape:</p>
           <ul>

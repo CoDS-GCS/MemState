@@ -19,17 +19,249 @@
             mutations through <code>Executor.ingest()</code>, while enforcing placement rules and preparing downstream maintenance triggers.
           </p>
 
+          <h2>Operation lifecycle map</h2>
+          <div class="figure-block">
+            <svg class="diagram-svg" viewBox="0 0 920 250" xmlns="http://www.w3.org/2000/svg" aria-label="Operations lifecycle map">
+              <defs>
+                <marker id="arr-cycle" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L0,6 L7,3 z" fill="#8b949e"/></marker>
+              </defs>
+              <rect x="50" y="70" width="170" height="64" rx="8" fill="#10161d" stroke="#58a6ff"/>
+              <text x="135" y="98" text-anchor="middle" fill="#58a6ff" font-size="13" font-family="Segoe UI, sans-serif">ingest</text>
+              <text x="135" y="118" text-anchor="middle" fill="#c9d1d9" font-size="11" font-family="Segoe UI, sans-serif">client route /v1/ingest</text>
+
+              <rect x="50" y="162" width="170" height="64" rx="8" fill="#10161d" stroke="#58a6ff"/>
+              <text x="135" y="190" text-anchor="middle" fill="#58a6ff" font-size="13" font-family="Segoe UI, sans-serif">query</text>
+              <text x="135" y="210" text-anchor="middle" fill="#c9d1d9" font-size="11" font-family="Segoe UI, sans-serif">client route /v1/query</text>
+
+              <rect x="372" y="114" width="176" height="70" rx="8" fill="#10161d" stroke="#30363d"/>
+              <text x="460" y="142" text-anchor="middle" fill="#e6edf3" font-size="13" font-family="Segoe UI, sans-serif">Reasoner.run(event)</text>
+              <text x="460" y="162" text-anchor="middle" fill="#8b949e" font-size="11" font-family="Segoe UI, sans-serif">background policy dispatcher</text>
+
+              <rect x="704" y="70" width="170" height="64" rx="8" fill="#10161d" stroke="#d29922"/>
+              <text x="789" y="98" text-anchor="middle" fill="#d29922" font-size="13" font-family="Segoe UI, sans-serif">revision</text>
+              <text x="789" y="118" text-anchor="middle" fill="#c9d1d9" font-size="11" font-family="Segoe UI, sans-serif">run_revise_duplicates()</text>
+
+              <rect x="704" y="162" width="170" height="64" rx="8" fill="#10161d" stroke="#2ea043"/>
+              <text x="789" y="190" text-anchor="middle" fill="#2ea043" font-size="13" font-family="Segoe UI, sans-serif">forget</text>
+              <text x="789" y="210" text-anchor="middle" fill="#c9d1d9" font-size="11" font-family="Segoe UI, sans-serif">run_forget_low_salience()</text>
+
+              <line x1="220" y1="102" x2="372" y2="136" stroke="#8b949e" stroke-width="1.3" marker-end="url(#arr-cycle)"/>
+              <line x1="220" y1="194" x2="372" y2="162" stroke="#8b949e" stroke-width="1.3" marker-end="url(#arr-cycle)"/>
+
+              <line x1="548" y1="136" x2="704" y2="102" stroke="#8b949e" stroke-width="1.3" marker-end="url(#arr-cycle)"/>
+              <line x1="548" y1="162" x2="704" y2="194" stroke="#8b949e" stroke-width="1.3" marker-end="url(#arr-cycle)"/>
+            </svg>
+            <p class="diagram-caption">Client-facing operations are ingest and query. Internal operations revision and forget are triggered by reasoner policy events.</p>
+          </div>
+
           <h2>Access and trigger</h2>
           <ul>
             <li><strong>HTTP route</strong>: <code>POST /v1/ingest</code> in <code>memstate.api.main</code>.</li>
             <li><strong>SDK route</strong>: <code>MemoryClient.ingest()</code> in <code>memstate.client</code>.</li>
             <li><strong>Auth</strong>: guarded by API key only when <code>MEMSTATE_API_KEY</code> is configured.</li>
           </ul>
+          <p>
+            Current LLM chat and MCP flows do <strong>not</strong> call <code>/v1/ingest</code>; they use <code>MemoryToolRunner</code> direct tool operations on
+            <code>GraphStore</code>.
+          </p>
+
+          <h2>Ingest mode differentiation (current code)</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>Mode</th>
+                <th>Entry surface</th>
+                <th>When it is used</th>
+                <th>Core path</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Structured ingest</td>
+                <td><code>POST /v1/ingest</code></td>
+                <td>Client/SDK sends explicit placement payload.</td>
+                <td><code>api.main.ingest</code> -> <code>Executor.ingest</code> -> <code>GraphStore</code>.</td>
+              </tr>
+              <tr>
+                <td>Conversational ingest (normal / small)</td>
+                <td><code>POST /api/llm/chat</code></td>
+                <td>LLM route resolves to <code>ingest</code>/<code>both</code>, and Study condition is false.</td>
+                <td><code>chat_api.llm_chat</code> -> <code>run_ollama_chat|run_groq_chat</code> with <code>tools_for_intent_route</code>.</td>
+              </tr>
+              <tr>
+                <td>Conversational ingest (Study)</td>
+                <td><code>POST /api/llm/chat</code></td>
+                <td>LLM route resolves to <code>ingest</code>/<code>both</code>, and Study condition is true for long message ingest.</td>
+                <td><code>chat_api._chat_study_ingest</code> phase A (sandbox) + phase B (integration).</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <h2>Router decision: normal vs Study ingest</h2>
+          <p>
+            In <code>chat_api.llm_chat</code>, Study is selected only when all three checks pass:
+            <code>body.study_ingest == true</code> AND <code>route in {"ingest","both"}</code> AND
+            <code>len(last_user_message) &gt; settings.chat_chunk_threshold_chars</code>.
+          </p>
+
+          <div class="figure-block">
+            <svg class="diagram-svg" viewBox="0 0 920 300" xmlns="http://www.w3.org/2000/svg" aria-label="LLM ingest router decision tree">
+              <defs>
+                <marker id="arr-ing-route" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L0,6 L7,3 z" fill="#8b949e"/></marker>
+              </defs>
+              <rect x="24" y="20" width="186" height="54" rx="8" fill="#10161d" stroke="#30363d"/>
+              <text x="117" y="46" text-anchor="middle" fill="#e6edf3" font-size="12" font-family="Segoe UI, sans-serif">POST /api/llm/chat</text>
+              <text x="117" y="64" text-anchor="middle" fill="#8b949e" font-size="10" font-family="Segoe UI, sans-serif">chat_api.llm_chat</text>
+
+              <line x1="117" y1="74" x2="117" y2="108" stroke="#8b949e" stroke-width="1.3" marker-end="url(#arr-ing-route)"/>
+              <rect x="20" y="108" width="194" height="54" rx="8" fill="#10161d" stroke="#58a6ff"/>
+              <text x="117" y="132" text-anchor="middle" fill="#58a6ff" font-size="11" font-family="Segoe UI, sans-serif">prepare dialogue</text>
+              <text x="117" y="148" text-anchor="middle" fill="#c9d1d9" font-size="10" font-family="Segoe UI, sans-serif">last message must be user</text>
+
+              <line x1="117" y1="162" x2="117" y2="194" stroke="#8b949e" stroke-width="1.3" marker-end="url(#arr-ing-route)"/>
+              <rect x="20" y="194" width="194" height="58" rx="8" fill="#10161d" stroke="#58a6ff"/>
+              <text x="117" y="218" text-anchor="middle" fill="#58a6ff" font-size="11" font-family="Segoe UI, sans-serif">resolve route</text>
+              <text x="117" y="234" text-anchor="middle" fill="#c9d1d9" font-size="10" font-family="Segoe UI, sans-serif">intent_override or classifier</text>
+              <text x="117" y="248" text-anchor="middle" fill="#c9d1d9" font-size="10" font-family="Segoe UI, sans-serif">routing clip cap: 12,000 chars</text>
+
+              <line x1="214" y1="223" x2="302" y2="223" stroke="#8b949e" stroke-width="1.3" marker-end="url(#arr-ing-route)"/>
+              <polygon points="302,176 508,176 540,223 508,270 302,270 270,223" fill="#10161d" stroke="#d29922"/>
+              <text x="405" y="210" text-anchor="middle" fill="#d29922" font-size="11" font-family="Segoe UI, sans-serif">_should_use_study ?</text>
+              <text x="405" y="226" text-anchor="middle" fill="#c9d1d9" font-size="10" font-family="Segoe UI, sans-serif">study_ingest == true</text>
+              <text x="405" y="240" text-anchor="middle" fill="#c9d1d9" font-size="10" font-family="Segoe UI, sans-serif">route is ingest|both</text>
+              <text x="405" y="254" text-anchor="middle" fill="#c9d1d9" font-size="10" font-family="Segoe UI, sans-serif">last_user_len &gt; threshold</text>
+
+              <line x1="540" y1="223" x2="626" y2="223" stroke="#8b949e" stroke-width="1.3" marker-end="url(#arr-ing-route)"/>
+              <rect x="630" y="186" width="128" height="74" rx="8" fill="#10161d" stroke="#2ea043"/>
+              <text x="694" y="212" text-anchor="middle" fill="#2ea043" font-size="11" font-family="Segoe UI, sans-serif">Study ingest path</text>
+              <text x="694" y="228" text-anchor="middle" fill="#c9d1d9" font-size="10" font-family="Segoe UI, sans-serif">_chat_study_ingest()</text>
+              <text x="694" y="244" text-anchor="middle" fill="#c9d1d9" font-size="10" font-family="Segoe UI, sans-serif">phase A + phase B</text>
+
+              <line x1="405" y1="176" x2="405" y2="94" stroke="#8b949e" stroke-width="1.3" marker-end="url(#arr-ing-route)"/>
+              <rect x="332" y="20" width="148" height="74" rx="8" fill="#10161d" stroke="#a371f7"/>
+              <text x="406" y="46" text-anchor="middle" fill="#a371f7" font-size="11" font-family="Segoe UI, sans-serif">Normal ingest path</text>
+              <text x="406" y="62" text-anchor="middle" fill="#c9d1d9" font-size="10" font-family="Segoe UI, sans-serif">run_ollama_chat or</text>
+              <text x="406" y="78" text-anchor="middle" fill="#c9d1d9" font-size="10" font-family="Segoe UI, sans-serif">run_groq_chat</text>
+
+              <text x="568" y="206" fill="#8b949e" font-size="10" font-family="Segoe UI, sans-serif">true</text>
+              <text x="420" y="136" fill="#8b949e" font-size="10" font-family="Segoe UI, sans-serif">false</text>
+            </svg>
+            <p class="diagram-caption">Decision logic is implemented in <code>chat_api._should_use_study()</code> and evaluated after intent routing.</p>
+          </div>
+
+          <h3>Settings that influence the decision</h3>
+          <table>
+            <thead>
+              <tr>
+                <th>Setting</th>
+                <th>Default</th>
+                <th>Effect</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr><td><code>study_ingest</code> (request body)</td><td><code>true</code></td><td>Master on/off switch for Study mode in this request.</td></tr>
+              <tr><td><code>MEMSTATE_CHAT_CHUNK_THRESHOLD_CHARS</code></td><td>10000</td><td>Minimum last-user-message length to activate Study path.</td></tr>
+              <tr><td><code>intent_override</code> (request body)</td><td>unset</td><td>Can force route to <code>ingest</code>/<code>both</code>, affecting Study eligibility.</td></tr>
+              <tr><td><code>MEMSTATE_CHAT_INTENT_TURNS</code></td><td>8</td><td>How much prior dialogue is considered for intent classification.</td></tr>
+            </tbody>
+          </table>
+
+          <h2>How each conversational ingest mode works</h2>
+          <h3>A) Normal/small-message ingest path</h3>
+          <pre class="sequence"><code>/api/llm/chat
+  -> route resolved as ingest|both
+  -> _should_use_study == false
+  -> MemoryToolRunner(store, chat_route=route)
+  -> tool set = tools_for_intent_route(route)
+  -> run_ollama_chat or run_groq_chat
+  -> return reply + tool_log + route metadata</code></pre>
+          <p>
+            This path uses normal tool budgets (<code>max_tool_rounds</code> from request or <code>MEMSTATE_CHAT_MAX_TOOL_ROUNDS</code>, default 32) and does not create a
+            Study session topic kind.
+          </p>
+
+          <h3>B) Study ingest path (long message)</h3>
+          <div class="figure-block">
+            <svg class="diagram-svg" viewBox="0 0 920 260" xmlns="http://www.w3.org/2000/svg" aria-label="Study ingest two-phase flow">
+              <defs>
+                <marker id="arr-study" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L0,6 L7,3 z" fill="#8b949e"/></marker>
+              </defs>
+              <rect x="24" y="98" width="128" height="58" rx="8" fill="#10161d" stroke="#30363d"/>
+              <text x="88" y="124" text-anchor="middle" fill="#e6edf3" font-size="11" font-family="Segoe UI, sans-serif">Long user text</text>
+              <text x="88" y="142" text-anchor="middle" fill="#8b949e" font-size="10" font-family="Segoe UI, sans-serif">& route ingest|both</text>
+
+              <line x1="152" y1="127" x2="214" y2="127" stroke="#8b949e" stroke-width="1.3" marker-end="url(#arr-study)"/>
+              <rect x="218" y="78" width="196" height="98" rx="8" fill="#10161d" stroke="#58a6ff"/>
+              <text x="316" y="104" text-anchor="middle" fill="#58a6ff" font-size="11" font-family="Segoe UI, sans-serif">Phase A: sandbox ingest</text>
+              <text x="316" y="122" text-anchor="middle" fill="#c9d1d9" font-size="10" font-family="Segoe UI, sans-serif">build_study_hierarchy()</text>
+              <text x="316" y="138" text-anchor="middle" fill="#c9d1d9" font-size="10" font-family="Segoe UI, sans-serif">topic_kind = study:&lt;session_id&gt;</text>
+              <text x="316" y="154" text-anchor="middle" fill="#c9d1d9" font-size="10" font-family="Segoe UI, sans-serif">tools_for_study_phase_a()</text>
+
+              <line x1="414" y1="127" x2="474" y2="127" stroke="#8b949e" stroke-width="1.3" marker-end="url(#arr-study)"/>
+              <rect x="478" y="94" width="122" height="66" rx="8" fill="#10161d" stroke="#a371f7"/>
+              <text x="539" y="118" text-anchor="middle" fill="#a371f7" font-size="11" font-family="Segoe UI, sans-serif">optional delay</text>
+              <text x="539" y="136" text-anchor="middle" fill="#c9d1d9" font-size="10" font-family="Segoe UI, sans-serif">study_phase_delay_seconds</text>
+
+              <line x1="600" y1="127" x2="662" y2="127" stroke="#8b949e" stroke-width="1.3" marker-end="url(#arr-study)"/>
+              <rect x="666" y="78" width="220" height="98" rx="8" fill="#10161d" stroke="#2ea043"/>
+              <text x="776" y="104" text-anchor="middle" fill="#2ea043" font-size="11" font-family="Segoe UI, sans-serif">Phase B: integration</text>
+              <text x="776" y="122" text-anchor="middle" fill="#c9d1d9" font-size="10" font-family="Segoe UI, sans-serif">MemoryToolRunner without study lock</text>
+              <text x="776" y="138" text-anchor="middle" fill="#c9d1d9" font-size="10" font-family="Segoe UI, sans-serif">tools_for_intent_route(route)</text>
+              <text x="776" y="154" text-anchor="middle" fill="#c9d1d9" font-size="10" font-family="Segoe UI, sans-serif">link/merge into main memory</text>
+
+              <line x1="776" y1="176" x2="776" y2="238" stroke="#8b949e" stroke-width="1.2" marker-end="url(#arr-study)"/>
+              <rect x="676" y="238" width="202" height="20" rx="5" fill="#10161d" stroke="#30363d"/>
+              <text x="777" y="252" text-anchor="middle" fill="#8b949e" font-size="10" font-family="Segoe UI, sans-serif">response includes study_ingest=true, study_phases=2</text>
+            </svg>
+            <p class="diagram-caption">Study uses two LLM/tool phases: phase A constrained to session topics, then phase B integrates with broader memory.</p>
+          </div>
+
+          <h3>Study-specific controls and constraints</h3>
+          <ul>
+            <li>Phase A tool budget: <code>max(base_tool_rounds, MEMSTATE_CHAT_CHUNK_PER_SEGMENT_TOOL_ROUNDS)</code> (default min 72).</li>
+            <li>Phase A runner is created with <code>study_session_kind=study:&lt;session_id&gt;</code> and catalog context.</li>
+            <li>Phase A forbids full graph tool (<code>memory_graph_snapshot</code>) and restricts linking to same study session topics.</li>
+            <li>Phase B returns to normal route tool set and can connect Study topics to existing memory.</li>
+          </ul>
 
           <h2>Objective in code</h2>
           <div class="callout">
             <strong>Objective:</strong> apply controlled write transitions (<code>new_topic</code>, <code>extend_topic</code>, <code>version_field</code>) so all client writes pass one
             semantics layer before touching <code>GraphStore</code>.
+          </div>
+
+          <h2>Visual flow (current)</h2>
+          <div class="figure-block">
+            <svg class="diagram-svg" viewBox="0 0 900 240" xmlns="http://www.w3.org/2000/svg" aria-label="Ingest operation flow">
+              <defs>
+                <marker id="arr-ingest" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L0,6 L7,3 z" fill="#8b949e"/></marker>
+              </defs>
+              <rect x="16" y="88" width="120" height="54" rx="8" fill="#10161d" stroke="#30363d"/>
+              <text x="76" y="120" text-anchor="middle" fill="#e6edf3" font-size="12" font-family="Segoe UI, sans-serif">Client/SDK</text>
+
+              <line x1="136" y1="115" x2="190" y2="115" stroke="#8b949e" stroke-width="1.4" marker-end="url(#arr-ingest)"/>
+              <rect x="194" y="70" width="170" height="90" rx="8" fill="#10161d" stroke="#58a6ff"/>
+              <text x="279" y="96" text-anchor="middle" fill="#58a6ff" font-size="12" font-family="Segoe UI, sans-serif">POST /v1/ingest</text>
+              <text x="279" y="116" text-anchor="middle" fill="#c9d1d9" font-size="11" font-family="Segoe UI, sans-serif">api.main.ingest</text>
+              <text x="279" y="136" text-anchor="middle" fill="#c9d1d9" font-size="11" font-family="Segoe UI, sans-serif">Executor.ingest(req)</text>
+
+              <line x1="364" y1="115" x2="422" y2="115" stroke="#8b949e" stroke-width="1.4" marker-end="url(#arr-ingest)"/>
+              <rect x="426" y="64" width="186" height="102" rx="8" fill="#10161d" stroke="#2ea043"/>
+              <text x="519" y="90" text-anchor="middle" fill="#2ea043" font-size="12" font-family="Segoe UI, sans-serif">Placement branch</text>
+              <text x="519" y="110" text-anchor="middle" fill="#c9d1d9" font-size="11" font-family="Segoe UI, sans-serif">new_topic</text>
+              <text x="519" y="126" text-anchor="middle" fill="#c9d1d9" font-size="11" font-family="Segoe UI, sans-serif">extend_topic</text>
+              <text x="519" y="142" text-anchor="middle" fill="#c9d1d9" font-size="11" font-family="Segoe UI, sans-serif">version_field</text>
+
+              <line x1="612" y1="115" x2="670" y2="115" stroke="#8b949e" stroke-width="1.4" marker-end="url(#arr-ingest)"/>
+              <rect x="674" y="78" width="120" height="74" rx="8" fill="#10161d" stroke="#d29922"/>
+              <text x="734" y="106" text-anchor="middle" fill="#d29922" font-size="12" font-family="Segoe UI, sans-serif">GraphStore</text>
+              <text x="734" y="124" text-anchor="middle" fill="#c9d1d9" font-size="11" font-family="Segoe UI, sans-serif">topic/field/edge writes</text>
+
+              <line x1="519" y1="166" x2="519" y2="214" stroke="#8b949e" stroke-width="1.2" marker-end="url(#arr-ingest)"/>
+              <rect x="440" y="214" width="160" height="20" rx="5" fill="#10161d" stroke="#30363d"/>
+              <text x="520" y="228" text-anchor="middle" fill="#8b949e" font-size="10" font-family="Segoe UI, sans-serif">BackgroundTasks -> reasoner.run("ingest_complete")</text>
+            </svg>
+            <p class="diagram-caption">Ingest applies a validated placement transition, writes via GraphStore, returns response, then schedules internal maintenance.</p>
           </div>
 
           <h2>Input contract (current implementation)</h2>

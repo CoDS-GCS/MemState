@@ -25,11 +25,56 @@
             <li><strong>SDK route</strong>: <code>MemoryClient.query()</code>.</li>
             <li><strong>Auth</strong>: guarded by API key only when configured.</li>
           </ul>
+          <p>
+            Current LLM chat and MCP flows do <strong>not</strong> call <code>/v1/query</code>; they query state by executing read tools through
+            <code>MemoryToolRunner</code>.
+          </p>
 
           <h2>Objective in code</h2>
           <div class="callout">
             <strong>Objective:</strong> produce <code>QueryResponse.candidates[]</code> with controllable stage depth while updating topic salience based on read access to keep
             active memory discoverable.
+          </div>
+
+          <h2>Visual flow (current)</h2>
+          <div class="figure-block">
+            <svg class="diagram-svg" viewBox="0 0 920 270" xmlns="http://www.w3.org/2000/svg" aria-label="Query operation flow">
+              <defs>
+                <marker id="arr-query" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L0,6 L7,3 z" fill="#8b949e"/></marker>
+              </defs>
+              <rect x="20" y="98" width="120" height="54" rx="8" fill="#10161d" stroke="#30363d"/>
+              <text x="80" y="130" text-anchor="middle" fill="#e6edf3" font-size="12" font-family="Segoe UI, sans-serif">Client/SDK</text>
+
+              <line x1="140" y1="125" x2="194" y2="125" stroke="#8b949e" stroke-width="1.4" marker-end="url(#arr-query)"/>
+              <rect x="198" y="80" width="170" height="90" rx="8" fill="#10161d" stroke="#58a6ff"/>
+              <text x="283" y="106" text-anchor="middle" fill="#58a6ff" font-size="12" font-family="Segoe UI, sans-serif">POST /v1/query</text>
+              <text x="283" y="126" text-anchor="middle" fill="#c9d1d9" font-size="11" font-family="Segoe UI, sans-serif">Executor.query(req)</text>
+              <text x="283" y="146" text-anchor="middle" fill="#c9d1d9" font-size="11" font-family="Segoe UI, sans-serif">embed query text</text>
+
+              <line x1="368" y1="125" x2="420" y2="125" stroke="#8b949e" stroke-width="1.4" marker-end="url(#arr-query)"/>
+              <rect x="424" y="58" width="152" height="66" rx="8" fill="#10161d" stroke="#2ea043"/>
+              <text x="500" y="84" text-anchor="middle" fill="#2ea043" font-size="12" font-family="Segoe UI, sans-serif">semantic stage</text>
+              <text x="500" y="102" text-anchor="middle" fill="#c9d1d9" font-size="11" font-family="Segoe UI, sans-serif">KNN or cosine rank</text>
+
+              <rect x="424" y="136" width="152" height="66" rx="8" fill="#10161d" stroke="#d29922"/>
+              <text x="500" y="162" text-anchor="middle" fill="#d29922" font-size="12" font-family="Segoe UI, sans-serif">structural stage</text>
+              <text x="500" y="180" text-anchor="middle" fill="#c9d1d9" font-size="11" font-family="Segoe UI, sans-serif">neighbors + fields</text>
+
+              <rect x="588" y="96" width="148" height="66" rx="8" fill="#10161d" stroke="#a371f7"/>
+              <text x="662" y="122" text-anchor="middle" fill="#a371f7" font-size="12" font-family="Segoe UI, sans-serif">temporal stage</text>
+              <text x="662" y="140" text-anchor="middle" fill="#c9d1d9" font-size="11" font-family="Segoe UI, sans-serif">full history if explain=true</text>
+              <line x1="576" y1="168" x2="588" y2="130" stroke="#8b949e" stroke-width="1.2" marker-end="url(#arr-query)"/>
+
+              <line x1="736" y1="125" x2="794" y2="125" stroke="#8b949e" stroke-width="1.4" marker-end="url(#arr-query)"/>
+              <rect x="798" y="86" width="104" height="78" rx="8" fill="#10161d" stroke="#30363d"/>
+              <text x="850" y="112" text-anchor="middle" fill="#e6edf3" font-size="12" font-family="Segoe UI, sans-serif">QueryResponse</text>
+              <text x="850" y="130" text-anchor="middle" fill="#8b949e" font-size="11" font-family="Segoe UI, sans-serif">candidates + summary</text>
+
+              <line x1="662" y1="162" x2="662" y2="242" stroke="#8b949e" stroke-width="1.2" marker-end="url(#arr-query)"/>
+              <rect x="580" y="242" width="164" height="20" rx="5" fill="#10161d" stroke="#30363d"/>
+              <text x="662" y="256" text-anchor="middle" fill="#8b949e" font-size="10" font-family="Segoe UI, sans-serif">salience bump + topic_history + reasoner query_complete</text>
+            </svg>
+            <p class="diagram-caption">Query composes stage outputs into bundles, then applies salience-touch side effects before background maintenance.</p>
           </div>
 
           <h2>Input contract (current implementation)</h2>

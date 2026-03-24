@@ -155,6 +155,8 @@
             </button>
           </div>
           <div id="network"></div>
+          <div id="graph-tooltip" class="graph-tooltip" hidden role="tooltip" aria-live="polite"></div>
+          <div id="graph-node-menu" class="graph-node-menu" hidden role="menu" aria-label="Topic actions"></div>
           <div id="empty-state" class="empty-state">
             <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" opacity="0.4">
               <circle cx="12" cy="12" r="2"/><circle cx="5" cy="5" r="1.5"/><circle cx="19" cy="5" r="1.5"/><circle cx="19" cy="19" r="1.5"/><circle cx="5" cy="19" r="1.5"/>
@@ -166,26 +168,8 @@
           <div class="legend">
             <span><i class="rel"></i> RELATED</span>
             <span><i class="ref"></i> field ref</span>
-            <span class="legend-hint">Wheel zoom · pan · drag · topic: field nodes; field: timeline panel; field/topic again: collapse · ring = community · layout seeds by community cluster</span>
+            <span class="legend-hint">Wheel zoom · pan · drag · click topic for full details · ring = community</span>
           </div>
-          <aside id="field-timeline-panel" class="field-timeline-panel" hidden aria-label="Field history timeline">
-            <div class="field-timeline-head">
-              <span class="field-timeline-title">Field history</span>
-              <button type="button" class="field-timeline-close" id="field-timeline-close" aria-label="Close timeline">×</button>
-            </div>
-            <p class="field-timeline-context" id="field-timeline-context"></p>
-            <div class="field-timeline-track" id="field-timeline-track"></div>
-          </aside>
-        </div>
-        <div class="detail-panel">
-          <div class="detail-header">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-            <strong>Topic detail</strong>
-            <button type="button" class="btn-copy" id="btn-copy-detail" title="Copy JSON">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-            </button>
-          </div>
-          <pre class="raw" id="detail">Click a node to inspect its topic + fields.</pre>
         </div>
       </main>
 
@@ -241,6 +225,29 @@
           <button type="submit" class="btn-primary chat-send" id="btn-chat-send">Send</button>
         </form>
       </aside>
+    </div>
+
+    <div
+      id="topic-wizard"
+      class="topic-wizard"
+      hidden
+      aria-modal="true"
+      role="dialog"
+      aria-labelledby="topic-wizard-title"
+    >
+      <div class="topic-wizard-backdrop" id="topic-wizard-backdrop" aria-hidden="true"></div>
+      <div class="topic-wizard-panel">
+        <header class="topic-wizard-header">
+          <h2 id="topic-wizard-title" class="topic-wizard-h2">Topic</h2>
+          <div class="topic-wizard-actions">
+            <button type="button" class="btn-icon" id="btn-topic-wizard-copy" title="Copy JSON">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+            </button>
+            <button type="button" class="topic-wizard-close" id="btn-topic-wizard-close" aria-label="Close">×</button>
+          </div>
+        </header>
+        <div class="topic-wizard-body" id="topic-wizard-body"></div>
+      </div>
     </div>
 
     <div id="toast-container" class="toast-container"></div>
