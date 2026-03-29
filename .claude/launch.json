@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "memstate-api",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "memstate.api.cli"],
+      "port": 8765
+    },
+    {
+      "name": "memstate-llm-mcp",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "memstate.llm.mcp_server"],
+      "port": null
+    }
+  ]
+}

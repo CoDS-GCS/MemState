@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
@@ -15,15 +15,453 @@
         </header>
         <main class="page-main">
           <p>
-            MemState is a single-process memory service built on FastAPI + embedded Kuzu. It offers three access surfaces on one shared graph:
-            <code>/v1</code> for product memory semantics, <code>/api/ui</code> for low-level graph operations, and <code>/api/llm/chat</code> for tool-based natural language access.
+            MemState is a single-process memory service built on FastAPI and embedded Kuzu. It stores structured,
+            versioned knowledge as a <em>topic graph</em> and exposes it through three access surfaces on one shared
+            store: <code>/v1</code> for product memory semantics, <code>/api/ui</code> for low-level graph operations,
+            and <code>/api/llm/chat</code> for tool-based natural language access.
           </p>
 
           <div class="callout">
-            This site is written as the official engineering reference for maintainers and integrators. Every behavior described here is mapped to the current codebase
-            under <code>src/memstate</code>.
+            This site is the official engineering reference for maintainers and integrators. Every behavior described
+            here is mapped to the current codebase under <code>src/memstate</code>.
           </div>
 
+          <!-- ============================================================ -->
+          <h2>Why a topic graph — not a property graph, vector DB, or document store</h2>
+
+          <p>
+            MemState does not fit neatly into any of the storage categories that LLM memory systems usually reach for.
+            Understanding why each alternative was rejected explains the shape of the data model.
+          </p>
+
+          <h3>Property graph (Neo4j / native Kuzu)</h3>
+          <p>
+            A pure property graph places facts on nodes and edges as flat key-value pairs. MemState runs on Kuzu but
+            deliberately does not use Kuzu's native property model for facts. Two things are missing from bare property
+            graphs that matter for memory:
+          </p>
+          <ul>
+            <li>
+              <strong>No versioning at field granularity.</strong> A property graph records the current value of a
+              property. MemState needs to answer "what was the user's job title six months ago and why did it change?"
+              That requires per-field history, provenance, and a <code>why_changed</code> / <code>impact_expected</code>
+              audit trail. These are stored as JSON on the Topic node, not as graph edges.
+            </li>
+            <li>
+              <strong>No salience model.</strong> Property graphs have no built-in concept of importance or decay. MemState
+              needs to decide which topics to retain under memory pressure, which requires a per-field salience score that
+              rolls up to the topic level and drives automatic archiving.
+            </li>
+          </ul>
+          <p>
+            MemState uses Kuzu for its embedded Cypher engine and native vector type — but wraps it with a semantic layer
+            that the graph engine itself does not provide.
+          </p>
+
+          <h3>Vector database (Pinecone / Weaviate / Chroma)</h3>
+          <p>
+            Vector databases treat the embedding as the primary data structure. Every record is a vector; search returns
+            nearest neighbors. MemState inverts this: the embedding is metadata on a Topic node, not the organizing
+            principle. Three consequences follow:
+          </p>
+          <ul>
+            <li>
+              <strong>Graph structure is primary.</strong> A topic can be found by traversing RELATED edges from a known
+              topic, not only by semantic similarity. Query combines <code>semantic</code> (vector KNN),
+              <code>structural</code> (neighbor traversal), and <code>temporal</code> (field history) stages in a single
+              response.
+            </li>
+            <li>
+              <strong>One embedding per topic, not per chunk.</strong> Topics are discrete knowledge units — not document
+              chunks. The embedding is computed once from <code>title + summary</code> and refreshed when those change.
+              There is no chunking pipeline.
+            </li>
+            <li>
+              <strong>Retrieval is not the end goal.</strong> Query also bumps salience on access, which shapes future
+              forget decisions. The act of reading is part of the memory lifecycle, not just a read operation.
+            </li>
+          </ul>
+
+          <h3>Document store (MongoDB / Firestore)</h3>
+          <p>
+            Document stores version at document granularity — a write replaces the whole document. MemState versions at
+            field granularity: each field carries a <code>history</code> list (newest-first) capped at
+            <code>max_field_history</code> entries (default 500). This means two concurrent facts about the same topic
+            — say, a user's current role and a note about their prior role — are separate versioned fields on one Topic,
+            not two documents.
+          </p>
+          <p>
+            Document stores also use denormalized references. MemState externalizes cross-topic links as explicit RELATED
+            graph edges with a named <code>kind</code>, so structural queries can traverse the graph without loading every
+            document.
+          </p>
+
+          <h3>What MemState is instead</h3>
+          <p>
+            A topic is the unit of memory. It has a title, a summary, a single embedding vector, a set of typed versioned
+            fields, a salience score, and outgoing RELATED edges to other topics. The storage model is a property graph
+            node on top of Kuzu, with field versioning and salience logic layered above the graph engine.
+          </p>
+
+          <div class="figure-block">
+            <svg class="diagram-svg" viewBox="0 0 860 240" xmlns="http://www.w3.org/2000/svg" aria-label="Topic node anatomy diagram">
+              <defs>
+                <marker id="arr2" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+                  <path d="M0,0 L0,6 L8,3 z" fill="#8b949e" />
+                </marker>
+              </defs>
+
+              <!-- Topic node box -->
+              <rect x="20" y="20" width="340" height="200" rx="8" fill="#10161d" stroke="#d29922" stroke-width="1.5" />
+              <text x="190" y="46" text-anchor="middle" fill="#d29922" font-size="13" font-family="Segoe UI, sans-serif" font-weight="600">Topic node</text>
+
+              <text x="36" y="68" fill="#c9d1d9" font-size="11" font-family="Consolas, monospace">id, title, summary, topic_kind</text>
+              <text x="36" y="86" fill="#c9d1d9" font-size="11" font-family="Consolas, monospace">salience  (0–10, avg of fields)</text>
+              <text x="36" y="104" fill="#c9d1d9" font-size="11" font-family="Consolas, monospace">embedding  [384 floats]</text>
+              <text x="36" y="122" fill="#c9d1d9" font-size="11" font-family="Consolas, monospace">archived, created_at, updated_at</text>
+
+              <line x1="36" y1="132" x2="344" y2="132" stroke="#30363d" stroke-width="1" />
+
+              <text x="36" y="150" fill="#58a6ff" font-size="11" font-family="Consolas, monospace">fields_json  →  {name: TopicField}</text>
+              <text x="52" y="167" fill="#8b949e" font-size="10" font-family="Consolas, monospace">field_type, salience, ref_topic_id</text>
+              <text x="52" y="182" fill="#8b949e" font-size="10" font-family="Consolas, monospace">history[]: value, valid_from,</text>
+              <text x="52" y="197" fill="#8b949e" font-size="10" font-family="Consolas, monospace">           why_changed, provenance</text>
+
+              <!-- RELATED edge -->
+              <line x1="360" y1="128" x2="440" y2="128" stroke="#8b949e" stroke-width="1.5" marker-end="url(#arr2)" />
+              <text x="400" y="118" text-anchor="middle" fill="#8b949e" font-size="10" font-family="Segoe UI, sans-serif">RELATED</text>
+              <text x="400" y="145" text-anchor="middle" fill="#8b949e" font-size="10" font-family="Segoe UI, sans-serif">kind="has_detail"</text>
+
+              <!-- Second topic -->
+              <rect x="445" y="88" width="160" height="80" rx="8" fill="#10161d" stroke="#d29922" stroke-width="1.5" />
+              <text x="525" y="112" text-anchor="middle" fill="#d29922" font-size="12" font-family="Segoe UI, sans-serif">Topic node</text>
+              <text x="525" y="132" text-anchor="middle" fill="#8b949e" font-size="10" font-family="Consolas, monospace">id, title …</text>
+              <text x="525" y="150" text-anchor="middle" fill="#8b949e" font-size="10" font-family="Consolas, monospace">fields_json …</text>
+
+              <!-- ref_topic_id pointer -->
+              <line x1="360" y1="160" x2="430" y2="160" stroke="#a371f7" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arr2)" />
+              <text x="395" y="175" text-anchor="middle" fill="#a371f7" font-size="9" font-family="Segoe UI, sans-serif">ref_topic_id</text>
+              <line x1="430" y1="160" x2="445" y2="155" stroke="#a371f7" stroke-width="1" stroke-dasharray="4,3" />
+
+              <!-- Embedding callout -->
+              <rect x="640" y="60" width="200" height="120" rx="8" fill="#10161d" stroke="#2ea043" />
+              <text x="740" y="84" text-anchor="middle" fill="#2ea043" font-size="12" font-family="Segoe UI, sans-serif" font-weight="600">Embedding</text>
+              <text x="740" y="104" text-anchor="middle" fill="#8b949e" font-size="10" font-family="Segoe UI, sans-serif">title + summary → 384-dim</text>
+              <text x="740" y="120" text-anchor="middle" fill="#8b949e" font-size="10" font-family="Segoe UI, sans-serif">cosine similarity for KNN</text>
+              <text x="740" y="136" text-anchor="middle" fill="#8b949e" font-size="10" font-family="Segoe UI, sans-serif">one vector per topic</text>
+              <text x="740" y="152" text-anchor="middle" fill="#8b949e" font-size="10" font-family="Segoe UI, sans-serif">(not per field, not chunked)</text>
+              <text x="740" y="168" text-anchor="middle" fill="#8b949e" font-size="10" font-family="Segoe UI, sans-serif">Kuzu native or numpy fallback</text>
+            </svg>
+            <p class="diagram-caption">A Topic node carries its fields as versioned JSON, its embedding as a native vector, and its cross-topic links as RELATED graph edges.</p>
+          </div>
+
+          <!-- ============================================================ -->
+          <h2>The semantic layer: ingest, query, revise, forget</h2>
+
+          <p>
+            The four semantic operations are the only surface a product client needs to know. Each is a deliberate
+            composition of lower-level primitives from <code>GraphStore</code> — the Cypher facade that owns all
+            direct Kuzu access. Understanding the decomposition is key to understanding what MemState actually does and
+            where the decisions live.
+          </p>
+
+          <h3>Ingest</h3>
+          <p>
+            Ingest is the write path. It has three modes, selected by the caller:
+          </p>
+          <table>
+            <thead>
+              <tr><th>Mode</th><th>When to use</th><th>Primitive sequence</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>new_topic</code></td>
+                <td>A wholly new piece of knowledge with no existing home</td>
+                <td>
+                  embed(title + summary) →
+                  <code>create_topic</code> →
+                  <code>create_field</code> × N →
+                  <code>add_related_edge</code> × M →
+                  <code>append_topic_history</code>("created")
+                </td>
+              </tr>
+              <tr>
+                <td><code>extend_topic</code></td>
+                <td>Adding new facts to an existing topic</td>
+                <td>
+                  <code>get_topic</code> →
+                  <code>create_field</code> or <code>append_field_history</code> →
+                  <code>sync_topic_salience_from_fields</code> →
+                  <code>append_topic_history</code>("meta")
+                </td>
+              </tr>
+              <tr>
+                <td><code>version_field</code></td>
+                <td>Updating one field's value while preserving history</td>
+                <td>
+                  <code>get_field_with_history</code> →
+                  <code>append_field_history</code>(new entry, prepend) →
+                  <code>sync_topic_salience_from_fields</code>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+
+          <p>
+            After writing, ingest optionally calls <code>vector_knn_topic_ids</code> to surface
+            similar existing topics — a signal that the caller may be creating a duplicate. This is advisory; deduplication
+            is left to the reasoner's <strong>revise</strong> pass.
+          </p>
+
+          <h4>Key decisions in ingest</h4>
+          <ul>
+            <li>
+              <strong>Embedding is computed once from title + summary, not from field values.</strong> Fields can be
+              arbitrarily typed and structured; embedding them uniformly is not tractable. The title and summary are the
+              semantic contract of the topic.
+            </li>
+            <li>
+              <strong>Field history is prepended, not appended.</strong>
+              <code>history[0]</code> is always current. Max history is enforced at write time by slicing to
+              <code>max_field_history</code> (default 500). Old entries fall off silently.
+            </li>
+            <li>
+              <strong>Salience is set per field by the caller, not inferred.</strong> After any field write,
+              <code>sync_topic_salience_from_fields</code> averages all field saliences to compute the topic salience. The
+              caller is responsible for encoding importance in the field-level salience score it passes.
+            </li>
+          </ul>
+
+          <h3>Query</h3>
+          <p>
+            Query is a multi-stage retrieval. Each stage is independently optional and the results are merged:
+          </p>
+          <table>
+            <thead>
+              <tr><th>Stage</th><th>Primitive</th><th>What it returns</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>semantic</code></td>
+                <td><code>vector_knn_topic_ids</code> → <code>get_topic</code> × k</td>
+                <td>Top-k topics by cosine similarity to query embedding (default k=8)</td>
+              </tr>
+              <tr>
+                <td><code>structural</code></td>
+                <td><code>list_relationships</code> → <code>get_topic</code> × N</td>
+                <td>1-hop RELATED neighbors of seed topic(s)</td>
+              </tr>
+              <tr>
+                <td><code>temporal</code></td>
+                <td><code>get_field_with_history</code> × F</td>
+                <td>Full field histories with all past values, timestamps, and provenance</td>
+              </tr>
+            </tbody>
+          </table>
+          <p>
+            After retrieval, query calls <code>bump_field_salience_on_query</code> on every accessed topic, which
+            increments field saliences by <code>query_salience_bump</code> (default 0.1) and re-syncs the topic
+            salience. This makes frequently queried topics more resistant to archiving.
+          </p>
+
+          <h4>Key decisions in query</h4>
+          <ul>
+            <li>
+              <strong>Vector fallback.</strong> If Kuzu's native KNN is unavailable, <code>_load_embedding_vectors</code>
+              reads all non-archived topic embeddings into numpy arrays and <code>_cosine_top_k</code> sorts by dot
+              product after L2 normalization. This is O(N) but avoids a hard dependency on the Kuzu index being available.
+            </li>
+            <li>
+              <strong>Reading is a write.</strong> The salience bump on query means retrieval is not a pure read. A topic
+              that is regularly queried accumulates salience and is protected from the forget pass. A topic that is never
+              queried decays and eventually gets archived. Access patterns shape retention.
+            </li>
+            <li>
+              <strong>Similarity score is cosine, not dot product.</strong> Embeddings are L2-normalized before the inner
+              product, so the score is always in [0, 1] regardless of embedding magnitude.
+            </li>
+          </ul>
+
+          <h3>Revise</h3>
+          <p>
+            Revise is an internal maintenance pass triggered automatically after ingest via the reasoner's
+            <code>ingest_complete</code> event. It is never called directly by product clients. Its only implemented
+            policy in v1 is <strong>duplicate merging</strong>:
+          </p>
+          <ol>
+            <li>
+              Enumerate all topics where two topics share the exact same title
+              (<code>a.title = b.title</code>).
+            </li>
+            <li>
+              For each duplicate pair, call <code>merge_topics(keep_id, drop_id)</code>:
+              <ul>
+                <li>Read <code>fields_json</code> from both topics.</li>
+                <li>Merge field maps: fields from <code>drop</code> are added to <code>keep</code> if not already present.</li>
+                <li>Redirect all RELATED edges pointing to <code>drop</code> so they point to <code>keep</code>.</li>
+                <li>Call <code>migrate_legacy_field_chains_to_json</code> to absorb any old-format fields.</li>
+                <li>Delete the <code>drop</code> topic with <code>DETACH DELETE</code>.</li>
+              </ul>
+            </li>
+          </ol>
+
+          <h4>Key decisions in revise</h4>
+          <ul>
+            <li>
+              <strong>Duplicate detection is title-exact, not semantic.</strong> Two topics with similar but not identical
+              titles will not be merged. This is intentional: semantic deduplication requires a human-in-the-loop or a
+              much higher-confidence signal than embedding proximity.
+            </li>
+            <li>
+              <strong>Field merge is additive, not union-with-conflict-resolution.</strong> If both topics have a field
+              with the same name, the <code>keep</code> topic's version wins silently. History from the dropped topic's
+              version of that field is not preserved.
+            </li>
+          </ul>
+
+          <h3>Forget</h3>
+          <p>
+            Forget is an internal archiving pass. It runs conditionally: after ingest or query if the topic count is at or
+            above <code>topic_count_soft_limit</code> (default 500), or immediately on a
+            <code>memory_pressure</code> event regardless of count. It does not hard-delete topics.
+          </p>
+          <ol>
+            <li>
+              Find all non-archived topics where <code>salience &lt; forget_salience_threshold</code> (default 0.05).
+            </li>
+            <li>
+              For each: set <code>archived = true</code>, halve <code>salience</code> as a decay penalty, append a
+              <code>"salience"</code> event to topic history.
+            </li>
+          </ol>
+
+          <h4>Key decisions in forget</h4>
+          <ul>
+            <li>
+              <strong>Archive, not delete.</strong> Archived topics remain in the graph and can be retrieved by ID. They
+              are excluded from vector KNN search and from the default query path. This preserves auditability at the cost
+              of storage growth.
+            </li>
+            <li>
+              <strong>Salience halving compounds.</strong> A topic that survives one forget pass at 0.04 salience becomes
+              0.02 after archiving. If it is later unarchived (by a direct write), it starts from a lower base — making
+              it more likely to be re-archived on the next pass.
+            </li>
+            <li>
+              <strong>The soft limit is a rate control, not a hard cap.</strong> The system can hold more than 500 topics.
+              The limit controls when the forget pass is allowed to run, not the absolute count. If every topic has high
+              salience, no archiving occurs regardless of count.
+            </li>
+          </ul>
+
+          <!-- ============================================================ -->
+          <h2>Primitive operations reference</h2>
+
+          <p>
+            All semantic operations compose from primitives in <code>memstate.store.graph_store</code>. The primitives
+            are the only code that issues Cypher. Understanding them is necessary for debugging, extending, or replacing
+            any semantic operation.
+          </p>
+
+          <table>
+            <thead>
+              <tr><th>Category</th><th>Primitive</th><th>What it does</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td rowspan="5"><strong>Topic</strong></td>
+                <td><code>create_topic</code></td>
+                <td>INSERT a new Topic node with scalar properties and embedding</td>
+              </tr>
+              <tr>
+                <td><code>get_topic</code></td>
+                <td>Fetch one topic row including <code>fields_json</code>, <code>topic_history_json</code>, embedding</td>
+              </tr>
+              <tr>
+                <td><code>update_topic_meta</code></td>
+                <td>SET scalar properties (title, summary, salience, archived, topic_kind); does not touch fields</td>
+              </tr>
+              <tr>
+                <td><code>update_topic_embedding</code></td>
+                <td>SET embedding vector only; called after title/summary changes</td>
+              </tr>
+              <tr>
+                <td><code>delete_topic</code></td>
+                <td>DETACH DELETE — removes node and all incident RELATED edges</td>
+              </tr>
+              <tr>
+                <td rowspan="5"><strong>Field</strong></td>
+                <td><code>create_field</code></td>
+                <td>Initialize a named field entry in <code>fields_json</code> with type, optional ref, optional first value</td>
+              </tr>
+              <tr>
+                <td><code>append_field_history</code></td>
+                <td>Prepend a new <code>FieldHistoryEntry</code> to the field's history list; enforce max_history cap</td>
+              </tr>
+              <tr>
+                <td><code>get_field_with_history</code></td>
+                <td>Return the full field including all history entries</td>
+              </tr>
+              <tr>
+                <td><code>delete_field</code></td>
+                <td>Remove field key from <code>fields_json</code></td>
+              </tr>
+              <tr>
+                <td><code>set_field_ref</code></td>
+                <td>Point a field's <code>ref_topic_id</code> at another topic (enables expansion)</td>
+              </tr>
+              <tr>
+                <td rowspan="4"><strong>Structure</strong></td>
+                <td><code>promote_fields_to_nested_topic</code></td>
+                <td>Move selected fields to a new child topic; add RELATED edge + optional parent ref field</td>
+              </tr>
+              <tr>
+                <td><code>undo_promote_nested_topic</code></td>
+                <td>Merge child fields back to parent; delete child topic and RELATED edge</td>
+              </tr>
+              <tr>
+                <td><code>nest_fields_in_topic</code></td>
+                <td>Collapse selected fields into one <code>json</code> bundle field on the same topic (no new topic)</td>
+              </tr>
+              <tr>
+                <td><code>unnest_fields_in_topic</code></td>
+                <td>Expand a bundle field back to top-level fields</td>
+              </tr>
+              <tr>
+                <td rowspan="3"><strong>Edges</strong></td>
+                <td><code>add_related_edge</code></td>
+                <td>CREATE/MERGE a RELATED edge with a named kind string</td>
+              </tr>
+              <tr>
+                <td><code>remove_relationship</code></td>
+                <td>DELETE a specific RELATED edge by (from, to, kind)</td>
+              </tr>
+              <tr>
+                <td><code>list_relationships</code></td>
+                <td>Return neighbor topic IDs and edge kinds, filtered by direction</td>
+              </tr>
+              <tr>
+                <td rowspan="2"><strong>Salience</strong></td>
+                <td><code>sync_topic_salience_from_fields</code></td>
+                <td>Recompute topic salience as mean of all field saliences; SET on topic node</td>
+              </tr>
+              <tr>
+                <td><code>bump_field_salience_on_query</code></td>
+                <td>Increment field saliences by bump amount (capped); re-sync topic salience</td>
+              </tr>
+              <tr>
+                <td rowspan="2"><strong>History</strong></td>
+                <td><code>append_topic_history</code></td>
+                <td>Append a <code>TopicHistoryEvent</code> to <code>topic_history_json</code></td>
+              </tr>
+              <tr>
+                <td><code>merge_topics</code></td>
+                <td>Merge fields and edges from drop topic into keep topic; DETACH DELETE drop</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <!-- ============================================================ -->
           <h2>System at a glance</h2>
           <div class="figure-block">
             <svg class="diagram-svg" viewBox="0 0 920 280" xmlns="http://www.w3.org/2000/svg" aria-label="MemState system overview diagram">
@@ -70,6 +508,7 @@
             <p class="diagram-caption">The three user-facing surfaces converge on one shared <code>GraphStore</code> and one embedded Kuzu file.</p>
           </div>
 
+          <!-- ============================================================ -->
           <h2>Read this documentation by intent</h2>
           <table>
             <thead>
@@ -105,6 +544,11 @@
                 <td><a href="operations/revision.html">Operations / Revision (internal)</a></td>
                 <td><a href="operations/forget.html">Operations / Forget (internal)</a></td>
               </tr>
+              <tr>
+                <td>Browse the full API endpoint index</td>
+                <td><a href="api/index.html">API / Endpoint index</a></td>
+                <td><a href="data-model/fields.html">Data model / Fields and history</a></td>
+              </tr>
             </tbody>
           </table>
 
@@ -112,10 +556,11 @@
           <ul>
             <li><code>memstate.api.main</code>: app creation, route registration, auth dependency, health endpoints.</li>
             <li><code>memstate.api.deps</code>: singleton wiring for <code>Executor</code>, <code>Reasoner</code>, and shared <code>GraphStore</code>.</li>
-            <li><code>memstate.core.executor</code>: all <code>/v1</code> ingest and query semantics.</li>
-            <li><code>memstate.store.graph_store</code> and <code>store.kuzu_adapter</code>: Kuzu access layer and schema bootstrap.</li>
+            <li><code>memstate.core.executor</code>: all <code>/v1</code> ingest and query semantics, embedding, salience bumping.</li>
+            <li><code>memstate.store.graph_store</code> and <code>store.kuzu_adapter</code>: all Cypher primitives, schema bootstrap, Kuzu access layer.</li>
             <li><code>memstate.reasoner.engine</code>: event-based policy loop (forget + duplicate revise).</li>
             <li><code>memstate.llm.chat_api</code> and <code>llm.tool_runner</code>: routed chat and tool execution.</li>
+            <li><code>memstate.config</code>: all tunable thresholds — <code>forget_salience_threshold</code>, <code>topic_count_soft_limit</code>, <code>max_field_history</code>, <code>query_salience_bump</code>, <code>embedding_dimension</code>.</li>
           </ul>
 
           <h2>Quick start</h2>
