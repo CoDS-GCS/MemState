@@ -12,7 +12,13 @@ from memstate.api.ui_graph_payload import (
     build_topics_schema_snapshot,
     build_ui_graph_snapshot,
 )
-from memstate.datamodel.fields import TopicField, TopicFields, new_history_entry
+from memstate.datamodel.fields import (
+    TopicField,
+    TopicFields,
+    is_nested_fields_bundle_value,
+    nested_bundle_inner_fields,
+    new_history_entry,
+)
 from memstate.llm.tools_schema import IntentRoute
 from memstate.store.graph_store import REF_UNCHANGED, GraphStore
 
@@ -53,8 +59,8 @@ _REORGANIZE_GUIDELINES: dict[str, str] = {
     ),
     "split_topics": (
         "Split topics (schema-first): find topics whose fields partition into disjoint name clusters or mixed "
-        "kinds. Plan new topics from structure; use read tools when moving values. Add RELATED between split "
-        "parts as appropriate."
+        "kinds. Plan **separate** topics when subjects are unrelated. This is **not** in-topic nesting: for grouping "
+        "related fields **inside one topic** (json bundle, no new node), use memory_nest_fields_in_topic."
     ),
     "connect_topics": (
         "Connect topics (schema-first): use RELATED edges list and field ref_topic_id in the snapshot. Add "
@@ -88,6 +94,31 @@ _REORGANIZE_TOOL_TO_OP: dict[str, str] = {
 }
 
 
+def _nested_bundle_schema_extras(rec: TopicField, *, with_current_values: bool) -> dict[str, Any]:
+    cur = rec.current_entry()
+    if rec.field_type != "json" or not cur or not is_nested_fields_bundle_value(cur.value):
+        return {}
+    inner = nested_bundle_inner_fields(cur.value)
+    names = sorted(inner.keys())
+    out: dict[str, Any] = {"nested_field_names": names}
+    if not with_current_values:
+        return out
+    subvals: dict[str, Any] = {}
+    for n in names:
+        sub = inner.get(n)
+        if isinstance(sub, dict):
+            try:
+                stf = TopicField.model_validate(sub)
+                sce = stf.current_entry()
+                subvals[n] = sce.value if sce else None
+            except Exception:
+                subvals[n] = None
+        else:
+            subvals[n] = None
+    out["nested_fields_current"] = subvals
+    return out
+
+
 def _fields_schema_payload(tf: TopicFields, *, detail: str) -> dict[str, Any]:
     """Build per-field payload for memory_get_topic_schema (detail: minimal | current | history)."""
     out: dict[str, Any] = {}
@@ -96,27 +127,44 @@ def _fields_schema_payload(tf: TopicFields, *, detail: str) -> dict[str, Any]:
         d = "minimal"
     for fname, rec in tf.fields.items():
         if d == "minimal":
-            out[fname] = {
+            row = {
                 "field_type": rec.field_type,
                 "ref_topic_id": rec.ref_topic_id,
                 "salience": rec.salience,
             }
+            row.update(_nested_bundle_schema_extras(rec, with_current_values=False))
+            out[fname] = row
         elif d == "current":
             cur = rec.current_entry()
-            out[fname] = {
+            row = {
                 "field_type": rec.field_type,
                 "ref_topic_id": rec.ref_topic_id,
                 "salience": rec.salience,
                 "value": cur.value if cur else None,
             }
+            row.update(_nested_bundle_schema_extras(rec, with_current_values=True))
+            out[fname] = row
         else:
-            out[fname] = {
+            row = {
                 "field_type": rec.field_type,
                 "ref_topic_id": rec.ref_topic_id,
                 "salience": rec.salience,
                 "history": [e.model_dump() for e in rec.history],
             }
+            row.update(_nested_bundle_schema_extras(rec, with_current_values=False))
+            out[fname] = row
     return out
+
+
+def _topic_history_from_row(row: dict[str, Any]) -> list[Any]:
+    raw = row.get("topic_history_json")
+    if not isinstance(raw, str) or not raw.strip():
+        return []
+    try:
+        v = json.loads(raw)
+        return v if isinstance(v, list) else []
+    except json.JSONDecodeError:
+        return []
 
 
 def _parse_args(raw: Any) -> dict[str, Any]:
@@ -208,6 +256,29 @@ class MemoryToolRunner:
                 "topic_ids": [t["id"] for t in topics],
             }
 
+        if name == "memory_topics_schema_page":
+            off = int(args.get("offset") or 0)
+            lim = int(args.get("limit") or 15)
+            inc = bool(args.get("include_archived", False))
+            tk_arg = args.get("topic_kind")
+            tk_use: str | None
+            if self._study_kind:
+                tk_use = self._study_kind
+            elif tk_arg is not None and str(tk_arg).strip() != "":
+                tk_use = str(tk_arg).strip()
+            else:
+                tk_use = None
+            from memstate.api.ui_graph_payload import build_topics_schema_page
+
+            page = build_topics_schema_page(
+                s,
+                offset=off,
+                limit=lim,
+                include_archived=inc,
+                topic_kind=tk_use,
+            )
+            return {"ok": True, **page}
+
         if name == "memory_get_topic_schema":
             tid = str(args.get("topic_id") or "")
             if not tid:
@@ -266,6 +337,7 @@ class MemoryToolRunner:
                     "failed_salience": row.get("failed_salience"),
                     "archived": row.get("archived"),
                     "fields": out_fields,
+                    "topic_history": _topic_history_from_row(row),
                     "created_at": row.get("created_at"),
                     "updated_at": row.get("updated_at"),
                 },
@@ -360,6 +432,11 @@ class MemoryToolRunner:
             fname = str(args.get("field_name") or "")
             if not tid or not fname:
                 return {"ok": False, "error": "topic_id and field_name required"}
+            if "value" not in args:
+                return {
+                    "ok": False,
+                    "error": "memory_append_field requires `value` with the fact to store. Omitting it used to record an empty string while still returning ok—retry with value set (use \"\" only if you intentionally mean an empty string).",
+                }
             if not s.topic_exists(tid):
                 return {"ok": False, "error": "topic not found"}
             if self._study_kind and not self._study_topic_kind_ok(tid):
@@ -434,6 +511,120 @@ class MemoryToolRunner:
                     return {"ok": False, "error": "ref_topic_id must be in this Study session"}
             s.set_field_ref(tid, fname, ref_s)
             return {"ok": True}
+
+        if name == "memory_nest_fields_in_topic":
+            tid = str(args.get("topic_id") or "").strip()
+            nk = str(args.get("nest_key") or "").strip()
+            if not tid:
+                return {"ok": False, "error": "topic_id required"}
+            if not nk:
+                return {"ok": False, "error": "nest_key required"}
+            if not s.topic_exists(tid):
+                return {"ok": False, "error": "topic not found"}
+            if self._study_kind and not self._study_topic_kind_ok(tid):
+                return {"ok": False, "error": "topic not in this Study session"}
+            fr = args.get("field_names")
+            if not isinstance(fr, list) or not fr:
+                return {"ok": False, "error": "field_names must be a non-empty list of field name strings"}
+            try:
+                out = s.nest_fields_in_topic(
+                    tid,
+                    [str(x) for x in fr],
+                    nk,
+                    provenance=str(args.get("provenance") or "llm"),
+                )
+            except ValueError as e:
+                return {"ok": False, "error": str(e)}
+            return {"ok": True, **out}
+
+        if name == "memory_unnest_fields_in_topic":
+            tid = str(args.get("topic_id") or "").strip()
+            nk = str(args.get("nest_key") or "").strip()
+            if not tid or not nk:
+                return {"ok": False, "error": "topic_id and nest_key required"}
+            if not s.topic_exists(tid):
+                return {"ok": False, "error": "topic not found"}
+            if self._study_kind and not self._study_topic_kind_ok(tid):
+                return {"ok": False, "error": "topic not in this Study session"}
+            try:
+                out = s.unnest_fields_in_topic(tid, nk)
+            except ValueError as e:
+                return {"ok": False, "error": str(e)}
+            return {"ok": True, **out}
+
+        if name == "memory_promote_fields_to_nested_topic":
+            parent = str(args.get("parent_topic_id") or "").strip()
+            if not parent:
+                return {"ok": False, "error": "parent_topic_id required"}
+            if not s.topic_exists(parent):
+                return {"ok": False, "error": "parent topic not found"}
+            if self._study_kind and not self._study_topic_kind_ok(parent):
+                return {"ok": False, "error": "topic not in this Study session"}
+            fr = args.get("field_names")
+            if not isinstance(fr, list) or not fr:
+                return {"ok": False, "error": "field_names must be a non-empty list of field name strings"}
+            child_title = str(args.get("child_title") or "").strip()
+            if not child_title:
+                return {"ok": False, "error": "child_title required"}
+            rk = str(args.get("relationship_kind") or "has_detail").strip() or "has_detail"
+            if self._study_kind and rk in _STUDY_PARENT_CHILD_KINDS:
+                if _topic_has_incoming_parent_child(s, parent):
+                    return {
+                        "ok": False,
+                        "error": (
+                            "Nesting limit: parent topic already has an incoming "
+                            f"{sorted(_STUDY_PARENT_CHILD_KINDS)} edge. Use at most one parent→child level."
+                        ),
+                    }
+            ctk = args.get("child_topic_kind")
+            tk: str | None
+            if self._study_kind:
+                tk = self._study_kind
+            elif ctk is not None and str(ctk).strip() != "":
+                tk = str(ctk).strip()
+            else:
+                tk = None
+            plf = args.get("parent_link_field")
+            plf_s = None if plf in (None, "") else str(plf).strip()
+            if plf_s == "":
+                plf_s = None
+            cid_raw = args.get("child_topic_id")
+            cid = None if cid_raw in (None, "") else str(cid_raw).strip()
+            try:
+                out = s.promote_fields_to_nested_topic(
+                    parent,
+                    [str(x) for x in fr],
+                    child_title,
+                    child_summary=args.get("child_summary"),
+                    child_topic_id=cid,
+                    topic_kind=tk,
+                    relationship_kind=rk,
+                    parent_link_field=plf_s,
+                    link_field_provenance=str(args.get("link_provenance") or "llm"),
+                    max_history=int(args.get("max_history") or 500),
+                )
+            except ValueError as e:
+                return {"ok": False, "error": str(e)}
+            return {"ok": True, **out}
+
+        if name == "memory_undo_promote_nested_topic":
+            parent = str(args.get("parent_topic_id") or "").strip()
+            child = str(args.get("child_topic_id") or "").strip()
+            if not parent or not child:
+                return {"ok": False, "error": "parent_topic_id and child_topic_id required"}
+            if not s.topic_exists(parent) or not s.topic_exists(child):
+                return {"ok": False, "error": "topic not found"}
+            if self._study_kind and (
+                not self._study_topic_kind_ok(parent) or not self._study_topic_kind_ok(child)
+            ):
+                return {"ok": False, "error": "topic not in this Study session"}
+            rk = args.get("relationship_kind")
+            rk_s = None if rk in (None, "") else str(rk).strip()
+            try:
+                out = s.undo_promote_nested_topic(parent, child, relationship_kind=rk_s)
+            except ValueError as e:
+                return {"ok": False, "error": str(e)}
+            return {"ok": True, **out}
 
         if name == "study_unit_catalog":
             if not self._study_catalog:

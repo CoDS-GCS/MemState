@@ -11,6 +11,8 @@ class Settings(BaseSettings):
     # Embedded Kuzu database file (created automatically; parent dirs are mkdir'd).
     kuzu_path: str = "memstate.kuzu"
     api_key: str | None = None
+    # Optional stronger admin key for protected config updates (e.g. fixed system context).
+    admin_key: str | None = None
     # HTTP bind for memstate-api / CLI; override with MEMSTATE_API_PORT (e.g. 8080).
     api_host: str = "0.0.0.0"
     api_port: int = 8765

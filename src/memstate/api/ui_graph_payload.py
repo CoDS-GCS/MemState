@@ -5,7 +5,12 @@ from __future__ import annotations
 from typing import Any
 
 from memstate.api.graph_viz_communities import compute_topic_communities
-from memstate.datamodel.fields import TopicFields
+from memstate.datamodel.fields import (
+    TopicField,
+    TopicFields,
+    is_nested_fields_bundle_value,
+    nested_bundle_inner_fields,
+)
 from memstate.datamodel.mappers import topic_from_graph_row
 from memstate.store.graph_store import GraphStore
 
@@ -43,15 +48,59 @@ def build_ui_graph_snapshot(store: GraphStore) -> dict[str, Any]:
         fields_summary: list[dict[str, Any]] = []
         for name, rec in tf.fields.items():
             cur = rec.current_entry()
-            fields_summary.append(
-                {
-                    "name": name,
-                    "field_type": rec.field_type,
-                    "ref_topic_id": rec.ref_topic_id,
-                    "current_value": cur.value if cur else None,
-                    "history_len": len(rec.history),
-                }
-            )
+            row_fs: dict[str, Any] = {
+                "name": name,
+                "field_type": rec.field_type,
+                "ref_topic_id": rec.ref_topic_id,
+                "current_value": cur.value if cur else None,
+                "history_len": len(rec.history),
+            }
+            if rec.field_type == "json" and cur and is_nested_fields_bundle_value(cur.value):
+                inner = nested_bundle_inner_fields(cur.value)
+                nested_fields: list[dict[str, Any]] = []
+                for sub_name in sorted(inner.keys()):
+                    sub_raw = inner.get(sub_name)
+                    if isinstance(sub_raw, dict):
+                        try:
+                            srec = TopicField.model_validate(sub_raw)
+                            sce = srec.current_entry()
+                            nested_fields.append(
+                                {
+                                    "name": sub_name,
+                                    "field_type": srec.field_type,
+                                    "current_value": sce.value if sce else None,
+                                    "history_len": len(srec.history),
+                                }
+                            )
+                        except Exception:
+                            nested_fields.append(
+                                {
+                                    "name": sub_name,
+                                    "field_type": "string",
+                                    "current_value": None,
+                                    "history_len": 0,
+                                }
+                            )
+                row_fs["nested_fields"] = nested_fields
+                for sub_name, sub_raw in inner.items():
+                    if not isinstance(sub_raw, dict):
+                        continue
+                    try:
+                        srec = TopicField.model_validate(sub_raw)
+                    except Exception:
+                        continue
+                    if srec.ref_topic_id:
+                        rid = str(srec.ref_topic_id)
+                        edges.append(
+                            {
+                                "from": sid,
+                                "to": rid,
+                                "kind": f"field:{name}.{sub_name}",
+                                "edge_type": "field_ref",
+                            }
+                        )
+                        add_structural(sid, rid)
+            fields_summary.append(row_fs)
             if rec.ref_topic_id:
                 rid = str(rec.ref_topic_id)
                 edges.append(
@@ -144,6 +193,74 @@ def build_study_graph_snapshot(store: GraphStore, study_topic_kind: str) -> dict
     return {"nodes": nodes, "edges": edges}
 
 
+def topic_schema_struct_from_row(row: dict[str, Any]) -> dict[str, Any] | None:
+    """One topic’s schema-only payload (field names/types/refs/salience; nested bundle names). No values/history."""
+    if not row:
+        return None
+    sid = str(row.get("id") or "")
+    if not sid:
+        return None
+    tf = TopicFields.from_json(row.get("fields_json") if isinstance(row.get("fields_json"), str) else "")
+    fields_out: dict[str, Any] = {}
+    for fname, rec in tf.fields.items():
+        telem: dict[str, Any] = {
+            "field_type": rec.field_type,
+            "ref_topic_id": rec.ref_topic_id,
+            "salience": rec.salience,
+        }
+        cur = rec.current_entry()
+        if rec.field_type == "json" and cur and is_nested_fields_bundle_value(cur.value):
+            telem["nested_field_names"] = sorted(nested_bundle_inner_fields(cur.value).keys())
+        fields_out[fname] = telem
+    tk = row.get("topic_kind")
+    return {
+        "id": sid,
+        "title": str(row.get("title") or ""),
+        "topic_kind": str(tk) if tk else "",
+        "archived": bool(row.get("archived")),
+        "salience": float(row.get("salience") or 0),
+        "fields": fields_out,
+        "field_count": len(fields_out),
+    }
+
+
+def build_topics_schema_page(
+    store: GraphStore,
+    *,
+    offset: int = 0,
+    limit: int = 15,
+    include_archived: bool = False,
+    topic_kind: str | None = None,
+) -> dict[str, Any]:
+    """
+    Paginated schema-only view for iterating topics without loading values or the full snapshot.
+    Stable order: sorted topic id. ``limit`` is capped at 50.
+    """
+    all_ids = store.list_topic_ids(include_archived=include_archived, topic_kind=topic_kind)
+    all_ids_sorted = sorted(all_ids)
+    total = len(all_ids_sorted)
+    off = max(0, int(offset))
+    lim = max(1, min(int(limit), 50))
+    page_ids = all_ids_sorted[off : off + lim]
+    topics: list[dict[str, Any]] = []
+    for tid in page_ids:
+        row = store.get_topic(tid)
+        if not row:
+            continue
+        payload = topic_schema_struct_from_row(row)
+        if payload:
+            topics.append(payload)
+    has_more = off + lim < total
+    return {
+        "topics": topics,
+        "offset": off,
+        "limit": lim,
+        "total": total,
+        "has_more": has_more,
+        "next_offset": (off + lim) if has_more else None,
+    }
+
+
 def build_topics_schema_snapshot(store: GraphStore) -> dict[str, Any]:
     """
     Structural view for reorganization: topic id, title, kind, salience, archived,
@@ -158,26 +275,11 @@ def build_topics_schema_snapshot(store: GraphStore) -> dict[str, Any]:
         row = store.get_topic(tid)
         if not row:
             continue
-        sid = str(tid)
-        tf = TopicFields.from_json(row.get("fields_json") if isinstance(row.get("fields_json"), str) else "")
-        fields_out: dict[str, Any] = {}
-        for fname, rec in tf.fields.items():
-            fields_out[fname] = {
-                "field_type": rec.field_type,
-                "ref_topic_id": rec.ref_topic_id,
-                "salience": rec.salience,
-            }
-        tk = row.get("topic_kind")
-        topics.append(
-            {
-                "id": sid,
-                "title": str(row.get("title") or ""),
-                "topic_kind": str(tk) if tk else "",
-                "archived": bool(row.get("archived")),
-                "salience": float(row.get("salience") or 0),
-                "fields": fields_out,
-            }
-        )
+        payload = topic_schema_struct_from_row(row)
+        if payload:
+            # Snapshot historically omitted field_count; strip for identical wire shape
+            pl = {k: v for k, v in payload.items() if k != "field_count"}
+            topics.append(pl)
 
     edges: list[dict[str, Any]] = []
     seen_rel: set[tuple[str, str, str]] = set()

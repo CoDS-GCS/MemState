@@ -7,7 +7,7 @@ from typing import Any
 
 import httpx
 
-from memstate.llm.tools_schema import OLLAMA_TOOLS, SYSTEM_PROMPT
+from memstate.llm.tools_schema import DEFAULT_LLM_SYSTEM_PROMPT_FALLBACK, OLLAMA_TOOLS
 from memstate.llm.tool_runner import MemoryToolRunner
 
 DEFAULT_MAX_TOOL_ROUNDS = 32
@@ -26,9 +26,10 @@ async def run_ollama_chat(
     """
     Send messages to Ollama with tools; execute tool calls until the model replies with text.
     Returns (assistant_text, tool_log, model_used).
+    If system_prompt is None, uses DEFAULT_LLM_SYSTEM_PROMPT_FALLBACK (base system text plus topic-vs-entity).
     """
     url = f"{base_url.rstrip('/')}/api/chat"
-    sys = system_prompt if system_prompt is not None else SYSTEM_PROMPT
+    sys = system_prompt if system_prompt is not None else DEFAULT_LLM_SYSTEM_PROMPT_FALLBACK
     tool_defs = tools if tools is not None else OLLAMA_TOOLS
     full: list[dict[str, Any]] = [{"role": "system", "content": sys}, *messages]
     tool_log: list[dict[str, Any]] = []

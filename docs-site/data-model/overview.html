@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
@@ -19,7 +19,24 @@
             for semantic retrieval.
           </p>
 
-          <h2>Topic entity contract</h2>
+          <h2 id="topic-versus-entity-modeling-boundary">Topic versus entity (modeling boundary)</h2>
+          <p><strong>Approach.</strong> MemState does not add a separate “Entity” node type. Instead, the graph’s <strong>topic</strong> is the boundary of what is stored as one indexed, versioned unit. Informally, an <strong>entity</strong> is anything you mean in the world (a person, paper, concept, task); a <strong>topic</strong> is how that meaning is packaged for the store.</p>
+          <ul>
+            <li>
+              A <strong>topic</strong> behaves like a <strong>self-contained record</strong>: one node with a fixed scalar envelope and a flexible <code>fields_json</code> map. Multiple entities may be represented <em>inside</em> the same topic when each is <strong>small</strong>, needs <strong>no</strong> standalone graph identity, and is <strong>not</strong> heavily shared across the rest of the graph.
+            </li>
+            <li>
+              Keep subordinate facts as <strong>field values</strong> (strings, JSON, lists) or compact nested structures while they stay local to that topic’s narrative and lifecycle.
+            </li>
+            <li>
+              <strong>Split and promote to a new topic</strong> when something that started as an embedded entity becomes <strong>complex</strong> (many details, long revision history), is <strong>associated with many other topics</strong>, or should be maintained and queried as a <strong>first-class</strong> unit. Then model the link with <code>RELATED</code> and/or <code>ref_topic_id</code> on a field, and move the heavy payload out of the parent topic’s inline fields.
+            </li>
+          </ul>
+          <p>
+            <strong>How this maps internally.</strong> Promotion is a <strong>data-modeling / ingest policy</strong> choice: tools and reorganize flows create new <code>Topic</code> rows and edges; the store already supports refs and relationships. There is no automatic splitter—agents or batch jobs implement the rule above when writing memory.
+          </p>
+
+          <h2>Topic record (schema contract)</h2>
           <table>
             <thead>
               <tr>
@@ -114,6 +131,7 @@
             <li>Use scalar topic columns for properties frequently used in filtering, ranking, or maintenance.</li>
             <li>Use fields for domain-specific attributes that evolve without schema migrations.</li>
             <li>Use <code>RELATED</code> for structural graph relationships and <code>ref_topic_id</code> for field-level references.</li>
+            <li>Prefer <strong>one topic, many small embedded entities</strong> until reuse, complexity, or revision boundaries argue for <strong>another topic</strong> (see <a href="#topic-versus-entity-modeling-boundary">Topic versus entity</a>).</li>
           </ul>
 
           <h2>Next pages</h2>

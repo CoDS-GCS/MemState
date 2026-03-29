@@ -45,6 +45,77 @@ function escapeHtml(s) {
   return d.innerHTML;
 }
 
+function setSystemContextCard(data) {
+  const badge = document.getElementById("system-context-badge");
+  const form = document.getElementById("form-system-context");
+  if (!badge || !form) return;
+  const roleInput = form.querySelector('input[name="system_role"]');
+  const runtimeInput = form.querySelector('textarea[name="runtime_context"]');
+  const adminInput = form.querySelector('input[name="admin_key"]');
+  if (!roleInput || !runtimeInput) return;
+  const configured = !!(data && data.configured);
+  if (!configured || !data.system_context) {
+    badge.textContent = "Not configured";
+    roleInput.value = "";
+    runtimeInput.value = "";
+    if (adminInput) adminInput.value = "";
+    return;
+  }
+  badge.textContent = "Configured";
+  roleInput.value = String(data.system_context.system_role || "");
+  runtimeInput.value = String(data.system_context.runtime_context || "");
+  if (adminInput) adminInput.value = "";
+}
+
+async function refreshSystemContextCard() {
+  try {
+    const data = await api("/api/ui/system-context");
+    setSystemContextCard(data);
+  } catch (_) {
+    /* keep UI usable even if this call fails */
+  }
+}
+
+let chatMarkdownConfigured = false;
+
+function ensureChatMarkdownConfigured() {
+  if (chatMarkdownConfigured) return;
+  chatMarkdownConfigured = true;
+  if (typeof marked !== "undefined" && typeof marked.setOptions === "function") {
+    marked.setOptions({
+      breaks: true,
+      gfm: true,
+      headerIds: false,
+      mangle: false,
+    });
+  }
+  if (typeof DOMPurify !== "undefined" && typeof DOMPurify.addHook === "function") {
+    DOMPurify.addHook("afterSanitizeAttributes", (node) => {
+      if (node.tagName === "A" && node instanceof HTMLAnchorElement) {
+        const href = node.getAttribute("href") || "";
+        if (/^https?:\/\//i.test(href)) {
+          node.setAttribute("target", "_blank");
+          node.setAttribute("rel", "noopener noreferrer");
+        }
+      }
+    });
+  }
+}
+
+/**
+ * @param {string} raw
+ * @returns {string | null} HTML or null if libraries unavailable
+ */
+function renderChatMarkdown(raw) {
+  const t = String(raw ?? "");
+  ensureChatMarkdownConfigured();
+  if (typeof marked !== "undefined" && typeof DOMPurify !== "undefined") {
+    const dirty = marked.parse(t);
+    return DOMPurify.sanitize(dirty, { USE_PROFILES: { html: true } });
+  }
+  return null;
+}
+
 /* ── Toast ── */
 
 function toast(message, type = "success") {
@@ -291,11 +362,22 @@ function buildTopicTooltipPayload(apiNode, community) {
     (apiNode.title && String(apiNode.title).trim()) ||
     String(apiNode.label || "").trim() ||
     String(apiNode.id || "").slice(0, 8);
-  const fields = (apiNode.fields || []).map((f) => ({
-    name: String(f.name || ""),
-    type: String(f.field_type || "—"),
-    ref: f.ref_topic_id ? String(f.ref_topic_id).slice(0, 10) + "…" : null,
-  }));
+  const fields = (apiNode.fields || []).map((f) => {
+    const row = {
+      name: String(f.name || ""),
+      type: String(f.field_type || "—"),
+      ref: f.ref_topic_id ? String(f.ref_topic_id).slice(0, 10) + "…" : null,
+      nested: null,
+    };
+    const nf = f.nested_fields;
+    if (Array.isArray(nf) && nf.length) {
+      row.nested = nf.map((sf) => ({
+        name: String(sf.name || ""),
+        type: String(sf.field_type || "—"),
+      }));
+    }
+    return row;
+  });
   return {
     kind: "topic",
     head,
@@ -333,6 +415,15 @@ function renderTopicTooltipHtml(p) {
       parts.push(
         `<li><strong>${escapeHtml(f.name)}</strong> (${escapeHtml(f.type)})${ref}</li>`
       );
+      if (f.nested && f.nested.length) {
+        parts.push('<ul class="graph-tooltip-nested-fields">');
+        for (const sf of f.nested) {
+          parts.push(
+            `<li><span class="graph-tooltip-nested-mark">└</span> <strong>${escapeHtml(sf.name)}</strong> (${escapeHtml(sf.type)})</li>`
+          );
+        }
+        parts.push("</ul>");
+      }
     }
     if (p.fields.length > max) {
       parts.push(
@@ -469,6 +560,279 @@ const graphView = {
   nodeTooltipPayload: null,
 };
 
+/** @param {unknown} entry */
+function parseHistoryValidFromMs(entry) {
+  if (!entry || typeof entry !== "object") return null;
+  const raw = /** @type {{ valid_from?: unknown }} */ (entry).valid_from;
+  if (raw == null || raw === "") return null;
+  const n = Date.parse(String(raw));
+  return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * Opacity for history row: current (index 0) = 1; older rows fade by time span or by index.
+ * @param {unknown[]} hist
+ * @param {number} index
+ */
+function historyTimelineOpacity(hist, index) {
+  if (index === 0) return 1;
+  if (!hist.length) return 1;
+  const tNewest = parseHistoryValidFromMs(hist[0]);
+  const tSelf = parseHistoryValidFromMs(hist[index]);
+  const tOldest = parseHistoryValidFromMs(hist[hist.length - 1]);
+  if (tNewest != null && tSelf != null && tOldest != null && tNewest >= tOldest) {
+    const span = Math.max(tNewest - tOldest, 1);
+    const age = Math.max(0, tNewest - tSelf);
+    const u = Math.min(1, age / span);
+    return Math.max(0.12, 1 - 0.88 * u);
+  }
+  const maxIdx = Math.max(hist.length - 1, 1);
+  const u = index / maxIdx;
+  return Math.max(0.12, 1 - 0.82 * u);
+}
+
+/**
+ * @param {unknown[]} hist
+ */
+function renderFieldTimelineHtml(hist) {
+  const parts = [];
+  const h = Array.isArray(hist) ? hist : [];
+  if (h.length) {
+    parts.push('<div class="topic-wizard-field-timeline">');
+    parts.push('<div class="topic-wizard-timeline-heading">Value timeline</div>');
+    parts.push('<ul class="topic-wizard-timeline" role="list">');
+    for (let i = 0; i < h.length; i++) {
+      const e = h[i];
+      let timeHtml;
+      if (e && typeof e === "object" && e.valid_from != null && String(e.valid_from).trim() !== "") {
+        const raw = String(e.valid_from);
+        const ms = Date.parse(raw);
+        if (Number.isFinite(ms)) {
+          timeHtml = `<time class="topic-wizard-timeline-time" datetime="${escapeHtml(new Date(ms).toISOString())}">${escapeHtml(raw)}</time>`;
+        } else {
+          timeHtml = `<span class="topic-wizard-timeline-time">${escapeHtml(raw)}</span>`;
+        }
+      } else {
+        timeHtml = `<span class="topic-wizard-timeline-time">${escapeHtml(i === 0 ? "—" : `Step ${i + 1}`)}</span>`;
+      }
+      const val = e && typeof e === "object" ? e.value : e;
+      const isCurrent = i === 0;
+      const op = historyTimelineOpacity(h, i);
+      const itemClass = isCurrent
+        ? "topic-wizard-timeline-item topic-wizard-timeline-item--current"
+        : "topic-wizard-timeline-item topic-wizard-timeline-item--past";
+      const badge = isCurrent
+        ? '<span class="topic-wizard-timeline-badge">Current</span>'
+        : '<span class="topic-wizard-timeline-badge topic-wizard-timeline-badge--past">Earlier</span>';
+      const opRaw = e && typeof e === "object" && e.operation != null ? String(e.operation).trim() : "";
+      const opTag = opRaw
+        ? `<span class="topic-wizard-timeline-op" title="Revision operation">${escapeHtml(opRaw)}</span>`
+        : "";
+      const ariaCur = isCurrent ? ' aria-current="true"' : "";
+      parts.push(
+        `<li class="${itemClass}" style="opacity:${op}"${ariaCur}>` +
+          '<span class="topic-wizard-timeline-dot" aria-hidden="true"></span>' +
+          '<div class="topic-wizard-timeline-body">' +
+          `<div class="topic-wizard-timeline-meta">${badge}${opTag}${timeHtml}</div>` +
+          `<div class="topic-wizard-timeline-value">${formatWizardFieldValueHtml(val)}</div>` +
+          "</div></li>"
+      );
+    }
+    parts.push("</ul></div>");
+  } else {
+    parts.push('<p class="topic-wizard-no-history">No revision history for this field.</p>');
+  }
+  return parts.join("");
+}
+
+/**
+ * @param {Record<string, unknown>} f
+ */
+function nestedInnerFromFieldRecord(f) {
+  if (!f || typeof f !== "object") return null;
+  const hist = Array.isArray(f.history) ? f.history : [];
+  const cur = hist[0];
+  if (!cur || typeof cur !== "object") return null;
+  const val = cur.value;
+  if (!val || typeof val !== "object") return null;
+  const o = /** @type {Record<string, unknown>} */ (val);
+  if (o._memstate_nested !== true) return null;
+  const inner = o.fields;
+  if (!inner || typeof inner !== "object") return null;
+  return /** @type {Record<string, Record<string, unknown>>} */ (inner);
+}
+
+/**
+ * @param {string} subName
+ * @param {Record<string, unknown>} sub
+ */
+function renderNestedSubFieldCardHtml(subName, sub) {
+  const parts = [];
+  parts.push('<div class="topic-wizard-field-card topic-wizard-field-card--nested-item">');
+  parts.push(`<h5 class="topic-wizard-h5">${escapeHtml(subName)}</h5>`);
+  parts.push('<dl class="topic-wizard-dl topic-wizard-field-meta">');
+  parts.push(`<dt>Type</dt><dd>${escapeHtml(String(sub.field_type ?? "—"))}</dd>`);
+  if (sub.ref_topic_id) {
+    const rid = String(sub.ref_topic_id).trim();
+    parts.push(
+      `<dt>Ref topic</dt><dd class="topic-wizard-ref-dd"><div class="topic-wizard-ref-single">${formatWizardRefLinkRowHtml(rid, getWizardRefLinkLabel(rid), null)}</div></dd>`
+    );
+  }
+  parts.push("</dl>");
+  parts.push(renderFieldTimelineHtml(/** @type {unknown[]} */ (sub.history)));
+  parts.push("</div>");
+  return parts.join("");
+}
+
+/** @param {unknown} val */
+function formatFieldValueText(val) {
+  if (val === undefined || val === null) return "—";
+  if (typeof val === "object") return JSON.stringify(val, null, 2);
+  return String(val);
+}
+
+const TOPIC_UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+/** @param {unknown} s */
+function isLikelyTopicIdString(s) {
+  return typeof s === "string" && TOPIC_UUID_RE.test(s.trim());
+}
+
+/**
+ * Short title for a topic id when rendering ref links (graph payload or node label).
+ * @param {string} topicId
+ */
+function getWizardRefLinkLabel(topicId) {
+  const payload = graphView.nodeTooltipPayload?.get(topicId);
+  if (payload && payload.head) {
+    const h = String(payload.head).trim();
+    if (h) return h.length > 56 ? h.slice(0, 55) + "…" : h;
+  }
+  const ds = graphView.visDataSets?.nodes;
+  if (ds) {
+    try {
+      const n = ds.get(topicId);
+      if (n && n.label) {
+        const line = String(n.label).split("\n")[0].trim().slice(0, 56);
+        if (line) return line;
+      }
+    } catch (_) {
+      /* ignore */
+    }
+  }
+  return topicId.slice(0, 8) + "…";
+}
+
+/**
+ * One row: same visual language as graph "field ref" edges (dashed green rail).
+ * @param {string} topicId
+ * @param {string} label
+ * @param {number | null} index1Based
+ */
+function formatWizardRefLinkRowHtml(topicId, label, index1Based) {
+  const idx =
+    index1Based != null
+      ? `<span class="topic-wizard-ref-idx" aria-hidden="true">${index1Based}.</span>`
+      : "";
+  return (
+    `${idx}<button type="button" class="topic-wizard-ref-link" data-topic-id="${escapeHtml(topicId)}" title="Open topic">` +
+      '<span class="topic-wizard-ref-link-main">' +
+      '<span class="topic-wizard-ref-link-kind">field ref</span>' +
+      `<span class="topic-wizard-ref-link-label">${escapeHtml(label)}</span>` +
+      `<code class="topic-wizard-ref-link-id">${escapeHtml(topicId)}</code>` +
+      "</span></button>"
+  );
+}
+
+/**
+ * HTML for a field value: UUID strings / lists of UUIDs → ref-edge rows; else escaped JSON/pre.
+ * @param {unknown} val
+ */
+function formatWizardFieldValueHtml(val) {
+  if (val === undefined || val === null) {
+    return '<span class="topic-wizard-value-scalar">—</span>';
+  }
+  if (typeof val === "string") {
+    if (isLikelyTopicIdString(val)) {
+      const tid = val.trim();
+      return `<div class="topic-wizard-ref-single">${formatWizardRefLinkRowHtml(tid, getWizardRefLinkLabel(tid), null)}</div>`;
+    }
+    return `<pre class="topic-wizard-timeline-value-pre">${escapeHtml(val)}</pre>`;
+  }
+  if (typeof val === "number" || typeof val === "boolean") {
+    return `<span class="topic-wizard-value-scalar">${escapeHtml(String(val))}</span>`;
+  }
+  if (Array.isArray(val)) {
+    if (val.length === 0) {
+      return '<span class="topic-wizard-value-scalar">[]</span>';
+    }
+    const allTopicIds = val.every((item) => typeof item === "string" && isLikelyTopicIdString(item));
+    const caption = allTopicIds
+      ? '<div class="topic-wizard-ref-edges-caption">Linked topics (same as <span class="topic-wizard-ref-caption-legend">field ref</span> edges on the graph)</div>'
+      : "";
+    const lis = val.map((item, i) => {
+      if (typeof item === "string" && isLikelyTopicIdString(item)) {
+        const tid = item.trim();
+        return `<li class="topic-wizard-ref-edge-li">${formatWizardRefLinkRowHtml(tid, getWizardRefLinkLabel(tid), i + 1)}</li>`;
+      }
+      const chunk =
+        typeof item === "object" && item !== null
+          ? JSON.stringify(item, null, 2)
+          : String(item ?? "—");
+      return `<li class="topic-wizard-ref-edge-li topic-wizard-ref-edge-li--raw"><pre class="topic-wizard-timeline-value-pre">${escapeHtml(chunk)}</pre></li>`;
+    });
+    return `${caption}<ul class="topic-wizard-ref-edges" role="list">${lis.join("")}</ul>`;
+  }
+  return `<pre class="topic-wizard-timeline-value-pre">${escapeHtml(JSON.stringify(val, null, 2))}</pre>`;
+}
+
+/**
+ * @param {unknown} topicHistory
+ * @returns {{ child_topic_id: string, relationship_kind?: string }[]}
+ */
+function nestedPromotionTargetsFromHistory(topicHistory) {
+  const arr = Array.isArray(topicHistory) ? topicHistory : [];
+  /** @type {Map<string, { child_topic_id: string, relationship_kind?: string }>} */
+  const m = new Map();
+  for (const ev of arr) {
+    if (!ev || typeof ev !== "object") continue;
+    const o = /** @type {Record<string, unknown>} */ (ev);
+    if (o.kind !== "nested_topic_promoted" || !o.detail || typeof o.detail !== "object") continue;
+    const d = /** @type {Record<string, unknown>} */ (o.detail);
+    const cid = d.child_topic_id != null ? String(d.child_topic_id).trim() : "";
+    if (!cid) continue;
+    const rk = d.relationship_kind != null ? String(d.relationship_kind).trim() : "";
+    m.set(cid, {
+      child_topic_id: cid,
+      relationship_kind: rk || undefined,
+    });
+  }
+  return [...m.values()];
+}
+
+/**
+ * @param {unknown} topicHistory
+ */
+function lastNestedParentFromHistory(topicHistory) {
+  const arr = Array.isArray(topicHistory) ? topicHistory : [];
+  for (let i = arr.length - 1; i >= 0; i--) {
+    const ev = arr[i];
+    if (!ev || typeof ev !== "object") continue;
+    const o = /** @type {Record<string, unknown>} */ (ev);
+    if (o.kind !== "nested_topic_from_parent" || !o.detail || typeof o.detail !== "object") continue;
+    const d = /** @type {Record<string, unknown>} */ (o.detail);
+    const pid = d.parent_topic_id != null ? String(d.parent_topic_id).trim() : "";
+    if (!pid) continue;
+    const rk = d.relationship_kind != null ? String(d.relationship_kind).trim() : "";
+    return {
+      parent_topic_id: pid,
+      relationship_kind: rk || undefined,
+    };
+  }
+  return null;
+}
+
 /**
  * @param {Record<string, unknown>} t
  */
@@ -493,6 +857,44 @@ function renderTopicWizardBody(t) {
   }
   parts.push("</dl></section>");
 
+  const tid = t.id != null ? String(t.id) : "";
+  const th = t.topic_history;
+  if (tid) {
+    const promotions = nestedPromotionTargetsFromHistory(th);
+    if (promotions.length) {
+      parts.push('<section class="topic-wizard-section topic-wizard-nested-undo">');
+      parts.push('<h3 class="topic-wizard-h3">Undo nested detail</h3>');
+      parts.push(
+        '<p class="topic-wizard-help">Merge a detail topic back into this topic and remove the child node (reverses nested grouping—not a graph split).</p>'
+      );
+      for (const p of promotions) {
+        const short = p.child_topic_id.length > 10 ? `${p.child_topic_id.slice(0, 8)}…` : p.child_topic_id;
+        const kindAttr = p.relationship_kind ? escapeHtml(p.relationship_kind) : "";
+        parts.push(
+          `<button type="button" class="btn btn-danger btn-topic-wizard-undo-nested" data-undo-parent="${escapeHtml(tid)}" data-undo-child="${escapeHtml(p.child_topic_id)}" data-undo-kind="${kindAttr}">Undo → merge child <code>${escapeHtml(short)}</code></button>`
+        );
+      }
+      parts.push("</section>");
+    }
+  }
+
+  const nestParent = lastNestedParentFromHistory(th);
+  if (tid && nestParent) {
+    parts.push('<section class="topic-wizard-section topic-wizard-nested-undo">');
+    parts.push('<h3 class="topic-wizard-h3">Nested under parent</h3>');
+    parts.push(
+      '<p class="topic-wizard-help">Merge these fields back into the parent and remove this detail topic (same subject, not a split).</p>'
+    );
+    parts.push(
+      `<p class="topic-wizard-undo-meta">Parent: ${formatWizardRefLinkRowHtml(nestParent.parent_topic_id, getWizardRefLinkLabel(nestParent.parent_topic_id), null)}</p>`
+    );
+    const kindAttr = nestParent.relationship_kind ? escapeHtml(nestParent.relationship_kind) : "";
+    parts.push(
+      `<button type="button" class="btn btn-danger btn-topic-wizard-undo-nested" data-undo-parent="${escapeHtml(nestParent.parent_topic_id)}" data-undo-child="${escapeHtml(tid)}" data-undo-kind="${kindAttr}">Undo nesting (merge into parent)</button>`
+    );
+    parts.push("</section>");
+  }
+
   const fields = t.fields && typeof t.fields === "object" ? t.fields : {};
   const names = Object.keys(fields).sort();
   if (names.length) {
@@ -500,41 +902,74 @@ function renderTopicWizardBody(t) {
     for (const name of names) {
       const f = fields[name];
       if (!f || typeof f !== "object") continue;
+      const inner = nestedInnerFromFieldRecord(/** @type {Record<string, unknown>} */ (f));
+      if (inner) {
+        parts.push(
+          `<div class="topic-wizard-field-card topic-wizard-field-card--nested-root" data-nest-root="${escapeHtml(name)}">`
+        );
+        parts.push(
+          `<h4 class="topic-wizard-h4">${escapeHtml(name)} <span class="topic-wizard-nested-pill">nested fields</span></h4>`
+        );
+        parts.push('<dl class="topic-wizard-dl topic-wizard-field-meta">');
+        parts.push("<dt>Type</dt><dd>json <span class=\"topic-wizard-nested-pill\">same topic</span></dd>");
+        parts.push("</dl>");
+        parts.push('<div class="topic-wizard-nested-inner">');
+        for (const subName of Object.keys(inner).sort()) {
+          const sub = inner[subName];
+          if (sub && typeof sub === "object") {
+            parts.push(renderNestedSubFieldCardHtml(subName, /** @type {Record<string, unknown>} */ (sub)));
+          }
+        }
+        parts.push("</div>");
+        if (tid) {
+          parts.push(
+            `<button type="button" class="btn btn-danger btn-topic-wizard-unnest" data-unnest-topic="${escapeHtml(tid)}" data-unnest-key="${escapeHtml(name)}">Unnest (restore top-level fields)</button>`
+          );
+        }
+        parts.push("</div>");
+        continue;
+      }
       parts.push(`<div class="topic-wizard-field-card"><h4 class="topic-wizard-h4">${escapeHtml(name)}</h4>`);
       parts.push('<dl class="topic-wizard-dl topic-wizard-field-meta">');
       parts.push(`<dt>Type</dt><dd>${escapeHtml(String(f.field_type ?? "—"))}</dd>`);
       if (f.ref_topic_id) {
-        parts.push(`<dt>Ref topic</dt><dd>${escapeHtml(String(f.ref_topic_id))}</dd>`);
+        const rid = String(f.ref_topic_id).trim();
+        parts.push(
+          `<dt>Ref topic</dt><dd class="topic-wizard-ref-dd"><div class="topic-wizard-ref-single">${formatWizardRefLinkRowHtml(rid, getWizardRefLinkLabel(rid), null)}</div></dd>`
+        );
       }
       parts.push("</dl>");
-      const hist = Array.isArray(f.history) ? f.history : [];
-      if (hist.length) {
-        parts.push('<div class="topic-wizard-history"><div class="topic-wizard-history-label">History</div>');
-        for (let i = 0; i < hist.length; i++) {
-          const e = hist[i];
-          const when =
-            e && typeof e === "object" && e.valid_from != null
-              ? String(e.valid_from)
-              : `Entry ${i + 1}`;
-          const val = e && typeof e === "object" ? e.value : e;
-          const valStr =
-            typeof val === "object" && val !== null ? JSON.stringify(val, null, 2) : String(val ?? "—");
-          parts.push(
-            `<div class="topic-wizard-hist-row"><span class="topic-wizard-hist-time">${escapeHtml(when)}</span><pre class="topic-wizard-hist-val">${escapeHtml(valStr)}</pre></div>`
-          );
-        }
-        parts.push("</div>");
-      }
+      parts.push(renderFieldTimelineHtml(/** @type {unknown[]} */ (f.history)));
       parts.push("</div>");
     }
     parts.push("</section>");
+    if (tid && names.length) {
+      parts.push(
+        `<section class="topic-wizard-section topic-wizard-nest-in-topic" data-topic-id="${escapeHtml(tid)}">`
+      );
+      parts.push('<h3 class="topic-wizard-h3">Nest fields (same topic)</h3>');
+      parts.push(
+        '<p class="topic-wizard-help">Fold related fields into one <strong>json group on this topic</strong>—no new graph node, no RELATED edge, no ref. The graph still shows one topic; nested fields appear indented here and in the tooltip.</p>'
+      );
+      parts.push('<div class="topic-wizard-promote-fields">');
+      for (const name of names) {
+        parts.push(
+          `<label class="topic-wizard-promote-label"><input type="checkbox" name="nest-field" value="${escapeHtml(name)}" /> <span>${escapeHtml(name)}</span></label>`
+        );
+      }
+      parts.push("</div>");
+      parts.push('<div class="topic-wizard-promote-form">');
+      parts.push(
+        '<label class="topic-wizard-promote-row">Group field name <input type="text" class="topic-wizard-promote-input" id="topic-wizard-nest-key" placeholder="e.g. professional_details" autocomplete="off" /></label>'
+      );
+      parts.push(
+        '<button type="button" class="btn btn-primary btn-topic-wizard-nest" id="btn-topic-wizard-nest">Nest selected fields</button>'
+      );
+      parts.push('<p class="topic-wizard-promote-status" id="topic-wizard-nest-status" hidden></p>');
+      parts.push("</div></section>");
+    }
   }
 
-  parts.push(
-    '<section class="topic-wizard-section topic-wizard-section-raw"><h3 class="topic-wizard-h3">Raw JSON</h3><pre class="topic-wizard-pre">'
-  );
-  parts.push(escapeHtml(JSON.stringify(t, null, 2)));
-  parts.push("</pre></section>");
   return parts.join("");
 }
 
@@ -563,7 +998,114 @@ function hideTopicWizard() {
   document.body.classList.remove("topic-wizard-open");
 }
 
+/** @type {{ closer: (e: MouseEvent) => void } | null} */
+let graphNodeMenuDismiss = null;
+
+function hideGraphNodeMenu() {
+  const m = document.getElementById("graph-node-menu");
+  if (m) {
+    m.hidden = true;
+    m.innerHTML = "";
+    delete m.dataset.topicId;
+  }
+  if (graphNodeMenuDismiss) {
+    document.removeEventListener("click", graphNodeMenuDismiss.closer, true);
+    graphNodeMenuDismiss = null;
+  }
+}
+
+/**
+ * @param {string} tid
+ */
+function getTopicTitleHint(tid) {
+  let titleHint = tid.slice(0, 8) + "…";
+  const ds = graphView.visDataSets?.nodes;
+  if (ds) {
+    try {
+      const n = ds.get(tid);
+      if (n && n.label) {
+        titleHint = String(n.label).split("\n")[0].trim().slice(0, 56) || titleHint;
+      }
+    } catch (_) {
+      /* ignore */
+    }
+  }
+  return titleHint;
+}
+
+/**
+ * @param {string} tid
+ */
+async function deleteGraphTopic(tid) {
+  if (!tid) return;
+  hideGraphNodeMenu();
+  const titleHint = getTopicTitleHint(tid);
+  if (!confirm(`Delete topic “${titleHint}”?\n\nThis removes the topic and cannot be undone.`)) return;
+  try {
+    if (graphView.expandedId === tid) {
+      collapseGraphExpand({ restorePositions: false });
+    }
+    await api(`/api/ui/topics/${encodeURIComponent(tid)}`, { method: "DELETE" });
+    setStatus("Deleted topic");
+    await refreshGraph();
+    updateGraphDeleteTopicButton();
+  } catch (e) {
+    setStatus(String(e.message), true);
+  }
+}
+
+/**
+ * @param {number} clientX
+ * @param {number} clientY
+ * @param {string} topicId
+ */
+function showGraphNodeMenu(clientX, clientY, topicId) {
+  hideGraphNodeMenu();
+  const m = document.getElementById("graph-node-menu");
+  const wrap = graphView.container?.closest(".graph-wrap");
+  if (!m || !wrap) return;
+  m.dataset.topicId = topicId;
+  m.innerHTML = `
+    <button type="button" class="graph-node-menu-item" data-action="open" role="menuitem">Open details</button>
+    <button type="button" class="graph-node-menu-item graph-node-menu-danger" data-action="delete" role="menuitem">Delete topic…</button>
+  `;
+  m.hidden = false;
+  const br = wrap.getBoundingClientRect();
+  const place = () => {
+    let left = clientX - br.left;
+    let top = clientY - br.top;
+    const mw = m.offsetWidth;
+    const mh = m.offsetHeight;
+    left = Math.max(8, Math.min(left, br.width - mw - 8));
+    top = Math.max(8, Math.min(top, br.height - mh - 8));
+    m.style.left = `${left}px`;
+    m.style.top = `${top}px`;
+  };
+  requestAnimationFrame(place);
+
+  m.querySelectorAll("[data-action]").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      const tid = m.dataset.topicId;
+      const action = btn.dataset.action;
+      hideGraphNodeMenu();
+      if (action === "open" && tid) void expandGraphNode(tid);
+      else if (action === "delete" && tid) void deleteGraphTopic(tid);
+    });
+  });
+
+  const closer = (e) => {
+    if (!m.hidden && !m.contains(e.target)) hideGraphNodeMenu();
+  };
+  setTimeout(() => {
+    document.addEventListener("click", closer, true);
+  }, 0);
+  graphNodeMenuDismiss = { closer };
+}
+
 function collapseGraphExpand({ restorePositions = true } = {}) {
+  hideGraphNodeMenu();
   const ds = graphView.visDataSets;
   const net = graphView.network;
   const id = graphView.expandedId;
@@ -593,6 +1135,7 @@ function collapseGraphExpand({ restorePositions = true } = {}) {
  * @param {string} topicId
  */
 async function expandGraphNode(topicId) {
+  hideGraphNodeMenu();
   const net = graphView.network;
   const ds = graphView.visDataSets;
   if (!net || !ds || !graphView.nodeIds) return;
@@ -775,30 +1318,7 @@ function wireGraphDeleteTopicButton() {
       toast("Select a topic on the graph first (click a node).", "error");
       return;
     }
-    let titleHint = tid.slice(0, 8) + "…";
-    const ds = graphView.visDataSets?.nodes;
-    if (ds) {
-      try {
-        const n = ds.get(tid);
-        if (n && n.label) {
-          titleHint = String(n.label).split("\n")[0].trim().slice(0, 56) || titleHint;
-        }
-      } catch (_) {
-        /* ignore */
-      }
-    }
-    if (!confirm(`Delete topic “${titleHint}”?\n\nThis removes the topic and cannot be undone.`)) return;
-    try {
-      if (graphView.expandedId === tid) {
-        collapseGraphExpand({ restorePositions: false });
-      }
-      await api(`/api/ui/topics/${encodeURIComponent(tid)}`, { method: "DELETE" });
-      setStatus("Deleted topic");
-      await refreshGraph();
-      updateGraphDeleteTopicButton();
-    } catch (e) {
-      setStatus(String(e.message), true);
-    }
+    await deleteGraphTopic(tid);
   });
 }
 
@@ -814,6 +1334,7 @@ function renderGraph(apiData) {
   graphView.nodeTooltipPayload = null;
   hideGraphTooltip();
   hideTopicWizard();
+  hideGraphNodeMenu();
 
   const { nodes: nodeIn, links: linkIn } = buildGraphData(apiData);
   graphView.nodeTooltipPayload = new Map();
@@ -872,6 +1393,7 @@ function renderGraph(apiData) {
   });
 
   net.on("click", (params) => {
+    hideGraphNodeMenu();
     if (!params.nodes.length) return;
     const id = params.nodes[0];
     if (graphView.expandedId === id) {
@@ -879,6 +1401,29 @@ function renderGraph(apiData) {
       return;
     }
     expandGraphNode(id);
+  });
+
+  net.on("oncontext", (params) => {
+    const ev = params.event;
+    if (ev && typeof ev.preventDefault === "function") ev.preventDefault();
+    hideGraphTooltip();
+    /** Right-click does not populate `nodes` by default — resolve via pointer (vis docs). */
+    let id =
+      params.nodes && params.nodes.length
+        ? params.nodes[0]
+        : params.pointer && params.pointer.DOM && typeof net.getNodeAt === "function"
+          ? net.getNodeAt(params.pointer.DOM)
+          : null;
+    if (id != null && id !== "") {
+      id = String(id);
+      net.selectNodes([id]);
+      updateGraphDeleteTopicButton();
+      const cx = ev && typeof ev.clientX === "number" ? ev.clientX : 0;
+      const cy = ev && typeof ev.clientY === "number" ? ev.clientY : 0;
+      showGraphNodeMenu(cx, cy, id);
+    } else {
+      hideGraphNodeMenu();
+    }
   });
 
   net.on("doubleClick", (params) => {
@@ -928,6 +1473,364 @@ const LS_LLM_PROVIDER = "memstate_llm_provider";
 const LS_MODEL_OLLAMA = "memstate_llm_model_ollama";
 const LS_MODEL_GROQ = "memstate_llm_model_groq";
 const LS_CHAT_INTENT_TURNS = "memstate_chat_intent_turns";
+const LS_CHAT_SOUND = "memstate_chat_sound";
+const LS_CHAT_VOICE = "memstate_chat_voice";
+/** Silence this long after last speech chunk → stop dictation and send (if any text). */
+const CHAT_VOICE_PAUSE_MS = 5000;
+
+let uiAudioCtx = null;
+
+let chatRequestInFlight = false;
+let chatVoiceListening = false;
+let chatVoiceUserAborted = false;
+let chatRecognition = null;
+
+function voiceChatEnabled() {
+  const el = document.getElementById("chat-voice-enabled");
+  if (el && el instanceof HTMLInputElement) return el.checked;
+  return localStorage.getItem(LS_CHAT_VOICE) === "1";
+}
+
+function getSpeechRecognitionCtor() {
+  return window.SpeechRecognition || window.webkitSpeechRecognition || null;
+}
+
+/**
+ * Strip markdown-ish syntax so TTS reads naturally.
+ * @param {string} md
+ */
+function markdownToSpeakablePlain(md) {
+  let s = String(md ?? "");
+  s = s.replace(/```[\s\S]*?```/g, (block) => {
+    const inner = block.replace(/^```\w*\n?/, "").replace(/```$/, "").trim();
+    if (!inner) return " ";
+    return inner.length > 220 ? ` Code snippet: ${inner.slice(0, 220)}… ` : ` ${inner} `;
+  });
+  s = s.replace(/`([^`]+)`/g, "$1");
+  s = s.replace(/!?\[([^\]]*)\]\([^)]+\)/g, "$1");
+  s = s.replace(/^\s{0,3}[-*+]\s+/gm, " ");
+  s = s.replace(/^\s{0,3}\d+\.\s+/gm, " ");
+  s = s.replace(/<[^>]+>/g, " ");
+  s = s.replace(/[#>*_~|]+/g, "");
+  s = s.replace(/\s+/g, " ").trim();
+  return s;
+}
+
+function stopChatSpeech() {
+  if (window.speechSynthesis) window.speechSynthesis.cancel();
+  updateChatVoiceChrome();
+}
+
+function updateChatVoiceChrome() {
+  const stopBtn = document.getElementById("btn-chat-stop-speech");
+  if (!stopBtn) return;
+  const speaking = Boolean(window.speechSynthesis && window.speechSynthesis.speaking);
+  stopBtn.hidden = !speaking;
+  stopBtn.disabled = !speaking;
+}
+
+/**
+ * Read assistant (or error) text aloud when Voice chat is on.
+ * @param {string} rawText
+ */
+function speakChatReply(rawText) {
+  if (!voiceChatEnabled()) return;
+  const synth = window.speechSynthesis;
+  if (!synth) return;
+  stopChatSpeech();
+  const plain = markdownToSpeakablePlain(rawText);
+  if (!plain || plain.length < 2) return;
+  const max = 32000;
+  const toSpeak =
+    plain.length > max
+      ? `${plain.slice(0, max)}. Stopping here; the reply was long.`
+      : plain;
+  const u = new SpeechSynthesisUtterance(toSpeak);
+  u.rate = 1;
+  u.pitch = 1;
+  u.lang = document.documentElement.lang || navigator.language || "en-US";
+  u.onend = () => updateChatVoiceChrome();
+  u.onerror = () => updateChatVoiceChrome();
+  synth.speak(u);
+  updateChatVoiceChrome();
+}
+
+function syncChatInputChrome() {
+  const sendBtn = document.getElementById("btn-chat-send");
+  const mic = document.getElementById("btn-chat-voice");
+  const Ctor = getSpeechRecognitionCtor();
+  if (sendBtn) sendBtn.disabled = chatRequestInFlight || chatVoiceListening;
+  if (mic) mic.disabled = !Ctor || chatRequestInFlight;
+}
+
+function setChatVoiceListening(on) {
+  chatVoiceListening = !!on;
+  const mic = document.getElementById("btn-chat-voice");
+  if (mic) {
+    mic.classList.toggle("chat-voice-mic--listening", chatVoiceListening);
+    mic.setAttribute("aria-pressed", String(chatVoiceListening));
+  }
+  syncChatInputChrome();
+}
+
+function refreshChatVoiceMicHint() {
+  const mic = document.getElementById("btn-chat-voice");
+  const Ctor = getSpeechRecognitionCtor();
+  if (!mic) return;
+  mic.title = !Ctor
+    ? "Voice input needs Chrome, Edge, or Safari."
+    : `Dictation: words appear as you speak. Pause ${CHAT_VOICE_PAUSE_MS / 1000} seconds to send. Click again to cancel.`;
+}
+
+/**
+ * @param {HTMLTextAreaElement} input
+ */
+function wireChatVoiceControls(input) {
+  const mic = document.getElementById("btn-chat-voice");
+  const stopSpeech = document.getElementById("btn-chat-stop-speech");
+  const Ctor = getSpeechRecognitionCtor();
+  if (mic) mic.disabled = !Ctor;
+  refreshChatVoiceMicHint();
+
+  let voicePauseTimer = null;
+  let voiceSentFromPause = false;
+  /** Text committed before the current recognition segment (survives stop/restart between phrases). */
+  let voicePrefix = "";
+  /** Final transcript for the current recognition segment only (from last onresult). */
+  let lastSessionFinals = "";
+  /** Count onend→restart cycles without an onresult (avoids tight loops on no-speech). */
+  let voiceStaleRestarts = 0;
+
+  function clearVoicePauseTimer() {
+    if (voicePauseTimer != null) {
+      clearTimeout(voicePauseTimer);
+      voicePauseTimer = null;
+    }
+  }
+
+  function scheduleVoicePauseTimer() {
+    clearVoicePauseTimer();
+    voicePauseTimer = setTimeout(handleVoicePauseElapsed, CHAT_VOICE_PAUSE_MS);
+  }
+
+  function handleVoicePauseElapsed() {
+    voicePauseTimer = null;
+    if (chatVoiceUserAborted || !chatVoiceListening) return;
+    const toSend = input.value.trim();
+    if (!toSend) {
+      try {
+        chatRecognition?.stop();
+      } catch {
+        /* ignore */
+      }
+      setChatVoiceListening(false);
+      return;
+    }
+    voiceSentFromPause = true;
+    clearVoicePauseTimer();
+    try {
+      chatRecognition?.stop();
+    } catch {
+      /* ignore */
+    }
+    setChatVoiceListening(false);
+    voicePrefix = "";
+    lastSessionFinals = "";
+    voiceStaleRestarts = 0;
+    const msg = toSend;
+    input.value = "";
+    void runChatTurn(msg);
+  }
+
+  stopSpeech?.addEventListener("click", () => {
+    stopChatSpeech();
+  });
+
+  mic?.addEventListener("click", () => {
+    void (async () => {
+      if (!Ctor || mic.disabled) return;
+      if (chatVoiceListening) {
+        chatVoiceUserAborted = true;
+        clearVoicePauseTimer();
+        try {
+          chatRecognition?.abort();
+        } catch {
+          /* ignore */
+        }
+        voicePrefix = "";
+        lastSessionFinals = "";
+        voiceStaleRestarts = 0;
+        setChatVoiceListening(false);
+        return;
+      }
+      if (!window.isSecureContext) {
+        toast("Voice input needs HTTPS or http://localhost.", "error");
+        return;
+      }
+      stopChatSpeech();
+      clearVoicePauseTimer();
+      voicePrefix = "";
+      lastSessionFinals = "";
+      voiceStaleRestarts = 0;
+      input.value = "";
+      chatVoiceUserAborted = false;
+      voiceSentFromPause = false;
+      try {
+        if (navigator.mediaDevices?.getUserMedia) {
+          const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          stream.getTracks().forEach((t) => t.stop());
+        }
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        toast(`Microphone: ${msg || "permission denied"}`, "error");
+        return;
+      }
+      try {
+        if (!chatRecognition) {
+          chatRecognition = new Ctor();
+          chatRecognition.lang = document.documentElement.lang || navigator.language || "en-US";
+          chatRecognition.interimResults = true;
+          chatRecognition.continuous = false;
+          chatRecognition.maxAlternatives = 1;
+          chatRecognition.onresult = (event) => {
+            voiceStaleRestarts = 0;
+            let sessionFinals = "";
+            let sessionInterim = "";
+            for (let i = 0; i < event.results.length; i++) {
+              const r = event.results[i];
+              const alt = r[0];
+              const t = alt && typeof alt.transcript === "string" ? alt.transcript : "";
+              if (r.isFinal) sessionFinals += t;
+              else sessionInterim += t;
+            }
+            lastSessionFinals = sessionFinals;
+            input.value = (voicePrefix + sessionFinals + sessionInterim).trim();
+            scheduleVoicePauseTimer();
+          };
+          chatRecognition.onerror = (ev) => {
+            if (ev.error === "aborted") return;
+            clearVoicePauseTimer();
+            const err = ev.error || "unknown";
+            if (err === "not-allowed" || err === "service-not-allowed") {
+              toast("Microphone blocked for this site — check browser permissions.", "error");
+              setChatVoiceListening(false);
+              return;
+            }
+            if (err === "no-speech") {
+              return;
+            }
+            toast(`Voice: ${err}`, "error");
+            setChatVoiceListening(false);
+          };
+          chatRecognition.onend = () => {
+            clearVoicePauseTimer();
+            if (voiceSentFromPause) {
+              voiceSentFromPause = false;
+              chatVoiceUserAborted = false;
+              setChatVoiceListening(false);
+              return;
+            }
+            if (chatVoiceUserAborted) {
+              chatVoiceUserAborted = false;
+              setChatVoiceListening(false);
+              return;
+            }
+            if (chatVoiceListening) {
+              voicePrefix += lastSessionFinals;
+              lastSessionFinals = "";
+              input.value = voicePrefix.trim();
+              voiceStaleRestarts += 1;
+              if (voiceStaleRestarts > 6) {
+                setChatVoiceListening(false);
+                toast("Voice: no speech captured — check the mic and try again.", "error");
+                return;
+              }
+              try {
+                chatRecognition.start();
+                scheduleVoicePauseTimer();
+              } catch (e) {
+                setChatVoiceListening(false);
+                const msg = e instanceof Error ? e.message : String(e);
+                if (!msg.includes("already started")) {
+                  toast(msg || "Voice session ended", "error");
+                }
+              }
+            }
+          };
+        }
+        chatRecognition.start();
+        setChatVoiceListening(true);
+        scheduleVoicePauseTimer();
+      } catch (e) {
+        clearVoicePauseTimer();
+        setChatVoiceListening(false);
+        toast(e instanceof Error ? e.message : "Could not start voice input", "error");
+      }
+    })();
+  });
+}
+
+function chatSoundEnabled() {
+  const el = document.getElementById("chat-sound-enabled");
+  if (el && el instanceof HTMLInputElement) return el.checked;
+  return localStorage.getItem(LS_CHAT_SOUND) !== "0";
+}
+
+function ensureUiAudioContext() {
+  if (uiAudioCtx) return uiAudioCtx;
+  const Ctx = window.AudioContext || window.webkitAudioContext;
+  if (!Ctx) return null;
+  uiAudioCtx = new Ctx();
+  return uiAudioCtx;
+}
+
+/**
+ * @param {"user" | "assistant" | "error"} kind
+ */
+function playChatSound(kind) {
+  if (!chatSoundEnabled()) return;
+  const ctx = ensureUiAudioContext();
+  if (!ctx) return;
+  void ctx.resume().catch(() => {});
+  const now = ctx.currentTime;
+  const master = ctx.createGain();
+  master.connect(ctx.destination);
+  const peak = kind === "error" ? 0.09 : 0.065;
+  master.gain.setValueAtTime(0.0001, now);
+  master.gain.exponentialRampToValueAtTime(peak, now + 0.012);
+  const fadeEnd =
+    kind === "assistant" ? now + 0.26 : kind === "error" ? now + 0.2 : now + 0.085;
+  master.gain.exponentialRampToValueAtTime(0.0001, fadeEnd);
+
+  if (kind === "user") {
+    const o = ctx.createOscillator();
+    o.type = "sine";
+    o.frequency.setValueAtTime(620, now);
+    o.connect(master);
+    o.start(now);
+    o.stop(now + 0.06);
+  } else if (kind === "assistant") {
+    const freqs = [523.25, 659.25];
+    freqs.forEach((freq, i) => {
+      const o = ctx.createOscillator();
+      o.type = "sine";
+      const t = now + i * 0.08;
+      o.frequency.setValueAtTime(freq, t);
+      o.connect(master);
+      o.start(t);
+      o.stop(t + 0.11);
+    });
+  } else if (kind === "error") {
+    const o = ctx.createOscillator();
+    o.type = "triangle";
+    o.frequency.setValueAtTime(220, now);
+    o.frequency.exponentialRampToValueAtTime(105, now + 0.14);
+    o.connect(master);
+    o.start(now);
+    o.stop(now + 0.16);
+  }
+}
+
 /** Groq edge timeouts are common above ~tens of k chars—warn before send (single-shot only). */
 const GROQ_LONG_MESSAGE_WARN_CHARS = 28000;
 /** Above this character count, long ingest uses server-side Study (hierarchy + two phases). */
@@ -996,10 +1899,44 @@ function truncateChatPreview(text, max) {
 /**
  * @param {HTMLDivElement} wrapper
  * @param {string} fullText
+ * @param {{ markdown?: boolean }} [opts]
  */
-function fillCollapsibleChatBody(wrapper, fullText) {
+function fillCollapsibleChatBody(wrapper, fullText, opts) {
+  const markdown = opts?.markdown === true;
   const t = String(fullText ?? "");
-  wrapper.className = "chat-body";
+  wrapper.className = "chat-body" + (markdown ? " chat-body--markdown" : "");
+
+  if (markdown) {
+    wrapper.replaceChildren();
+    const mdHtml = renderChatMarkdown(t);
+    const inner = document.createElement("div");
+    inner.className = "chat-body-md";
+    if (mdHtml) {
+      inner.innerHTML = mdHtml;
+    } else {
+      inner.classList.add("chat-body-md-fallback");
+      inner.textContent = t;
+    }
+    if (t.length > CHAT_BODY_PREVIEW_MAX) {
+      inner.classList.add("chat-body-md--clamped");
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "chat-body-expand";
+      btn.textContent = "Show more";
+      btn.setAttribute("aria-expanded", "false");
+      btn.addEventListener("click", () => {
+        const expanded = inner.classList.toggle("chat-body-md--expanded");
+        btn.setAttribute("aria-expanded", String(expanded));
+        btn.textContent = expanded ? "Show less" : "Show more";
+      });
+      wrapper.appendChild(inner);
+      wrapper.appendChild(btn);
+    } else {
+      wrapper.appendChild(inner);
+    }
+    return;
+  }
+
   if (t.length <= CHAT_BODY_PREVIEW_MAX) {
     wrapper.textContent = t;
     return;
@@ -1095,7 +2032,7 @@ function appendAssistantMessage(text, meta) {
   roleEl.textContent = "Assistant";
 
   const body = document.createElement("div");
-  fillCollapsibleChatBody(body, text || "(no reply)");
+  fillCollapsibleChatBody(body, text || "(no reply)", { markdown: true });
 
   const toolLog = Array.isArray(meta?.tool_log) ? meta.tool_log : [];
   const hasTools = toolLog.length > 0;
@@ -1216,12 +2153,13 @@ function appendAssistantMessage(text, meta) {
  */
 async function runChatTurn(userText, options = {}) {
   const { intentOverride } = options;
-  const btn = document.getElementById("btn-chat-send");
   const ollamaUrl = document.getElementById("ollama-url");
   const prov = document.getElementById("llm-provider");
   const modelSel = document.getElementById("llm-model");
   const text = String(userText || "").trim();
   if (!text) return;
+
+  stopChatSpeech();
 
   const provider = prov?.value || "ollama";
   const useInternalChunk = text.length > CHAT_CHUNK_THRESHOLD;
@@ -1237,10 +2175,12 @@ async function runChatTurn(userText, options = {}) {
     );
   }
 
-  if (btn) btn.disabled = true;
+  chatRequestInFlight = true;
+  syncChatInputChrome();
   if (useInternalChunk) showStudyProgressInline();
   try {
     appendChatMessage("user", text);
+    playChatSound("user");
     chatHistory.push({ role: "user", content: text });
 
     const messagesForApi = chatHistory
@@ -1292,15 +2232,21 @@ async function runChatTurn(userText, options = {}) {
       study_ingest: data.study_ingest,
       study_phases: data.study_phases,
     });
+    if (voiceChatEnabled()) speakChatReply(replyText);
+    else playChatSound("assistant");
     if (data.tool_log && data.tool_log.length) {
       await refreshGraph();
     }
   } catch (err) {
-    appendChatMessage("assistant", "Error: " + err.message);
-    toast(err.message, "error");
+    const msg = err instanceof Error ? err.message : String(err);
+    if (voiceChatEnabled()) speakChatReply(`Sorry. ${msg}`);
+    else playChatSound("error");
+    appendChatMessage("assistant", "Error: " + msg);
+    toast(msg, "error");
   } finally {
     hideStudyProgressInline();
-    if (btn) btn.disabled = false;
+    chatRequestInFlight = false;
+    syncChatInputChrome();
   }
 }
 
@@ -1313,6 +2259,7 @@ function buildReorganizeUserMessage(operation, criteriaRaw) {
     consolidation: "consolidation",
     merge_topics: "merge topics",
     split_topics: "split topics",
+    nested_topic: "nested fields (same topic)",
     connect_topics: "connect topics",
     retention_trim: "retention trim (RTC)",
   };
@@ -1325,6 +2272,23 @@ function buildReorganizeUserMessage(operation, criteriaRaw) {
   };
   const label = labels[operation] || operation;
   const tool = toolByOp[operation] || "memory_reorganize_consolidation";
+  if (operation === "nested_topic") {
+    return (
+      `Memory reorganize: ${label}.\n\n` +
+      `Criteria / intent: ${goals}\n\n` +
+      `**Do not ask the user which topic.** Scan the whole graph yourself using tools.\n\n` +
+      `Goal: **Group related fields inside the same topic**—one json bundle (\`nest_key\`), **no** new Topic node, **no** RELATED edge, **no** ref on the bundle. ` +
+      `Write: **memory_nest_fields_in_topic**; undo: **memory_unnest_fields_in_topic**.\n\n` +
+      `Phase A — schema-only sweep (no values): Call **memory_topics_schema_page** in a loop. Start \`offset=0\`, \`limit\` 15–50. ` +
+      `Each response has \`topics\`, \`total\`, \`has_more\`, \`next_offset\`. Repeat with \`offset = next_offset\` until \`has_more\` is false. ` +
+      `From **field names, field_type, ref_topic_id, nested_field_names** only, mark topics that look overloaded with many related flat attributes (same subject, many sibling fields). Skip topics with few fields or already-clean structure.\n\n` +
+      `Phase B — confirm, then nest: For **each** flagged \`topic_id\` only, call **memory_get_topic_schema** with detail **current** (or memory_get_topic if needed). ` +
+      `If current values support a sensible group name, call **memory_nest_fields_in_topic** with \`field_names\` and \`nest_key\`. ` +
+      `If uncertain, skip that topic. Summarize counts and examples—do **not** paste long UUID lists unless asked.\n\n` +
+      `Rules: Do **not** use memory_promote_fields_to_nested_topic for this (separate Topic + edge). ` +
+      `Do **not** use memory_reorganize_split_topics to “nest”. The UI topic wizard can nest/unnest manually.`
+    );
+  }
   if (operation === "merge_topics") {
     return (
       `Memory reorganize: ${label}.\n\n` +
@@ -1388,6 +2352,25 @@ function wireChat() {
       }
     });
   }
+  const soundEl = document.getElementById("chat-sound-enabled");
+  if (soundEl && soundEl instanceof HTMLInputElement) {
+    const saved = localStorage.getItem(LS_CHAT_SOUND);
+    soundEl.checked = saved === null ? true : saved === "1";
+    soundEl.addEventListener("change", () => {
+      localStorage.setItem(LS_CHAT_SOUND, soundEl.checked ? "1" : "0");
+      if (soundEl.checked) playChatSound("assistant");
+    });
+  }
+  const voiceEl = document.getElementById("chat-voice-enabled");
+  if (voiceEl && voiceEl instanceof HTMLInputElement) {
+    voiceEl.checked = localStorage.getItem(LS_CHAT_VOICE) === "1";
+    voiceEl.addEventListener("change", () => {
+      localStorage.setItem(LS_CHAT_VOICE, voiceEl.checked ? "1" : "0");
+      refreshChatVoiceMicHint();
+    });
+  }
+  wireChatVoiceControls(input);
+  syncChatInputChrome();
   if (prov) {
     prov.value = localStorage.getItem(LS_LLM_PROVIDER) || "ollama";
     fillLlmModelSelect(prov.value);
@@ -1413,6 +2396,7 @@ function wireChat() {
     e.preventDefault();
     const text = input.value.trim();
     if (!text) return;
+    stopChatSpeech();
     input.value = "";
     await runChatTurn(text);
   });
@@ -1424,7 +2408,141 @@ async function loadDetail(topicId) {
   return api(`/api/ui/topics/${encodeURIComponent(topicId)}`);
 }
 
+/**
+ * @param {HTMLElement} body
+ */
+async function handleTopicWizardNestInTopic(body) {
+  const sec = body.querySelector(".topic-wizard-nest-in-topic");
+  const st = body.querySelector("#topic-wizard-nest-status");
+  if (!sec || !st) return;
+  const topicId = sec.getAttribute("data-topic-id");
+  const checks = sec.querySelectorAll('input[name="nest-field"]:checked');
+  const field_names = Array.from(checks)
+    .map((c) => c.value)
+    .filter(Boolean);
+  const nestKeyEl = sec.querySelector("#topic-wizard-nest-key");
+  const nest_key = nestKeyEl && nestKeyEl.value ? nestKeyEl.value.trim() : "";
+  if (!topicId || !field_names.length || !nest_key) {
+    st.hidden = false;
+    st.textContent = "Select at least one field and enter a group field name (e.g. professional_details).";
+    st.classList.add("topic-wizard-promote-status--err");
+    return;
+  }
+  st.hidden = false;
+  st.classList.remove("topic-wizard-promote-status--err");
+  st.textContent = "Working…";
+  try {
+    await api(`/api/ui/topics/${encodeURIComponent(topicId)}/nest-fields`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ field_names, nest_key }),
+    });
+    st.textContent = `Grouped into field “${nest_key}”.`;
+    await refreshGraph();
+    showTopicWizard(await loadDetail(topicId));
+    setStatus("Nested fields on same topic");
+    toast("Fields nested");
+  } catch (err) {
+    st.classList.add("topic-wizard-promote-status--err");
+    st.textContent = String(err.message || err);
+    setStatus(String(err.message || err), true);
+  }
+}
+
+/**
+ * @param {string} topicId
+ * @param {string} nestKey
+ */
+async function handleTopicWizardUnnestBundle(topicId, nestKey) {
+  if (!topicId || !nestKey) return;
+  if (!confirm("Restore nested fields to the top level of this topic?")) return;
+  try {
+    await api(`/api/ui/topics/${encodeURIComponent(topicId)}/unnest-fields`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ nest_key: nestKey }),
+    });
+    await refreshGraph();
+    showTopicWizard(await loadDetail(topicId));
+    setStatus("Restored top-level fields");
+    toast("Unnested");
+  } catch (err) {
+    setStatus(String(err.message || err), true);
+    toast(String(err.message || err), "error");
+  }
+}
+
+/**
+ * @param {string} parentId
+ * @param {string} childId
+ * @param {string} [relationshipKind]
+ */
+async function handleTopicWizardUndoNested(parentId, childId, relationshipKind) {
+  if (!parentId || !childId) return;
+  if (
+    !confirm(
+      "Merge this nested topic back into the parent and delete the child topic?\n\nOther links to the child will be removed."
+    )
+  ) {
+    return;
+  }
+  const payload = { child_topic_id: childId };
+  if (relationshipKind && String(relationshipKind).trim()) {
+    payload.relationship_kind = String(relationshipKind).trim();
+  }
+  try {
+    await api(`/api/ui/topics/${encodeURIComponent(parentId)}/undo-nested`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    await refreshGraph();
+    const parentTopic = await loadDetail(parentId);
+    showTopicWizard(parentTopic);
+    setStatus("Merged nested topic into parent");
+    toast("Undo nesting complete");
+  } catch (err) {
+    setStatus(String(err.message || err), true);
+    toast(String(err.message || err), "error");
+  }
+}
+
 function wireTopicWizard() {
+  const body = document.getElementById("topic-wizard-body");
+  if (body && !body.dataset.refLinksDelegated) {
+    body.dataset.refLinksDelegated = "1";
+    body.addEventListener("click", (e) => {
+      const undoBtn = e.target.closest(".btn-topic-wizard-undo-nested");
+      if (undoBtn && body.contains(undoBtn)) {
+        e.preventDefault();
+        const p = undoBtn.getAttribute("data-undo-parent");
+        const c = undoBtn.getAttribute("data-undo-child");
+        const k = undoBtn.getAttribute("data-undo-kind") || "";
+        if (p && c) void handleTopicWizardUndoNested(p, c, k);
+        return;
+      }
+      const unnestBundleBtn = e.target.closest(".btn-topic-wizard-unnest");
+      if (unnestBundleBtn && body.contains(unnestBundleBtn)) {
+        e.preventDefault();
+        const tid = unnestBundleBtn.getAttribute("data-unnest-topic");
+        const nk = unnestBundleBtn.getAttribute("data-unnest-key");
+        if (tid && nk) void handleTopicWizardUnnestBundle(tid, nk);
+        return;
+      }
+      const nestBtn = e.target.closest(".btn-topic-wizard-nest");
+      if (nestBtn && body.contains(nestBtn)) {
+        e.preventDefault();
+        void handleTopicWizardNestInTopic(body);
+        return;
+      }
+      const btn = e.target.closest(".topic-wizard-ref-link");
+      if (!btn || !body.contains(btn)) return;
+      e.preventDefault();
+      const tid = btn.getAttribute("data-topic-id");
+      if (tid) void expandGraphNode(tid);
+    });
+  }
+
   const backdrop = document.getElementById("topic-wizard-backdrop");
   const closeBtn = document.getElementById("btn-topic-wizard-close");
   const copyBtn = document.getElementById("btn-topic-wizard-copy");
@@ -1446,6 +2564,12 @@ function wireTopicWizard() {
   }
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape") return;
+    const menu = document.getElementById("graph-node-menu");
+    if (menu && !menu.hidden) {
+      hideGraphNodeMenu();
+      e.preventDefault();
+      return;
+    }
     const w = document.getElementById("topic-wizard");
     if (!w || w.hidden) return;
     collapseGraphExpand({ restorePositions: true });
@@ -1538,6 +2662,34 @@ function wireForms() {
       setStatus(err.message, true);
     }
   });
+
+  const systemForm = document.getElementById("form-system-context");
+  if (systemForm) {
+    systemForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const fd = new FormData(systemForm);
+      const system_role = String(fd.get("system_role") || "").trim();
+      const runtime_context = String(fd.get("runtime_context") || "").trim();
+      const admin_key = String(fd.get("admin_key") || "").trim();
+      if (!system_role || !runtime_context) {
+        setStatus("Role and runtime context are required", true);
+        return;
+      }
+      const extraHeaders = {};
+      if (admin_key) extraHeaders["X-Admin-Key"] = admin_key;
+      try {
+        await api("/api/ui/system-context", {
+          method: "PUT",
+          headers: extraHeaders,
+          body: JSON.stringify({ system_role, runtime_context }),
+        });
+        setStatus("Saved fixed system context");
+        await refreshSystemContextCard();
+      } catch (err) {
+        setStatus(err.message, true);
+      }
+    });
+  }
 }
 
 /* ── Init ── */
@@ -1556,6 +2708,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   wireChat();
   wireReorganize();
   wireTopicWizard();
+  await refreshSystemContextCard();
   await checkBackendBanner();
   await refreshGraph();
 });

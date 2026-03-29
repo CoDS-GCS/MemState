@@ -2,15 +2,17 @@
 
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from memstate.api.deps import get_graph_store
 from memstate.api.ui_graph_payload import build_ui_graph_snapshot
+from memstate.config import Settings, get_settings
 from memstate.datamodel.fields import TopicFields, new_history_entry
 from memstate.store.graph_store import REF_UNCHANGED, GraphStore
 
@@ -43,6 +45,55 @@ def datamodel_diagram() -> dict[str, str]:
 def graph_snapshot(store: GraphStore = Depends(get_graph_store)) -> dict[str, Any]:
     """Return nodes and edges for visualization (topics, RELATED, field refs, ``community`` ids)."""
     return build_ui_graph_snapshot(store)
+
+
+def _admin_secret(settings: Settings) -> str | None:
+    if settings.admin_key and settings.admin_key.strip():
+        return settings.admin_key.strip()
+    if settings.api_key and settings.api_key.strip():
+        return settings.api_key.strip()
+    return None
+
+
+def _is_admin_request(settings: Settings, x_admin_key: str | None) -> bool:
+    expected = _admin_secret(settings)
+    if not expected:
+        return True
+    return bool(x_admin_key and x_admin_key.strip() == expected)
+
+
+class SystemContextBody(BaseModel):
+    system_role: str = Field(..., min_length=1, description="Fixed role for the assistant.")
+    runtime_context: str = Field(..., min_length=1, description="Runtime environment/context guidance.")
+
+
+@router.get("/system-context")
+def get_system_context(store: GraphStore = Depends(get_graph_store)) -> dict[str, Any]:
+    row = store.get_system_config()
+    if not row:
+        return {"configured": False, "system_context": None}
+    return {"configured": True, "system_context": row}
+
+
+@router.put("/system-context")
+def set_system_context(
+    body: SystemContextBody,
+    store: GraphStore = Depends(get_graph_store),
+    settings: Settings = Depends(get_settings),
+    x_admin_key: str | None = Header(default=None, alias="X-Admin-Key"),
+) -> dict[str, Any]:
+    configured = store.system_config_exists()
+    if configured and not _is_admin_request(settings, x_admin_key):
+        raise HTTPException(
+            status_code=403,
+            detail="Only admin can update system context. Send X-Admin-Key.",
+        )
+    row = store.set_system_config(
+        system_role=body.system_role,
+        runtime_context=body.runtime_context,
+        updated_by="ui",
+    )
+    return {"configured": True, "system_context": row}
 
 
 class CreateTopicBody(BaseModel):
@@ -89,6 +140,15 @@ def ui_get_topic(topic_id: str, store: GraphStore = Depends(get_graph_store)) ->
             "ref_topic_id": rec.ref_topic_id,
             "history": [e.model_dump() for e in rec.history],
         }
+    th_raw = row.get("topic_history_json")
+    topic_history: list[Any] = []
+    if isinstance(th_raw, str) and th_raw.strip():
+        try:
+            parsed = json.loads(th_raw)
+            if isinstance(parsed, list):
+                topic_history = parsed
+        except json.JSONDecodeError:
+            topic_history = []
     return {
         "id": row.get("id"),
         "title": row.get("title"),
@@ -98,6 +158,7 @@ def ui_get_topic(topic_id: str, store: GraphStore = Depends(get_graph_store)) ->
         "failed_salience": row.get("failed_salience"),
         "archived": row.get("archived"),
         "fields": out_fields,
+        "topic_history": topic_history,
         "created_at": row.get("created_at"),
         "updated_at": row.get("updated_at"),
     }
@@ -239,3 +300,111 @@ def ui_set_field_ref(
 ) -> dict[str, str]:
     store.set_field_ref(topic_id, field_name, body.ref_topic_id)
     return {"ok": "true"}
+
+
+class PromoteNestedTopicBody(BaseModel):
+    field_names: list[str]
+    child_title: str
+    child_summary: str | None = None
+    child_topic_id: str | None = None
+    relationship_kind: str = "has_detail"
+    parent_link_field: str | None = None
+    max_history: int = Field(default=500, ge=1, le=10_000)
+
+
+@router.post("/topics/{topic_id}/promote-nested")
+def ui_promote_nested_topic(
+    topic_id: str,
+    body: PromoteNestedTopicBody,
+    store: GraphStore = Depends(get_graph_store),
+) -> dict[str, Any]:
+    if not store.topic_exists(topic_id):
+        raise HTTPException(status_code=404, detail="topic not found")
+    try:
+        out = store.promote_fields_to_nested_topic(
+            topic_id,
+            body.field_names,
+            body.child_title.strip(),
+            child_summary=body.child_summary,
+            child_topic_id=body.child_topic_id,
+            topic_kind=None,
+            relationship_kind=body.relationship_kind,
+            parent_link_field=body.parent_link_field,
+            link_field_provenance="ui",
+            max_history=body.max_history,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return {"ok": True, **out}
+
+
+class NestFieldsInTopicBody(BaseModel):
+    field_names: list[str]
+    nest_key: str
+    provenance: str = "ui"
+
+
+@router.post("/topics/{topic_id}/nest-fields")
+def ui_nest_fields_in_topic(
+    topic_id: str,
+    body: NestFieldsInTopicBody,
+    store: GraphStore = Depends(get_graph_store),
+) -> dict[str, Any]:
+    if not store.topic_exists(topic_id):
+        raise HTTPException(status_code=404, detail="topic not found")
+    try:
+        out = store.nest_fields_in_topic(
+            topic_id,
+            body.field_names,
+            body.nest_key.strip(),
+            provenance=body.provenance,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return {"ok": True, **out}
+
+
+class UnnestFieldsBody(BaseModel):
+    nest_key: str
+
+
+@router.post("/topics/{topic_id}/unnest-fields")
+def ui_unnest_fields_in_topic(
+    topic_id: str,
+    body: UnnestFieldsBody,
+    store: GraphStore = Depends(get_graph_store),
+) -> dict[str, Any]:
+    if not store.topic_exists(topic_id):
+        raise HTTPException(status_code=404, detail="topic not found")
+    try:
+        out = store.unnest_fields_in_topic(topic_id, body.nest_key.strip())
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return {"ok": True, **out}
+
+
+class UndoNestedTopicBody(BaseModel):
+    child_topic_id: str
+    relationship_kind: str | None = None
+
+
+@router.post("/topics/{topic_id}/undo-nested")
+def ui_undo_nested_topic(
+    topic_id: str,
+    body: UndoNestedTopicBody,
+    store: GraphStore = Depends(get_graph_store),
+) -> dict[str, Any]:
+    if not store.topic_exists(topic_id):
+        raise HTTPException(status_code=404, detail="topic not found")
+    cid = body.child_topic_id.strip()
+    if not cid:
+        raise HTTPException(status_code=400, detail="child_topic_id required")
+    try:
+        out = store.undo_promote_nested_topic(
+            topic_id,
+            cid,
+            relationship_kind=body.relationship_kind,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return {"ok": True, **out}

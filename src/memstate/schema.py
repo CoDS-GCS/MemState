@@ -5,7 +5,7 @@ failed_salience, DOUBLE[] embedding (+ embedding_json). Topic–topic links use
 `memstate.migrations.migrate_all_legacy_field_chains`.
 """
 
-SCHEMA_VERSION = "3"
+SCHEMA_VERSION = "4"
 
 # DDL is applied in `memstate.store.kuzu_adapter.bootstrap_kuzu_schema`.
 INIT_QUERIES: list[str] = []

@@ -39,6 +39,17 @@ def bootstrap_kuzu_schema(conn: kuzu.Connection) -> None:
         )
         """,
         """
+        CREATE NODE TABLE SystemConfig(
+            key STRING,
+            system_role STRING,
+            runtime_context STRING,
+            created_at STRING,
+            updated_at STRING,
+            updated_by STRING,
+            PRIMARY KEY (key)
+        )
+        """,
+        """
         CREATE NODE TABLE Topic(
             id STRING,
             title STRING,

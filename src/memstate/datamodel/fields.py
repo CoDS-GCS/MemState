@@ -14,6 +14,21 @@ _ALLOWED_TYPES = frozenset(
     ("string", "int", "float", "bool", "date", "datetime", "list", "json")
 )
 
+# JSON field value shape: { MEMSTATE_NESTED_BUNDLE: true, "fields": { name: TopicField-dict, ... } }
+MEMSTATE_NESTED_BUNDLE = "_memstate_nested"
+MEMSTATE_NESTED_FIELDS_KEY = "fields"
+
+
+def is_nested_fields_bundle_value(value: Any) -> bool:
+    return isinstance(value, dict) and value.get(MEMSTATE_NESTED_BUNDLE) is True
+
+
+def nested_bundle_inner_fields(value: Any) -> dict[str, Any]:
+    if not is_nested_fields_bundle_value(value):
+        return {}
+    raw = value.get(MEMSTATE_NESTED_FIELDS_KEY)
+    return raw if isinstance(raw, dict) else {}
+
 
 class FieldHistoryEntry(BaseModel):
     """One value revision; newest-first when stored in `TopicField.history`."""
@@ -26,6 +41,7 @@ class FieldHistoryEntry(BaseModel):
     why_changed: str | None = None
     impact_expected: str | None = None
     provenance: str = "api"
+    operation: str | None = None
 
 
 class TopicField(BaseModel):
@@ -69,6 +85,7 @@ def new_history_entry(
     provenance: str = "api",
     why_changed: str | None = None,
     impact_expected: str | None = None,
+    operation: str | None = None,
 ) -> FieldHistoryEntry:
     return FieldHistoryEntry(
         id=str(uuid.uuid4()),
@@ -77,6 +94,7 @@ def new_history_entry(
         why_changed=why_changed,
         impact_expected=impact_expected,
         provenance=provenance,
+        operation=operation,
     )
 
 

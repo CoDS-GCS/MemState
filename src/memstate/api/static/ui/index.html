@@ -4,12 +4,14 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>MemState — graph &amp; controls</title>
-    <link rel="stylesheet" href="styles.css" />
+    <link rel="stylesheet" href="styles.css?v=memstate-ui-20260337" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
     <script src="https://cdn.jsdelivr.net/npm/vis-network@9.1.9/standalone/umd/vis-network.min.js" crossorigin></script>
-    <script src="app.js" defer></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked@11.1.1/marked.min.js" crossorigin></script>
+    <script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.8/dist/purify.min.js" crossorigin></script>
+    <script src="app.js?v=memstate-ui-20260337" defer></script>
   </head>
   <body>
     <div id="backend-banner" class="backend-banner" hidden role="status"></div>
@@ -113,12 +115,13 @@
             <svg class="chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
           </button>
           <div class="section-body section-reorganize">
-            <p class="reorganize-hint">Runs in the assistant (same tools as MCP). Each action calls a dedicated memory_reorganize_* tool with a topics-schema snapshot—structure only, not values or histories.</p>
+            <p class="reorganize-hint">Runs in the assistant (same tools as MCP). Most buttons call memory_reorganize_* with a topics-schema snapshot (structure only). <strong>Nested topic</strong> uses memory_topics_schema_page to scan <strong>all</strong> topics in pages, then nests with memory_nest_fields_in_topic (same topic, no new node). Undo: memory_unnest_fields_in_topic or the topic wizard.</p>
             <label class="reorganize-criteria-label">Criteria <textarea id="reorganize-criteria" rows="2" placeholder="e.g. smaller graph, faster recall, clearer reasoning chains"></textarea></label>
             <div class="reorganize-grid" role="group" aria-label="Reorganize operations">
               <button type="button" class="btn-reorg" data-reorg-op="consolidation" title="Dedupe fields, tighten summaries, remove redundant edges">Consolidation</button>
               <button type="button" class="btn-reorg" data-reorg-op="merge_topics" title="Combine overlapping topics into one">Merge topics</button>
               <button type="button" class="btn-reorg" data-reorg-op="split_topics" title="Split overloaded topics">Split topics</button>
+              <button type="button" class="btn-reorg" data-reorg-op="nested_topic" title="Fold fields into one json group on the same topic (memory_nest_fields_in_topic); no new node or ref; undo with memory_unnest_fields_in_topic">Nested topic</button>
               <button type="button" class="btn-reorg" data-reorg-op="connect_topics" title="Add RELATED links where missing">Connect topics</button>
               <button type="button" class="btn-reorg" data-reorg-op="retention_trim" title="Archive, trim stale data, adjust salience">RTC (retention trim)</button>
             </div>
@@ -149,11 +152,23 @@
       <main>
         <div class="graph-wrap">
           <div class="graph-toolbar" aria-label="Graph actions">
-            <button type="button" class="btn-graph-delete" id="btn-delete-selected-topic" disabled title="Delete the selected topic node (click a topic first)">
+            <button type="button" class="btn-graph-delete" id="btn-delete-selected-topic" disabled title="Delete the selected topic (or right-click a node → Delete)">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
               Remove topic
             </button>
           </div>
+          <section class="system-context-card" id="system-context-card" aria-label="Fixed system context">
+            <div class="system-context-card-head">
+              <strong>Fixed system context</strong>
+              <span class="system-context-badge" id="system-context-badge">Not configured</span>
+            </div>
+            <form id="form-system-context" class="system-context-form">
+              <label>Role <input name="system_role" type="text" placeholder="e.g. Study assistant for CS students" required /></label>
+              <label>Runtime context <textarea name="runtime_context" rows="3" placeholder="Where this runs, rules, constraints, audience..." required></textarea></label>
+              <label>Admin key <input name="admin_key" type="password" placeholder="Required only for updates" autocomplete="off" /></label>
+              <button type="submit" class="btn-primary">Save fixed context</button>
+            </form>
+          </section>
           <div id="network"></div>
           <div id="graph-tooltip" class="graph-tooltip" hidden role="tooltip" aria-live="polite"></div>
           <div id="graph-node-menu" class="graph-node-menu" hidden role="menu" aria-label="Topic actions"></div>
@@ -168,7 +183,7 @@
           <div class="legend">
             <span><i class="rel"></i> RELATED</span>
             <span><i class="ref"></i> field ref</span>
-            <span class="legend-hint">Wheel zoom · pan · drag · click topic for full details · ring = community</span>
+            <span class="legend-hint">Wheel zoom · pan · drag · click topic for details · right-click for menu (delete) · ring = community</span>
           </div>
         </div>
       </main>
@@ -198,6 +213,20 @@
             <span>Context turns</span>
             <input id="chat-intent-turns" type="number" min="1" max="64" step="1" value="8" aria-label="Dialogue turns for intent" />
           </label>
+          <label
+            class="chat-setting chat-setting-sound"
+            title="Short tones when you send, when a reply arrives, and on chat errors"
+          >
+            <span>Sounds</span>
+            <input id="chat-sound-enabled" type="checkbox" checked aria-label="Play chat sounds" />
+          </label>
+          <label
+            class="chat-setting chat-setting-full chat-setting-sound"
+            title="Read assistant replies aloud (text-to-speech). Mic dictation always types in the box and sends after 5 seconds of silence."
+          >
+            <span>Voice chat</span>
+            <input id="chat-voice-enabled" type="checkbox" aria-label="Voice chat: spoken replies and voice input" />
+          </label>
         </div>
         <div
           id="study-progress-inline"
@@ -221,8 +250,39 @@
         </div>
         <div id="chat-log" class="chat-log"></div>
         <form id="form-chat" class="chat-input-row">
-          <textarea id="chat-input" rows="2" placeholder="Ask to list topics, add relationships, update fields…" autocomplete="off"></textarea>
-          <button type="submit" class="btn-primary chat-send" id="btn-chat-send">Send</button>
+          <textarea id="chat-input" rows="2" placeholder="Type or mic: text appears as you speak; pause 5s to send" autocomplete="off"></textarea>
+          <div class="chat-input-actions">
+            <button
+              type="button"
+              class="btn-icon chat-voice-mic"
+              id="btn-chat-voice"
+              title="Voice input (Chrome, Edge, or Safari)"
+              aria-label="Voice input"
+              aria-pressed="false"
+              disabled
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+                <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+                <line x1="12" y1="19" x2="12" y2="23"/>
+                <line x1="8" y1="23" x2="16" y2="23"/>
+              </svg>
+            </button>
+            <button
+              type="button"
+              class="btn-icon chat-voice-stop"
+              id="btn-chat-stop-speech"
+              title="Stop reading reply"
+              aria-label="Stop speech"
+              hidden
+              disabled
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <rect x="5" y="5" width="14" height="14" rx="2"/>
+              </svg>
+            </button>
+            <button type="submit" class="btn-primary chat-send" id="btn-chat-send">Send</button>
+          </div>
         </form>
       </aside>
     </div>

@@ -174,6 +174,21 @@ def _resolve_base_url(body: ChatBody, settings: Settings) -> str:
         return settings.ollama_base_url.rstrip("/")
 
 
+def _build_system_context_prompt_block(store: GraphStore) -> str:
+    row = store.get_system_config()
+    if not row:
+        return ""
+    role = str(row.get("system_role") or "").strip()
+    ctx = str(row.get("runtime_context") or "").strip()
+    if not role and not ctx:
+        return ""
+    return (
+        "Fixed system role/context (always apply this guidance):\n"
+        f"- Role: {role or '(not set)'}\n"
+        f"- Runtime context: {ctx or '(not set)'}"
+    )
+
+
 IntentSource = Literal["classifier", "override"]
 
 
@@ -257,6 +272,9 @@ async def _chat_study_ingest(
     seg_rounds = max(base_tool_rounds, settings.chat_chunk_per_segment_tool_rounds)
     tools_a = tools_for_study_phase_a()
     sys_a = build_study_phase_a_system_prompt(route)
+    fixed_block = _build_system_context_prompt_block(store)
+    if fixed_block:
+        sys_a = f"{sys_a}\n\n{fixed_block}"
     runner_a = MemoryToolRunner(
         store,
         chat_route=route,
@@ -304,6 +322,9 @@ async def _chat_study_ingest(
     )
     tools_b = tools_for_intent_route(route)
     sys_b = build_study_phase_b_system_prompt(route)
+    fixed_block = _build_system_context_prompt_block(store)
+    if fixed_block:
+        sys_b = f"{sys_b}\n\n{fixed_block}"
     if body.provider == "groq":
         reply_b, log_b, used_b = await run_groq_chat(
             api_key=groq_key,
@@ -454,6 +475,9 @@ async def llm_chat(body: ChatBody, store: GraphStore = Depends(get_graph_store))
             )
             tool_defs = tools_for_intent_route(route)
             sys_prompt = build_chat_system_prompt(route)
+            fixed_block = _build_system_context_prompt_block(store)
+            if fixed_block:
+                sys_prompt = f"{sys_prompt}\n\n{fixed_block}"
             reply, tool_log, used = await run_groq_chat(
                 api_key=groq_key,
                 model=model,
@@ -491,6 +515,9 @@ async def llm_chat(body: ChatBody, store: GraphStore = Depends(get_graph_store))
         )
         tool_defs = tools_for_intent_route(route)
         sys_prompt = build_chat_system_prompt(route)
+        fixed_block = _build_system_context_prompt_block(store)
+        if fixed_block:
+            sys_prompt = f"{sys_prompt}\n\n{fixed_block}"
         reply, tool_log, used = await run_ollama_chat(
             base_url=ollama_base,
             model=model,

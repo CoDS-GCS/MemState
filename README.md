@@ -6,6 +6,8 @@ Topic graph memory with an embedded **Kuzu** database, FastAPI ingest/query, and
 
 Each **Topic** node stores scalar metadata (title, summary, salience, `topic_kind`, embeddings, etc.) and a JSON blob **`fields_json`** for typed fields with optional per-field history and **`ref_topic_id`** (field-level reference to another topic).
 
+**Topic vs entity:** a topic is the **unit of storage** (one self-contained record on the graph). Informal **entities** (things you mean) often live **inside** a topic as field values while they stay small and lightly shared. When an entity grows complex, is tied to **many** topics, or needs its own revision story, **split** it into a **separate topic** and link with `RELATED` and/or `ref_topic_id`. See `docs-site/data-model/overview.html`.
+
 **Topic–topic** links use a **`RELATED`** edge with a **`kind`** string (e.g. `associated_with`). **Field references** to another topic are modeled in the UI graph as edges from a topic to the referenced topic when `ref_topic_id` is set on a field.
 
 The diagram below matches the high-level shape of the model (same Mermaid source as `GET /api/ui/datamodel`):

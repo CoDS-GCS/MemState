@@ -41,6 +41,17 @@ app.add_middleware(
 )
 
 
+@app.middleware("http")
+async def _ui_static_no_cache(request: Request, call_next):
+    """Dev UI: avoid stale app.js / styles.css after updates (browser disk cache)."""
+    response = await call_next(request)
+    path = request.url.path
+    if path == "/ui" or path.startswith("/ui/"):
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+    return response
+
+
 def _auth_dep(
     request: Request,
     x_api_key: str | None = Header(default=None, alias="X-API-Key"),

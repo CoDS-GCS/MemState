@@ -14,7 +14,7 @@ from memstate.llm.groq_rate_limit import (
     groq_rate_limit_sleep_seconds,
     groq_response_is_rate_limited,
 )
-from memstate.llm.tools_schema import OLLAMA_TOOLS, SYSTEM_PROMPT
+from memstate.llm.tools_schema import DEFAULT_LLM_SYSTEM_PROMPT_FALLBACK, OLLAMA_TOOLS
 from memstate.llm.tool_runner import MemoryToolRunner
 
 GROQ_CHAT_URL = "https://api.groq.com/openai/v1/chat/completions"
@@ -119,12 +119,13 @@ async def run_groq_chat(
 ) -> tuple[str, list[dict[str, Any]], str]:
     """
     Groq chat/completions with tools; execute tool calls until the model returns text.
+    If system_prompt is None, uses DEFAULT_LLM_SYSTEM_PROMPT_FALLBACK (base system text plus topic-vs-entity).
     """
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
-    sys = system_prompt if system_prompt is not None else SYSTEM_PROMPT
+    sys = system_prompt if system_prompt is not None else DEFAULT_LLM_SYSTEM_PROMPT_FALLBACK
     tool_defs = tools if tools is not None else MEMORY_TOOLS
     full: list[dict[str, Any]] = [{"role": "system", "content": sys}, *messages]
     tool_log: list[dict[str, Any]] = []

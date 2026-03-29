@@ -10,9 +10,13 @@ import numpy as np
 from memstate.config import Settings, get_settings
 from memstate.store.kuzu_adapter import KuzuGraph, get_kuzu_graph
 from memstate.datamodel.fields import (
+    MEMSTATE_NESTED_BUNDLE,
+    MEMSTATE_NESTED_FIELDS_KEY,
     FieldHistoryEntry,
     TopicField,
     TopicFields,
+    is_nested_fields_bundle_value,
+    nested_bundle_inner_fields,
     new_history_entry,
 )
 from memstate.schema import init_graph
@@ -65,6 +69,69 @@ class GraphStore:
 
     def init_schema(self) -> None:
         init_graph(self._g)
+
+    def get_system_config(self) -> dict[str, Any] | None:
+        r = self._q(
+            """
+            MATCH (s:SystemConfig {key: $key})
+            RETURN s.key AS key,
+                   s.system_role AS system_role,
+                   s.runtime_context AS runtime_context,
+                   s.created_at AS created_at,
+                   s.updated_at AS updated_at,
+                   s.updated_by AS updated_by
+            """,
+            {"key": "global"},
+            read_only=True,
+        )
+        return _row1(r)
+
+    def system_config_exists(self) -> bool:
+        r = self._q(
+            "MATCH (s:SystemConfig {key: $key}) RETURN count(s) AS c",
+            {"key": "global"},
+            read_only=True,
+        )
+        row = _row1(r)
+        return bool(row and row.get("c", 0) >= 1)
+
+    def set_system_config(
+        self,
+        *,
+        system_role: str,
+        runtime_context: str,
+        updated_by: str | None = None,
+    ) -> dict[str, Any]:
+        now = _now_iso()
+        role = str(system_role or "").strip()
+        ctx = str(runtime_context or "").strip()
+        actor = str(updated_by or "").strip()
+        self._q(
+            """
+            MERGE (s:SystemConfig {key: $key})
+            ON CREATE SET s.created_at = $now
+            SET s.system_role = $system_role,
+                s.runtime_context = $runtime_context,
+                s.updated_at = $now,
+                s.updated_by = $updated_by
+            """,
+            {
+                "key": "global",
+                "now": now,
+                "system_role": role,
+                "runtime_context": ctx,
+                "updated_by": actor,
+            },
+        )
+        out = self.get_system_config()
+        return out or {
+            "key": "global",
+            "system_role": role,
+            "runtime_context": ctx,
+            "created_at": now,
+            "updated_at": now,
+            "updated_by": actor,
+        }
 
     def _q(self, cypher: str, params: dict[str, Any] | None = None, *, read_only: bool = False):
         if read_only:
@@ -467,6 +534,364 @@ class GraphStore:
             del tf.fields[field_name]
             self._set_topic_fields(topic_id, tf)
             self.sync_topic_salience_from_fields(topic_id)
+
+    def promote_fields_to_nested_topic(
+        self,
+        parent_topic_id: str,
+        field_names: list[str],
+        child_title: str,
+        *,
+        child_summary: str | None = None,
+        child_topic_id: str | None = None,
+        topic_kind: str | None = None,
+        relationship_kind: str = "has_detail",
+        parent_link_field: str | None = None,
+        link_field_provenance: str = "api",
+        max_history: int = 500,
+    ) -> dict[str, Any]:
+        """
+        Move selected fields from parent into a new topic, link parent -> child with RELATED ``relationship_kind``,
+        and optionally append ``parent_link_field`` on the parent pointing at the child (ref_topic_id).
+        """
+        if not self.topic_exists(parent_topic_id):
+            raise ValueError(f"parent topic not found: {parent_topic_id}")
+        title = (child_title or "").strip()
+        if not title:
+            raise ValueError("child_title required")
+        rk = (relationship_kind or "").strip()
+        if not rk:
+            raise ValueError("relationship_kind required")
+        seen: set[str] = set()
+        names: list[str] = []
+        for raw in field_names:
+            n = str(raw or "").strip()
+            if not n or n in seen:
+                continue
+            seen.add(n)
+            names.append(n)
+        if not names:
+            raise ValueError("field_names must name at least one field on the parent")
+        plf = (parent_link_field or "").strip() or None
+        if plf and plf in names:
+            raise ValueError("parent_link_field must not be one of the moved field names")
+        row = self.get_topic(parent_topic_id)
+        if not row:
+            raise ValueError(f"parent topic not found: {parent_topic_id}")
+        parent_tf = self._get_topic_fields(parent_topic_id)
+        for n in names:
+            if n not in parent_tf.fields:
+                raise ValueError(f"field not on parent topic: {n}")
+        cid = (child_topic_id or "").strip() or str(uuid.uuid4())
+        if self.topic_exists(cid):
+            raise ValueError(f"topic_id already exists: {cid}")
+        tk = topic_kind
+        if tk is None or str(tk).strip() == "":
+            tk = str(row.get("topic_kind") or "") or None
+        child_fields = TopicFields(
+            fields={
+                n: TopicField.model_validate(parent_tf.fields[n].model_dump())
+                for n in names
+            }
+        )
+        sal = float(row.get("salience") or 1.0)
+        self.create_topic(
+            cid,
+            title=title,
+            summary=child_summary,
+            salience=sal,
+            archived=False,
+            embedding=None,
+            topic_kind=tk,
+            initial_fields=child_fields,
+        )
+        self.add_related_edge(parent_topic_id, cid, rk)
+        ts = _now_iso()
+        self.append_topic_history(
+            parent_topic_id,
+            {
+                "ts": ts,
+                "kind": "nested_topic_promoted",
+                "detail": {
+                    "child_topic_id": cid,
+                    "moved_fields": names,
+                    "relationship_kind": rk,
+                },
+            },
+        )
+        self.append_topic_history(
+            cid,
+            {
+                "ts": ts,
+                "kind": "nested_topic_from_parent",
+                "detail": {
+                    "parent_topic_id": parent_topic_id,
+                    "fields": names,
+                    "relationship_kind": rk,
+                },
+            },
+        )
+        for n in names:
+            self.delete_field(parent_topic_id, n)
+        if plf:
+            link_entry = new_history_entry(
+                value=title,
+                valid_from=ts,
+                provenance=link_field_provenance,
+                why_changed=f"promoted fields to nested topic {cid}",
+                operation="nested_topic_link",
+            )
+            self.append_field_history(
+                parent_topic_id,
+                plf,
+                link_entry,
+                field_type="string",
+                ref_topic_id=cid,
+                max_history=max_history,
+                create_if_missing=True,
+            )
+        return {
+            "child_topic_id": cid,
+            "moved_fields": names,
+            "relationship_kind": rk,
+            "parent_link_field": plf,
+        }
+
+    def undo_promote_nested_topic(
+        self,
+        parent_topic_id: str,
+        child_topic_id: str,
+        *,
+        relationship_kind: str | None = None,
+    ) -> dict[str, Any]:
+        """
+        Reverse promote_fields_to_nested_topic: merge the child's fields back onto the parent, remove parent→child
+        RELATED (and any parent fields whose ref_topic_id points at the child), then delete the child topic.
+        """
+        if not self.topic_exists(parent_topic_id):
+            raise ValueError(f"parent topic not found: {parent_topic_id}")
+        if not self.topic_exists(child_topic_id):
+            raise ValueError(f"child topic not found: {child_topic_id}")
+        outs = [
+            r
+            for r in self.list_relationships(parent_topic_id, direction="out")
+            if str(r.get("id") or "") == child_topic_id
+        ]
+        if not outs:
+            raise ValueError("no RELATED edge from parent to child topic")
+        if relationship_kind:
+            rk = str(relationship_kind).strip()
+            if not any(str(x.get("kind") or "") == rk for x in outs):
+                raise ValueError(f"no RELATED edge with kind {rk!r} from parent to child")
+            edge_kind = rk
+        elif len(outs) == 1:
+            edge_kind = str(outs[0].get("kind") or "")
+        else:
+            kinds = sorted({str(x.get("kind") or "") for x in outs})
+            raise ValueError(
+                "multiple RELATED edges from parent to child; pass relationship_kind "
+                f"(found: {kinds})"
+            )
+
+        crow = self.get_topic(child_topic_id)
+        if crow:
+            raw_hist = crow.get("topic_history_json")
+            if isinstance(raw_hist, str) and raw_hist.strip():
+                try:
+                    events = json.loads(raw_hist)
+                except json.JSONDecodeError:
+                    events = []
+                if isinstance(events, list):
+                    for ev in reversed(events):
+                        if not isinstance(ev, dict):
+                            continue
+                        if str(ev.get("kind") or "") != "nested_topic_from_parent":
+                            continue
+                        det = ev.get("detail")
+                        if isinstance(det, dict):
+                            exp = det.get("parent_topic_id")
+                            if exp and str(exp) != parent_topic_id:
+                                raise ValueError(
+                                    "child topic history does not match this parent; "
+                                    f"expected parent {exp!r}"
+                                )
+                        break
+
+        parent_tf = self._get_topic_fields(parent_topic_id)
+        ref_removed: list[str] = []
+        for fname, rec in list(parent_tf.fields.items()):
+            rid = rec.ref_topic_id
+            if rid is not None and str(rid) == child_topic_id:
+                del parent_tf.fields[fname]
+                ref_removed.append(fname)
+        if ref_removed:
+            self._set_topic_fields(parent_topic_id, parent_tf)
+            self.sync_topic_salience_from_fields(parent_topic_id)
+            parent_tf = self._get_topic_fields(parent_topic_id)
+
+        child_tf = self._get_topic_fields(child_topic_id)
+        if not child_tf.fields:
+            raise ValueError("child topic has no fields to merge back")
+        restored: list[str] = []
+        for fname, rec in child_tf.fields.items():
+            if fname in parent_tf.fields:
+                raise ValueError(
+                    f"parent already has field {fname!r}; rename or remove it on the parent before undo"
+                )
+            parent_tf.fields[fname] = TopicField.model_validate(rec.model_dump())
+            restored.append(fname)
+        self._set_topic_fields(parent_topic_id, parent_tf)
+        self.sync_topic_salience_from_fields(parent_topic_id)
+
+        self.remove_relationship(parent_topic_id, child_topic_id, edge_kind)
+        ts = _now_iso()
+        self.append_topic_history(
+            parent_topic_id,
+            {
+                "ts": ts,
+                "kind": "nested_topic_undo",
+                "detail": {
+                    "child_topic_id": child_topic_id,
+                    "restored_fields": restored,
+                    "removed_ref_fields": ref_removed,
+                    "relationship_kind": edge_kind,
+                },
+            },
+        )
+        self.append_topic_history(
+            child_topic_id,
+            {
+                "ts": ts,
+                "kind": "nested_topic_undo_merge_back",
+                "detail": {"parent_topic_id": parent_topic_id, "fields": restored},
+            },
+        )
+        self.delete_topic(child_topic_id)
+        return {
+            "parent_topic_id": parent_topic_id,
+            "restored_fields": restored,
+            "removed_ref_fields": ref_removed,
+            "deleted_child_topic_id": child_topic_id,
+        }
+
+    def nest_fields_in_topic(
+        self,
+        topic_id: str,
+        field_names: list[str],
+        nest_key: str,
+        *,
+        provenance: str = "api",
+    ) -> dict[str, Any]:
+        """
+        Group top-level fields into one ``json`` field on the **same** topic (no child Topic, no RELATED, no ref).
+        Current field records are stored under ``value[MEMSTATE_NESTED_FIELDS_KEY]`` with revision history on the bundle.
+        """
+        if not self.topic_exists(topic_id):
+            raise ValueError(f"topic not found: {topic_id}")
+        nk = (nest_key or "").strip()
+        if not nk:
+            raise ValueError("nest_key required")
+        seen: set[str] = set()
+        names: list[str] = []
+        for raw in field_names:
+            n = str(raw or "").strip()
+            if not n or n in seen:
+                continue
+            seen.add(n)
+            names.append(n)
+        if not names:
+            raise ValueError("field_names must name at least one field")
+        if nk in names:
+            raise ValueError("nest_key must not be one of the grouped field names")
+        tf = self._get_topic_fields(topic_id)
+        if nk in tf.fields:
+            raise ValueError(f"field already exists: {nk}")
+        for n in names:
+            if n not in tf.fields:
+                raise ValueError(f"field not found: {n}")
+        inner: dict[str, Any] = {}
+        sal_sum = 0.0
+        for n in names:
+            rec = tf.fields[n]
+            sal_sum += float(rec.salience)
+            inner[n] = rec.model_dump()
+        avg_sal = sal_sum / len(names) if names else 1.0
+        for n in names:
+            del tf.fields[n]
+        ts = _now_iso()
+        bundle_value: dict[str, Any] = {
+            MEMSTATE_NESTED_BUNDLE: True,
+            MEMSTATE_NESTED_FIELDS_KEY: inner,
+        }
+        entry = new_history_entry(
+            value=bundle_value,
+            valid_from=ts,
+            provenance=provenance,
+            why_changed=f"grouped fields into {nk}",
+            operation="nested_fields_in_topic",
+        )
+        tf.fields[nk] = TopicField(
+            field_type="json",
+            ref_topic_id=None,
+            salience=max(0.0, min(10.0, avg_sal)),
+            history=[entry],
+        )
+        self._set_topic_fields(topic_id, tf)
+        self.sync_topic_salience_from_fields(topic_id)
+        self.append_topic_history(
+            topic_id,
+            {
+                "ts": ts,
+                "kind": "fields_nested_in_topic",
+                "detail": {"nest_key": nk, "moved_fields": names},
+            },
+        )
+        return {"topic_id": topic_id, "nest_key": nk, "moved_fields": names}
+
+    def unnest_fields_in_topic(
+        self,
+        topic_id: str,
+        nest_key: str,
+    ) -> dict[str, Any]:
+        """Expand a nested bundle field back to top-level fields on the same topic."""
+        if not self.topic_exists(topic_id):
+            raise ValueError(f"topic not found: {topic_id}")
+        nk = (nest_key or "").strip()
+        if not nk:
+            raise ValueError("nest_key required")
+        tf = self._get_topic_fields(topic_id)
+        if nk not in tf.fields:
+            raise ValueError(f"field not found: {nk}")
+        rec = tf.fields[nk]
+        cur = rec.current_entry()
+        if not cur or not is_nested_fields_bundle_value(cur.value):
+            raise ValueError(f"field {nk!r} is not a nested field bundle")
+        inner_raw = nested_bundle_inner_fields(cur.value)
+        if not inner_raw:
+            raise ValueError("nested bundle has no inner fields")
+        restored: list[str] = []
+        for fname, payload in inner_raw.items():
+            fn = str(fname).strip()
+            if not fn or fn in tf.fields:
+                raise ValueError(
+                    f"cannot restore field {fn!r}: name missing or already exists on topic"
+                )
+            if not isinstance(payload, dict):
+                raise ValueError(f"invalid nested payload for field {fn!r}")
+            tf.fields[fn] = TopicField.model_validate(payload)
+            restored.append(fn)
+        del tf.fields[nk]
+        self._set_topic_fields(topic_id, tf)
+        self.sync_topic_salience_from_fields(topic_id)
+        ts = _now_iso()
+        self.append_topic_history(
+            topic_id,
+            {
+                "ts": ts,
+                "kind": "fields_unnested_from_bundle",
+                "detail": {"nest_key": nk, "restored_fields": restored},
+            },
+        )
+        return {"topic_id": topic_id, "nest_key": nk, "restored_fields": restored}
 
     def list_field_names(self, topic_id: str) -> list[str]:
         return self.list_fields_for_topic(topic_id)

@@ -21,8 +21,16 @@ class TopicNode(BaseModel):
     """
     Logical :Topic node in the graph store.
 
-    Agent-defined fields live in `fields_json` on the node (see `TopicFields`);
-    semantic text uses `embedding` (vecf32) for similarity.
+    A topic is the **storage boundary**: one self-contained record (scalars + ``fields_json``)
+    with a single embedding. Multiple informal "entities" may be represented inside the same
+    topic as field values while they stay small and are not heavily reused across the graph.
+
+    When a piece of meaning grows complex, is associated with many other topics, or needs its
+    own revision lifecycle at graph granularity, model it as a **separate** topic and link via
+    ``RELATED`` and/or ``ref_topic_id`` on a field.
+
+    Agent-defined fields live in ``fields_json`` (see ``TopicFields``); semantic text uses
+    ``embedding`` (vecf32) for similarity.
     """
 
     id: str

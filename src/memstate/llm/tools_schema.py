@@ -42,6 +42,44 @@ OLLAMA_TOOLS: list[dict] = [
     {
         "type": "function",
         "function": {
+            "name": "memory_topics_schema_page",
+            "description": (
+                "Paginated **schema-only** slice of topics: id, title, topic_kind, archived, salience, per-field "
+                "field_type / ref_topic_id / salience / nested_field_names (for existing json bundles)—**no values, "
+                "no histories, no edges**. Use to scan **all** topics in order: start offset=0, then set offset to "
+                "next_offset until has_more is false. Prefer this over memory_list_topics + many get_topic_schema calls "
+                "when deciding which topics need nesting or reorganization from structure alone."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "offset": {
+                        "type": "integer",
+                        "description": "Skip this many topics (stable sort by topic id)",
+                        "default": 0,
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Page size (max 50)",
+                        "default": 15,
+                    },
+                    "include_archived": {
+                        "type": "boolean",
+                        "description": "Include archived topics in the id list",
+                        "default": False,
+                    },
+                    "topic_kind": {
+                        "type": "string",
+                        "description": "If set, only topics with this topic_kind (Study mode may override)",
+                    },
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "memory_get_topic_schema",
             "description": (
                 "Return the field schema for one topic without loading full topic metadata unless needed. "
@@ -90,8 +128,9 @@ OLLAMA_TOOLS: list[dict] = [
         "function": {
             "name": "memory_create_topic",
             "description": (
-                "Create a new topic node. For large ingest, call this multiple times to split content across topics, "
-                "then link topics with memory_add_relationship and refs as needed."
+                "Create a new **standalone** topic only when the content is substantial (new coherent subject or large/multi-fact "
+                "unit). Do **not** use this for small knowledge—use memory_append_field or memory_update_topic on an existing topic "
+                "instead. Nested material that is not ready for its own node should live as fields (json/list/string) on a parent topic."
             ),
             "parameters": {
                 "type": "object",
@@ -176,13 +215,15 @@ OLLAMA_TOOLS: list[dict] = [
         "type": "function",
         "function": {
             "name": "memory_append_field",
-            "description": "Append a new history entry to a field (creates the field if missing). Before choosing field_name, read existing fields (memory_get_topic_schema with detail current or memory_get_topic). Reuse an existing field_name when the new fact belongs there—same concept, correction, or update—instead of adding a redundant new field (e.g. append to married, not spouse_is_married). Use a new field_name only for a genuinely separate attribute.",
+            "description": "Append a new history entry to a field (creates the field if missing). You MUST pass `value` with the fact to store—calls without `value` are rejected. Before choosing field_name, read existing fields (memory_get_topic_schema with detail current or memory_get_topic). Reuse an existing field_name when the new fact belongs there—same concept, correction, or update—instead of adding a redundant new field (e.g. append to married, not spouse_is_married). Use a new field_name only for a genuinely separate attribute (e.g. place_of_birth / birth_place for town+city even if birth_country already exists).",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "topic_id": {"type": "string"},
                     "field_name": {"type": "string"},
-                    "value": {"description": "JSON-serializable value"},
+                    "value": {
+                        "description": "The fact to store (string, number, bool, list, or object). Required—use \"\" only if intentionally clearing text.",
+                    },
                     "field_type": {
                         "type": "string",
                         "description": "string, json, list, int, float, bool, date, datetime",
@@ -195,7 +236,7 @@ OLLAMA_TOOLS: list[dict] = [
                     "why_changed": {"type": "string"},
                     "provenance": {"type": "string", "default": "llm"},
                 },
-                "required": ["topic_id", "field_name"],
+                "required": ["topic_id", "field_name", "value"],
             },
         },
     },
@@ -253,6 +294,133 @@ OLLAMA_TOOLS: list[dict] = [
     {
         "type": "function",
         "function": {
+            "name": "memory_nest_fields_in_topic",
+            "description": (
+                "**Default nesting:** group related fields **inside the same topic** as one `json` bundle—no new graph "
+                "node, no RELATED edge, no ref_topic_id. Top-level fields are removed and stored under `nest_key` with "
+                "full per-field histories preserved inside the bundle. The graph shows one topic; the UI shows nested "
+                "fields under that key. Undo with memory_unnest_fields_in_topic. Do **not** use this to split unrelated "
+                "subjects (use memory_reorganize_split_topics + new topics for that)."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "topic_id": {"type": "string", "description": "Topic to group fields on"},
+                    "field_names": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Existing top-level field names to fold into the bundle (at least one)",
+                    },
+                    "nest_key": {
+                        "type": "string",
+                        "description": "New field name for the json bundle (must not exist yet)",
+                    },
+                    "provenance": {"type": "string", "default": "llm"},
+                },
+                "required": ["topic_id", "field_names", "nest_key"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "memory_unnest_fields_in_topic",
+            "description": (
+                "Undo memory_nest_fields_in_topic: restore inner fields to the top level of the same topic and remove "
+                "the bundle field."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "topic_id": {"type": "string"},
+                    "nest_key": {"type": "string", "description": "The json bundle field name"},
+                },
+                "required": ["topic_id", "nest_key"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "memory_promote_fields_to_nested_topic",
+            "description": (
+                "**Rare / advanced only:** creates a **separate child Topic** node, RELATED parent→child, and optionally "
+                "`parent_link_field` (ref_topic_id)—this **splits** the graph. For normal “nested detail under one "
+                "subject”, use **memory_nest_fields_in_topic** instead (same topic, nested json, no new node, no ref). "
+                "Study section→detail may still use this with `study_child` when a real child topic is required."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "parent_topic_id": {"type": "string", "description": "Topic to take fields from"},
+                    "field_names": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Field names to move (at least one; must exist on parent)",
+                    },
+                    "child_title": {"type": "string", "description": "Title for the new nested topic"},
+                    "child_summary": {
+                        "type": "string",
+                        "description": "Optional summary for the child topic",
+                    },
+                    "child_topic_id": {
+                        "type": "string",
+                        "description": "Optional UUID for the child; random if omitted",
+                    },
+                    "child_topic_kind": {
+                        "type": "string",
+                        "description": "Optional kind for the child; defaults to parent's topic_kind when omitted",
+                    },
+                    "relationship_kind": {
+                        "type": "string",
+                        "description": "RELATED edge from parent to child (default has_detail)",
+                        "default": "has_detail",
+                    },
+                    "parent_link_field": {
+                        "type": "string",
+                        "description": "If set, append this field on the parent with ref_topic_id = child (must not be a moved name)",
+                    },
+                    "link_provenance": {
+                        "type": "string",
+                        "description": "Provenance for the optional parent link field revision",
+                        "default": "llm",
+                    },
+                    "max_history": {
+                        "type": "integer",
+                        "description": "History cap when creating parent link field",
+                        "default": 500,
+                    },
+                },
+                "required": ["parent_topic_id", "field_names", "child_title"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "memory_undo_promote_nested_topic",
+            "description": (
+                "Undo memory_promote_fields_to_nested_topic: merge the child's fields back onto the parent, remove the "
+                "parent→child RELATED edge and any parent fields whose ref_topic_id pointed at the child, then delete "
+                "the child topic. Fails if the parent already has a field with the same name as one on the child."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "parent_topic_id": {"type": "string"},
+                    "child_topic_id": {"type": "string"},
+                    "relationship_kind": {
+                        "type": "string",
+                        "description": "RELATED kind from parent to child; omit if only one such edge exists",
+                    },
+                },
+                "required": ["parent_topic_id", "child_topic_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "memory_reorganize_consolidation",
             "description": (
                 "Reorganization: consolidation. Returns guidelines and topics_schema_snapshot (field names, types, "
@@ -302,8 +470,9 @@ OLLAMA_TOOLS: list[dict] = [
         "function": {
             "name": "memory_reorganize_split_topics",
             "description": (
-                "Reorganization: split overloaded topics. Returns guidelines and topics_schema_snapshot (structure "
-                "only). Plan splits from field-name clusters and kinds; read values only if needed."
+                "Reorganization: split overloaded topics into **separate** subjects (new or existing topics). Returns "
+                "guidelines and topics_schema_snapshot (structure only). For **grouping related fields inside one "
+                "topic** without a new graph node, use memory_nest_fields_in_topic—not this tool."
             ),
             "parameters": {
                 "type": "object",
@@ -394,6 +563,7 @@ QUERY_TOOL_NAMES: frozenset[str] = frozenset(
     {
         "memory_graph_snapshot",
         "memory_list_topics",
+        "memory_topics_schema_page",
         "memory_get_topic_schema",
         "memory_get_topic",
         "memory_get_field",
@@ -411,11 +581,16 @@ INGEST_WRITE_TOOL_NAMES: frozenset[str] = frozenset(
         "memory_append_field",
         "memory_delete_field",
         "memory_set_field_ref",
+        "memory_nest_fields_in_topic",
+        "memory_unnest_fields_in_topic",
+        "memory_promote_fields_to_nested_topic",
+        "memory_undo_promote_nested_topic",
     }
 )
 INGEST_READ_HELPER_NAMES: frozenset[str] = frozenset(
     {
         "memory_list_topics",
+        "memory_topics_schema_page",
         "memory_get_topic_schema",
         "memory_get_topic",
         "memory_get_field",
@@ -433,6 +608,7 @@ STUDY_PHASE_A_TOOL_NAMES: frozenset[str] = frozenset(
     INGEST_WRITE_TOOL_NAMES
     | {
         "memory_list_topics",
+        "memory_topics_schema_page",
         "memory_get_topic_schema",
         "memory_get_topic",
         "memory_get_field",
@@ -476,12 +652,22 @@ Graph traversal: You may and should issue multiple read calls in sequence to wal
 INGEST_ROUTE_PROMPT = """Routed mode: INGEST (writes).
 Use write tools to change memory. Use read helpers (list_topics, get_topic_schema, get_topic, get_field) only to resolve topic ids or inspect fields before writing. You do not have memory_graph_snapshot—use list_topics and get_topic* instead.
 
-Large inputs: If the user gives a lot of text or many distinct facts, do not cram everything into one topic. Split across multiple topics (e.g. one coherent entity, document section, or theme per topic), give each a clear title/summary, and link them with memory_add_relationship (RELATED or a specific kind) and field ref_topic_id where it helps retrieval. Prefer several smaller, navigable topics over one overloaded node.
+**Classify what the user sent, then pick tools:**
+1) **Field value** — Small fact, correction, attribute, or snippet that belongs on an **existing** topic. Use memory_append_field (reuse field_name when the kind of fact matches) and/or memory_update_topic for title/summary narrative. **Do not** call memory_create_topic.
+2) **Nested / not ready for its own topic** — Subordinate detail that should stay **inside** a parent topic: store as one or more fields (string, json, list—including ordered lists of ids). This is “embedded” material until it is big enough or shared enough to promote. Still **no** memory_create_topic unless the user clearly introduces a **new** standalone subject.
+3) **Separate topic** — Use memory_create_topic only when the content is a **non-trivial, coherent** new subject (or a large multi-fact unit). Skip new topics for trivia and thin one-offs.
+
+**Small-knowledge rule:** If it fits a line or two and is not a new domain, merge into an existing topic as fields or summary—never mint a topic just to “save” a minor fact.
+
+Large inputs: When there are **several distinct substantial themes**, split across topics (one coherent entity, section, or theme per topic), link with memory_add_relationship and ref_topic_id where helpful. Avoid splitting into **micro-topics**; keep minor points as fields inside the right parent.
 If the user message is labeled Part i/n with overlap between parts, treat it as one ingest task in sequence: merge with prior parts without duplicating the same entities or facts."""
 
 BOTH_ROUTE_PROMPT = """Routed mode: BOTH (read and write).
 You have the full tool set: read or write in any order as needed for the user's latest message. When answering from stored facts, traverse the graph (RELATED edges and field refs) with repeated reads as in query mode until you have enough detail—do not assume one topic is enough if the question spans linked entities.
-When the user is storing a large amount of new information, split it across multiple topics and link them (same practice as ingest mode)—avoid one overloaded topic.
+
+When **storing**, apply the same ingest classification as ingest-only mode: (1) field value on an existing topic, (2) nested content as fields on a parent—not memory_create_topic, (3) separate topic only for substantial new subjects. **Do not create topics for small knowledge.**
+
+When the user is storing a **large** amount of new information across **distinct substantial themes**, split across topics and link them—avoid one overloaded topic and avoid micro-topics.
 If the user message is labeled Part i/n with overlap between parts, continue one task across chunks without duplicating entities or facts."""
 
 REORGANIZE_PROMPT = """Memory reorganize (hierarchical—avoid loading everything at once):
@@ -494,9 +680,17 @@ REORGANIZE_PROMPT = """Memory reorganize (hierarchical—avoid loading everythin
 Use read tools in whatever order fits: the reorganize snapshot first, then targeted reads; for merge, schema then values then decide."""
 
 
+TOPIC_VS_ENTITY_PROMPT = """Topic vs entity (how to package memory):
+- A **topic** is the unit of storage: one self-contained record (metadata + fields_json). MemState has no separate Entity node type.
+- Informal **entities** (people, papers, concepts, etc.) often live **inside** a single topic as **field values** while they stay small, local, and not heavily referenced from elsewhere in the graph.
+- **Do not create a topic for small knowledge** (one-liners, tiny facts, minor updates). Prefer memory_append_field or memory_update_topic on the best matching **existing** topic.
+- **Grouping related fields under one subject** (e.g. professional details) should use **memory_nest_fields_in_topic**—one json bundle on the **same** topic, no new graph node, no RELATED, no ref. Scan candidates with **memory_topics_schema_page** (paginate with offset/next_offset) before asking for values. Do **not** default to memory_promote_fields_to_nested_topic (that creates a **separate** Topic—only for rare cases or Study `study_child` when a real child topic is required).
+- **Create another topic** when something is **substantial and standalone**, grows complex, is linked from **many** topics, or needs its own revision and provenance at graph granularity—then connect with RELATED and/or ref_topic_id on a field (same idea as docs-site data-model overview)."""
+
+
 def build_chat_system_prompt(route: IntentRoute) -> str:
     """Full system prompt for /api/llm/chat after intent routing."""
-    parts = [SYSTEM_PROMPT, INTENT_ROUTING_PROMPT]
+    parts = [SYSTEM_PROMPT, TOPIC_VS_ENTITY_PROMPT, INTENT_ROUTING_PROMPT]
     if route == "query":
         parts.append(QUERY_ROUTE_PROMPT)
     elif route == "ingest":
@@ -511,7 +705,7 @@ def build_chat_system_prompt(route: IntentRoute) -> str:
 STUDY_PHASE_A_PROMPT = """Study mode — phase A (sandbox ingest only).
 You are materializing a long document into new topics that are **isolated** from the rest of memory until phase B.
 - Use the unit catalog (coarse / medium / fine) to choose granularity: use finer units where detail matters; coarser where content is redundant or structural only.
-- Create topics with clear titles and summaries; put verbatim or detailed text in fields as needed.
+- Create topics for **catalog units** with clear titles and summaries; put supporting detail **in fields** (not extra topics) when a unit is small or purely subordinate—avoid micro-topics for sentences that belong inside one unit’s fields.
 - **Only** connect topics that share this Study session’s topic_kind. Use memory_add_relationship with RELATED between siblings or sequence; use kind `study_child` from a **section** parent to a **detail** child when you need one level of nesting—never chain study_child deeper (no grandchild sections).
 - Do **not** link to any topic outside this session. Do not call memory_graph_snapshot—use study_graph_snapshot.
 - You may call study_unit_catalog if the catalog in the message was truncated."""
@@ -526,7 +720,7 @@ The user’s long document was ingested in phase A as Study topics (topic_kind s
 
 def build_study_phase_a_system_prompt(route: IntentRoute) -> str:
     """Phase A: sandbox tools; route should be ingest or both (writes)."""
-    parts = [SYSTEM_PROMPT, STUDY_PHASE_A_PROMPT, INTENT_ROUTING_PROMPT]
+    parts = [SYSTEM_PROMPT, TOPIC_VS_ENTITY_PROMPT, STUDY_PHASE_A_PROMPT, INTENT_ROUTING_PROMPT]
     if route == "ingest":
         parts.append(INGEST_ROUTE_PROMPT)
     elif route == "both":
@@ -536,7 +730,7 @@ def build_study_phase_a_system_prompt(route: IntentRoute) -> str:
 
 def build_study_phase_b_system_prompt(route: IntentRoute) -> str:
     """Phase B: full graph + reorganize; same route as the original intent."""
-    parts = [SYSTEM_PROMPT, STUDY_PHASE_B_PROMPT, INTENT_ROUTING_PROMPT]
+    parts = [SYSTEM_PROMPT, TOPIC_VS_ENTITY_PROMPT, STUDY_PHASE_B_PROMPT, INTENT_ROUTING_PROMPT]
     if route == "query":
         parts.append(QUERY_ROUTE_PROMPT)
     elif route == "ingest":
@@ -561,10 +755,14 @@ Grounding (mandatory):
 - If a tool returns ok:false or an error field, explain that to the user.
 
 Field updates (when writing facts with memory_append_field):
+- Every memory_append_field call MUST include `value` with the exact fact to store. If the tool returns an error about a missing value, fix the call and retry—do not tell the user it was saved.
 - First inspect what is already on the topic (memory_get_topic_schema with detail current, or memory_get_topic). Do not invent a new field if the data fits an existing one.
 - Prefer appending to the same field_name (new history entry) when you are updating, refining, or correcting the same kind of fact—e.g. status, role, location, marital status, dates—rather than splitting across synonyms (married vs is_married vs spouse).
 - Create a new field_name only when the fact is a clearly separate attribute, or the user asked for a specific new key.
+- **Birth / hometown:** If the user names a **town or city** (e.g. “born in Bshbish, Egypt”), store the full phrase in a dedicated field such as `birth_place` or `place_of_birth`. Do not treat `birth_country` alone as sufficient—town-level detail is new information.
 - Put narrative context in topic title/summary via memory_update_topic when appropriate; keep fields for structured facts.
+- On ingest, default small or nested material to **fields on an existing topic**; use memory_create_topic only for substantial new subjects (see routed ingest instructions when in ingest/both mode).
+- To **organize** many related fields on one topic without adding graph nodes, use **memory_nest_fields_in_topic** (not memory_promote_fields_to_nested_topic unless a separate child Topic is explicitly required).
 
 Final answer to the user (tone and form):
 - Speak as a person who simply *knows* things—not as software describing a database. Never narrate storage: avoid "the memory records…", "memory only contains…", "stored in memory", "based on my memory", "according to what I have in memory", or talking about "memory" as a separate thing. Do not echo JSON, tool names, or UUIDs unless the user asked for an id.
@@ -578,3 +776,6 @@ INTENT_ROUTING_PROMPT = """Dialogue intent (the messages after this block includ
 - Infer what the *latest user message* is trying to do before you choose tools: e.g. answer a question from stored facts, add or update stored facts, delete or link topics, follow-up that refers to earlier wording, or casual chat.
 - Resolve references ("he", "she", "that", "it", "the same person") using the preceding turns you can see.
 - Pick the smallest appropriate memory_* tool set for that intent; avoid loading irrelevant bulk, but traverse relationships and field refs when the answer requires more than one topic."""
+
+# Groq/Ollama runners when callers pass system_prompt=None (not the full chat API stack).
+DEFAULT_LLM_SYSTEM_PROMPT_FALLBACK = "\n\n".join((SYSTEM_PROMPT, TOPIC_VS_ENTITY_PROMPT))
