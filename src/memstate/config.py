@@ -24,6 +24,8 @@ class Settings(BaseSettings):
     # Groq (https://console.groq.com) — also load GROQ_API_KEY from .env / process env (no MEMSTATE_ prefix).
     groq_api_key: str | None = None
     groq_model: str = "openai/gpt-oss-20b"
+    # Groq Whisper (speech-to-text for UI mic); same GROQ_API_KEY as chat.
+    groq_whisper_model: str = "whisper-large-v3-turbo"
     # LLM chat: how many dialogue turns (user + optional assistant each) to send for intent/context.
     chat_intent_turns: int = Field(default=8, ge=1, le=64)
     # Max assistant↔API iterations while the model keeps requesting tool calls (reorganize flows need more).

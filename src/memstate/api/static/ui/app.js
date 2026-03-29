@@ -39,6 +39,44 @@ async function api(path, opts = {}) {
   return data;
 }
 
+/**
+ * Groq Whisper on the server (requires GROQ_API_KEY in .env).
+ * @param {Blob} blob
+ * @param {string} [filename]
+ */
+async function transcribeChatAudioBlob(blob, filename) {
+  const h = {};
+  const k = localStorage.getItem(LS_KEY);
+  if (k) h["X-API-Key"] = k;
+  const name = filename || "capture.webm";
+  const paths = ["/api/ui/transcribe", "/api/llm/transcribe"];
+  let lastDetail = "";
+  for (const path of paths) {
+    const fd = new FormData();
+    fd.append("audio", blob, name);
+    const r = await fetch(path, { method: "POST", headers: h, body: fd });
+    const text = await r.text();
+    let data;
+    try {
+      data = text ? JSON.parse(text) : {};
+    } catch {
+      data = { detail: text };
+    }
+    if (r.ok) {
+      return String(data.text || "").trim();
+    }
+    lastDetail = formatApiError(data) || r.statusText || String(r.status);
+    if (r.status === 404) {
+      continue;
+    }
+    throw new Error(lastDetail);
+  }
+  throw new Error(
+    lastDetail ||
+      "Transcription API not found (404). Restart the MemState API process so it loads the latest code with POST /api/ui/transcribe."
+  );
+}
+
 function escapeHtml(s) {
   const d = document.createElement("div");
   d.textContent = s;
@@ -1475,15 +1513,23 @@ const LS_MODEL_GROQ = "memstate_llm_model_groq";
 const LS_CHAT_INTENT_TURNS = "memstate_chat_intent_turns";
 const LS_CHAT_SOUND = "memstate_chat_sound";
 const LS_CHAT_VOICE = "memstate_chat_voice";
-/** Silence this long after last speech chunk → stop dictation and send (if any text). */
+/** Silence this long after last loud audio → stop recording, transcribe, send to chat. */
 const CHAT_VOICE_PAUSE_MS = 5000;
+/** Time-domain RMS above this counts as speech (silence detection). */
+const CHAT_VOICE_RMS_THRESHOLD = 0.01;
+/** Peak sample deviation (0–1); catches speech that RMS misses on quiet mics. */
+const CHAT_VOICE_PEAK_THRESHOLD = 0.035;
+/** Encoded chunk size (bytes) that suggests real audio activity (resets pause timer). */
+const CHAT_VOICE_CHUNK_ACTIVITY_BYTES = 80;
+/** Stop recording automatically after this long (ms). */
+const CHAT_VOICE_MAX_CAPTURE_MS = 120000;
+/** If the mic never sees speech-level audio, give up (ms). */
+const CHAT_VOICE_NO_SPEECH_GIVEUP_MS = 45000;
 
 let uiAudioCtx = null;
 
 let chatRequestInFlight = false;
 let chatVoiceListening = false;
-let chatVoiceUserAborted = false;
-let chatRecognition = null;
 
 function voiceChatEnabled() {
   const el = document.getElementById("chat-voice-enabled");
@@ -1491,8 +1537,22 @@ function voiceChatEnabled() {
   return localStorage.getItem(LS_CHAT_VOICE) === "1";
 }
 
-function getSpeechRecognitionCtor() {
-  return window.SpeechRecognition || window.webkitSpeechRecognition || null;
+function getVoiceCaptureSupported() {
+  return Boolean(
+    typeof MediaRecorder !== "undefined" &&
+      navigator.mediaDevices &&
+      typeof navigator.mediaDevices.getUserMedia === "function" &&
+      (typeof AudioContext !== "undefined" || typeof window.webkitAudioContext !== "undefined")
+  );
+}
+
+function pickMediaRecorderMime() {
+  if (typeof MediaRecorder === "undefined" || !MediaRecorder.isTypeSupported) return "";
+  const candidates = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/aac"];
+  for (const t of candidates) {
+    if (MediaRecorder.isTypeSupported(t)) return t;
+  }
+  return "";
 }
 
 /**
@@ -1558,9 +1618,9 @@ function speakChatReply(rawText) {
 function syncChatInputChrome() {
   const sendBtn = document.getElementById("btn-chat-send");
   const mic = document.getElementById("btn-chat-voice");
-  const Ctor = getSpeechRecognitionCtor();
+  const ok = getVoiceCaptureSupported();
   if (sendBtn) sendBtn.disabled = chatRequestInFlight || chatVoiceListening;
-  if (mic) mic.disabled = !Ctor || chatRequestInFlight;
+  if (mic) mic.disabled = !ok || chatRequestInFlight;
 }
 
 function setChatVoiceListening(on) {
@@ -1575,11 +1635,11 @@ function setChatVoiceListening(on) {
 
 function refreshChatVoiceMicHint() {
   const mic = document.getElementById("btn-chat-voice");
-  const Ctor = getSpeechRecognitionCtor();
+  const ok = getVoiceCaptureSupported();
   if (!mic) return;
-  mic.title = !Ctor
-    ? "Voice input needs Chrome, Edge, or Safari."
-    : `Dictation: words appear as you speak. Pause ${CHAT_VOICE_PAUSE_MS / 1000} seconds to send. Click again to cancel.`;
+  mic.title = !ok
+    ? "Voice needs a browser with MediaRecorder + microphone access."
+    : `Mic: record → server Whisper (needs GROQ_API_KEY). Click again to stop. Voice chat = read replies only.`;
 }
 
 /**
@@ -1588,58 +1648,205 @@ function refreshChatVoiceMicHint() {
 function wireChatVoiceControls(input) {
   const mic = document.getElementById("btn-chat-voice");
   const stopSpeech = document.getElementById("btn-chat-stop-speech");
-  const Ctor = getSpeechRecognitionCtor();
-  if (mic) mic.disabled = !Ctor;
+  const supported = getVoiceCaptureSupported();
+  if (mic) mic.disabled = !supported;
   refreshChatVoiceMicHint();
 
-  let voicePauseTimer = null;
-  let voiceSentFromPause = false;
-  /** Text committed before the current recognition segment (survives stop/restart between phrases). */
-  let voicePrefix = "";
-  /** Final transcript for the current recognition segment only (from last onresult). */
-  let lastSessionFinals = "";
-  /** Count onend→restart cycles without an onresult (avoids tight loops on no-speech). */
-  let voiceStaleRestarts = 0;
+  let capStream = null;
+  let capAudioCtx = null;
+  let capAnalyser = null;
+  let capRecorder = null;
+  let capChunks = [];
+  let capSilenceInterval = 0;
+  let capFinalizing = false;
+  let capMime = "";
+  let capExt = "webm";
+  let capSessionStart = 0;
+  let capLastLoudAt = 0;
+  let capHadLoud = false;
 
-  function clearVoicePauseTimer() {
-    if (voicePauseTimer != null) {
-      clearTimeout(voicePauseTimer);
-      voicePauseTimer = null;
+  function touchVoiceActivity() {
+    capHadLoud = true;
+    capLastLoudAt = performance.now();
+  }
+
+  function stopSilenceLoop() {
+    if (capSilenceInterval) {
+      clearInterval(capSilenceInterval);
+      capSilenceInterval = 0;
     }
   }
 
-  function scheduleVoicePauseTimer() {
-    clearVoicePauseTimer();
-    voicePauseTimer = setTimeout(handleVoicePauseElapsed, CHAT_VOICE_PAUSE_MS);
+  function startSilenceLoop() {
+    stopSilenceLoop();
+    capSilenceInterval = setInterval(silenceTick, 100);
   }
 
-  function handleVoicePauseElapsed() {
-    voicePauseTimer = null;
-    if (chatVoiceUserAborted || !chatVoiceListening) return;
-    const toSend = input.value.trim();
-    if (!toSend) {
-      try {
-        chatRecognition?.stop();
-      } catch {
-        /* ignore */
-      }
-      setChatVoiceListening(false);
-      return;
+  function teardownTracks() {
+    if (capStream) {
+      capStream.getTracks().forEach((t) => t.stop());
+      capStream = null;
     }
-    voiceSentFromPause = true;
-    clearVoicePauseTimer();
+  }
+
+  function teardownAudioGraph() {
     try {
-      chatRecognition?.stop();
+      capAnalyser?.disconnect();
     } catch {
       /* ignore */
     }
+    capAnalyser = null;
+    try {
+      void capAudioCtx?.close();
+    } catch {
+      /* ignore */
+    }
+    capAudioCtx = null;
+  }
+
+  function sampleRmsAndPeak() {
+    if (!capAnalyser) return { rms: 0, peak: 0 };
+    const n = capAnalyser.fftSize;
+    const buf = new Uint8Array(n);
+    capAnalyser.getByteTimeDomainData(buf);
+    let sum = 0;
+    let peak = 0;
+    for (let i = 0; i < n; i++) {
+      const x = (buf[i] - 128) / 128;
+      sum += x * x;
+      peak = Math.max(peak, Math.abs(x));
+    }
+    return { rms: Math.sqrt(sum / n), peak };
+  }
+
+  function silenceTick() {
+    const now = performance.now();
+    if (!chatVoiceListening || capFinalizing) {
+      stopSilenceLoop();
+      return;
+    }
+    if (now - capSessionStart > CHAT_VOICE_MAX_CAPTURE_MS) {
+      void finalizeVoiceCaptureAndSend();
+      return;
+    }
+    const { rms, peak } = sampleRmsAndPeak();
+    if (rms >= CHAT_VOICE_RMS_THRESHOLD || peak >= CHAT_VOICE_PEAK_THRESHOLD) {
+      touchVoiceActivity();
+    }
+    if (capHadLoud && now - capLastLoudAt >= CHAT_VOICE_PAUSE_MS && now - capSessionStart >= 400) {
+      void finalizeVoiceCaptureAndSend();
+      return;
+    }
+    if (!capHadLoud && now - capSessionStart > CHAT_VOICE_NO_SPEECH_GIVEUP_MS) {
+      toast("No speech detected — speak up or check the mic.", "error");
+      void cancelVoiceCapture();
+    }
+  }
+
+  function restoreVoiceInputPlaceholder() {
+    const h = input.dataset.voiceHoldPh;
+    if (h != null) {
+      input.placeholder = h;
+      delete input.dataset.voiceHoldPh;
+    }
+  }
+
+  async function cancelVoiceCapture() {
+    stopSilenceLoop();
     setChatVoiceListening(false);
-    voicePrefix = "";
-    lastSessionFinals = "";
-    voiceStaleRestarts = 0;
-    const msg = toSend;
-    input.value = "";
-    void runChatTurn(msg);
+    restoreVoiceInputPlaceholder();
+    const rec = capRecorder;
+    capRecorder = null;
+    if (rec && rec.state !== "inactive") {
+      rec.onstop = () => {
+        capChunks = [];
+        teardownAudioGraph();
+        teardownTracks();
+      };
+      try {
+        rec.requestData?.();
+        rec.stop();
+      } catch {
+        capChunks = [];
+        teardownAudioGraph();
+        teardownTracks();
+      }
+    } else {
+      teardownAudioGraph();
+      teardownTracks();
+    }
+    capFinalizing = false;
+  }
+
+  function buildBlobFromRecordedChunks() {
+    return new Blob(capChunks, { type: capMime || "audio/webm" });
+  }
+
+  async function transcribeBlobAndSend(blob) {
+    if (blob.size < 180) {
+      toast("Recording too short — speak a bit longer, then click the mic again to stop.", "error");
+      return;
+    }
+    try {
+      toast("Transcribing with Groq Whisper…");
+      const text = await transcribeChatAudioBlob(blob, `capture.${capExt}`);
+      if (!text.trim()) {
+        toast("No words recognized.", "error");
+        return;
+      }
+      input.value = "";
+      await runChatTurn(text);
+    } catch (e) {
+      toast(e instanceof Error ? e.message : String(e), "error");
+    }
+  }
+
+  async function finalizeVoiceCaptureAndSend() {
+    if (capFinalizing) return;
+    capFinalizing = true;
+    try {
+      stopSilenceLoop();
+      restoreVoiceInputPlaceholder();
+
+      const rec = capRecorder;
+      capRecorder = null;
+      setChatVoiceListening(false);
+
+      const blob = await new Promise((resolve) => {
+        let settled = false;
+        const finish = () => {
+          if (settled) return;
+          settled = true;
+          try {
+            if (rec) rec.onstop = null;
+          } catch {
+            /* ignore */
+          }
+          const b = buildBlobFromRecordedChunks();
+          capChunks = [];
+          resolve(b);
+        };
+
+        if (!rec || rec.state === "inactive") {
+          finish();
+          return;
+        }
+
+        rec.onstop = finish;
+        try {
+          rec.requestData?.();
+          rec.stop();
+        } catch {
+          finish();
+        }
+      });
+
+      teardownAudioGraph();
+      teardownTracks();
+      await transcribeBlobAndSend(blob);
+    } finally {
+      capFinalizing = false;
+    }
   }
 
   stopSpeech?.addEventListener("click", () => {
@@ -1648,123 +1855,80 @@ function wireChatVoiceControls(input) {
 
   mic?.addEventListener("click", () => {
     void (async () => {
-      if (!Ctor || mic.disabled) return;
+      if (!supported || mic.disabled) return;
       if (chatVoiceListening) {
-        chatVoiceUserAborted = true;
-        clearVoicePauseTimer();
-        try {
-          chatRecognition?.abort();
-        } catch {
-          /* ignore */
-        }
-        voicePrefix = "";
-        lastSessionFinals = "";
-        voiceStaleRestarts = 0;
-        setChatVoiceListening(false);
+        await finalizeVoiceCaptureAndSend();
         return;
       }
       if (!window.isSecureContext) {
-        toast("Voice input needs HTTPS or http://localhost.", "error");
+        toast("Voice capture needs HTTPS or http://localhost.", "error");
         return;
       }
       stopChatSpeech();
-      clearVoicePauseTimer();
-      voicePrefix = "";
-      lastSessionFinals = "";
-      voiceStaleRestarts = 0;
       input.value = "";
-      chatVoiceUserAborted = false;
-      voiceSentFromPause = false;
-      try {
-        if (navigator.mediaDevices?.getUserMedia) {
-          const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-          stream.getTracks().forEach((t) => t.stop());
-        }
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        toast(`Microphone: ${msg || "permission denied"}`, "error");
-        return;
+      capChunks = [];
+      capFinalizing = false;
+      capSessionStart = performance.now();
+      capLastLoudAt = capSessionStart;
+      capHadLoud = false;
+      if (input.dataset.voiceHoldPh == null) {
+        input.dataset.voiceHoldPh = input.placeholder;
       }
+      input.placeholder = "Recording… click mic again to stop & transcribe";
+
       try {
-        if (!chatRecognition) {
-          chatRecognition = new Ctor();
-          chatRecognition.lang = document.documentElement.lang || navigator.language || "en-US";
-          chatRecognition.interimResults = true;
-          chatRecognition.continuous = false;
-          chatRecognition.maxAlternatives = 1;
-          chatRecognition.onresult = (event) => {
-            voiceStaleRestarts = 0;
-            let sessionFinals = "";
-            let sessionInterim = "";
-            for (let i = 0; i < event.results.length; i++) {
-              const r = event.results[i];
-              const alt = r[0];
-              const t = alt && typeof alt.transcript === "string" ? alt.transcript : "";
-              if (r.isFinal) sessionFinals += t;
-              else sessionInterim += t;
-            }
-            lastSessionFinals = sessionFinals;
-            input.value = (voicePrefix + sessionFinals + sessionInterim).trim();
-            scheduleVoicePauseTimer();
-          };
-          chatRecognition.onerror = (ev) => {
-            if (ev.error === "aborted") return;
-            clearVoicePauseTimer();
-            const err = ev.error || "unknown";
-            if (err === "not-allowed" || err === "service-not-allowed") {
-              toast("Microphone blocked for this site — check browser permissions.", "error");
-              setChatVoiceListening(false);
-              return;
-            }
-            if (err === "no-speech") {
-              return;
-            }
-            toast(`Voice: ${err}`, "error");
-            setChatVoiceListening(false);
-          };
-          chatRecognition.onend = () => {
-            clearVoicePauseTimer();
-            if (voiceSentFromPause) {
-              voiceSentFromPause = false;
-              chatVoiceUserAborted = false;
-              setChatVoiceListening(false);
-              return;
-            }
-            if (chatVoiceUserAborted) {
-              chatVoiceUserAborted = false;
-              setChatVoiceListening(false);
-              return;
-            }
-            if (chatVoiceListening) {
-              voicePrefix += lastSessionFinals;
-              lastSessionFinals = "";
-              input.value = voicePrefix.trim();
-              voiceStaleRestarts += 1;
-              if (voiceStaleRestarts > 6) {
-                setChatVoiceListening(false);
-                toast("Voice: no speech captured — check the mic and try again.", "error");
-                return;
-              }
-              try {
-                chatRecognition.start();
-                scheduleVoicePauseTimer();
-              } catch (e) {
-                setChatVoiceListening(false);
-                const msg = e instanceof Error ? e.message : String(e);
-                if (!msg.includes("already started")) {
-                  toast(msg || "Voice session ended", "error");
-                }
-              }
-            }
-          };
+        try {
+          capStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        } catch {
+          capStream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+              channelCount: 1,
+              echoCancellation: true,
+              noiseSuppression: true,
+            },
+          });
         }
-        chatRecognition.start();
+        const ACtx = window.AudioContext || window.webkitAudioContext;
+        capAudioCtx = new ACtx();
+        await capAudioCtx.resume().catch(() => {});
+        const src = capAudioCtx.createMediaStreamSource(capStream);
+        capAnalyser = capAudioCtx.createAnalyser();
+        capAnalyser.fftSize = 2048;
+        capAnalyser.smoothingTimeConstant = 0.35;
+        src.connect(capAnalyser);
+
+        capMime = pickMediaRecorderMime();
+        capExt = capMime.includes("mp4") || capMime.includes("aac") ? "m4a" : "webm";
+        const opts = capMime ? { mimeType: capMime } : undefined;
+        try {
+          capRecorder = opts ? new MediaRecorder(capStream, opts) : new MediaRecorder(capStream);
+        } catch {
+          capRecorder = new MediaRecorder(capStream);
+          capMime = "";
+          capExt = "webm";
+        }
+        capRecorder.onerror = () => {
+          toast("Microphone recording error — try again or use another browser.", "error");
+        };
+        capRecorder.ondataavailable = (ev) => {
+          if (!ev.data || ev.data.size <= 0) return;
+          capChunks.push(ev.data);
+          if (ev.data.size >= CHAT_VOICE_CHUNK_ACTIVITY_BYTES) {
+            touchVoiceActivity();
+          }
+        };
+        capRecorder.start(250);
         setChatVoiceListening(true);
-        scheduleVoicePauseTimer();
+        startSilenceLoop();
       } catch (e) {
-        clearVoicePauseTimer();
+        restoreVoiceInputPlaceholder();
+        teardownAudioGraph();
+        teardownTracks();
+        capRecorder = null;
+        capChunks = [];
         setChatVoiceListening(false);
-        toast(e instanceof Error ? e.message : "Could not start voice input", "error");
+        const msg = e instanceof Error ? e.message : String(e);
+        toast(`Microphone: ${msg || "could not start"}`, "error");
       }
     })();
   });

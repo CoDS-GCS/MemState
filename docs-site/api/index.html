@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
@@ -15,16 +15,17 @@
         </header>
         <main class="page-main">
           <p>
-            Complete endpoint map for MemState API surfaces, including auth behavior and module ownership.
+            Complete endpoint map for all MemState API surfaces, including auth behavior and module ownership.
           </p>
 
           <h2>Auth summary</h2>
           <ul>
-            <li>When <code>MEMSTATE_API_KEY</code> is set, protected JSON routes require <code>X-API-Key</code> or <code>Authorization: Bearer</code>.</li>
-            <li><code>/health</code>, <code>/health/graph</code>, <code>/health/falkordb</code>, and static <code>/ui</code> remain unauthenticated.</li>
+            <li>When <code>MEMSTATE_API_KEY</code> is set, protected JSON routes require <code>X-API-Key: &lt;key&gt;</code> or <code>Authorization: Bearer &lt;key&gt;</code>.</li>
+            <li><code>MEMSTATE_ADMIN_KEY</code> (falls back to <code>MEMSTATE_API_KEY</code>) gates updates to an existing system context — send it as <code>X-Admin-Key</code> on <code>PUT /api/ui/system-context</code>.</li>
+            <li><code>/health</code>, <code>/health/graph</code>, <code>/health/falkordb</code>, and the static <code>/ui</code> mount remain unauthenticated.</li>
           </ul>
 
-          <h2>Core app routes</h2>
+          <h2>Core routes</h2>
           <table>
             <thead>
               <tr>
@@ -36,16 +37,40 @@
               </tr>
             </thead>
             <tbody>
-              <tr><td>GET</td><td><code>/</code></td><td>No</td><td><code>api.main</code></td><td>Redirect to <code>/ui/</code>.</td></tr>
-              <tr><td>GET</td><td><code>/health</code></td><td>No</td><td><code>api.main</code></td><td>Process liveness.</td></tr>
-              <tr><td>GET</td><td><code>/health/graph</code></td><td>No</td><td><code>api.main</code></td><td>Graph-open and basic read check.</td></tr>
-              <tr><td>GET</td><td><code>/health/falkordb</code></td><td>No</td><td><code>api.main</code></td><td>Compatibility alias to graph health check.</td></tr>
-              <tr><td>POST</td><td><code>/v1/ingest</code></td><td>Yes*</td><td><code>api.main</code></td><td>Placement-based ingestion.</td></tr>
-              <tr><td>POST</td><td><code>/v1/query</code></td><td>Yes*</td><td><code>api.main</code></td><td>Staged retrieval query.</td></tr>
+              <tr>
+                <td><span class="method method-get">GET</span></td>
+                <td><code>/</code></td><td>No</td><td><code>api.main</code></td>
+                <td>Redirect to <code>/ui/</code>.</td>
+              </tr>
+              <tr>
+                <td><span class="method method-get">GET</span></td>
+                <td><code>/health</code></td><td>No</td><td><code>api.main</code></td>
+                <td>Process liveness.</td>
+              </tr>
+              <tr>
+                <td><span class="method method-get">GET</span></td>
+                <td><code>/health/graph</code></td><td>No</td><td><code>api.main</code></td>
+                <td>Kuzu store open and basic read check.</td>
+              </tr>
+              <tr>
+                <td><span class="method method-get">GET</span></td>
+                <td><code>/health/falkordb</code></td><td>No</td><td><code>api.main</code></td>
+                <td>Compatibility alias for <code>/health/graph</code>.</td>
+              </tr>
+              <tr>
+                <td><span class="method method-post">POST</span></td>
+                <td><code>/v1/ingest</code></td><td>Yes*</td><td><code>api.main</code></td>
+                <td>Placement-based topic ingestion through <code>Executor</code>.</td>
+              </tr>
+              <tr>
+                <td><span class="method method-post">POST</span></td>
+                <td><code>/v1/query</code></td><td>Yes*</td><td><code>api.main</code></td>
+                <td>Staged semantic/structural/temporal retrieval through <code>Executor</code>.</td>
+              </tr>
             </tbody>
           </table>
 
-          <h2>UI API routes (<code>/api/ui</code>)</h2>
+          <h2>UI API routes <code>/api/ui</code></h2>
           <table>
             <thead>
               <tr>
@@ -55,23 +80,110 @@
               </tr>
             </thead>
             <tbody>
-              <tr><td>GET</td><td><code>/api/ui/datamodel</code></td><td>Returns canonical Mermaid model diagram string.</td></tr>
-              <tr><td>GET</td><td><code>/api/ui/graph</code></td><td>Graph snapshot with nodes, edges, communities.</td></tr>
-              <tr><td>POST</td><td><code>/api/ui/topics</code></td><td>Create topic.</td></tr>
-              <tr><td>GET</td><td><code>/api/ui/topics</code></td><td>List topic ids.</td></tr>
-              <tr><td>GET</td><td><code>/api/ui/topics/{topic_id}</code></td><td>Fetch topic and fields payload.</td></tr>
-              <tr><td>PATCH</td><td><code>/api/ui/topics/{topic_id}</code></td><td>Patch topic metadata.</td></tr>
-              <tr><td>DELETE</td><td><code>/api/ui/topics/{topic_id}</code></td><td>Delete topic.</td></tr>
-              <tr><td>POST</td><td><code>/api/ui/topics/{from_id}/relationships</code></td><td>Add RELATED edge.</td></tr>
-              <tr><td>DELETE</td><td><code>/api/ui/topics/{from_id}/relationships</code></td><td>Remove RELATED edge (query params).</td></tr>
-              <tr><td>POST</td><td><code>/api/ui/topics/{topic_id}/fields</code></td><td>Append field history entry.</td></tr>
-              <tr><td>GET</td><td><code>/api/ui/topics/{topic_id}/fields/{field_name}</code></td><td>Read field (current/history option).</td></tr>
-              <tr><td>DELETE</td><td><code>/api/ui/topics/{topic_id}/fields/{field_name}</code></td><td>Delete field.</td></tr>
-              <tr><td>PUT</td><td><code>/api/ui/topics/{topic_id}/fields/{field_name}/ref</code></td><td>Set/clear <code>ref_topic_id</code>.</td></tr>
+              <tr>
+                <td><span class="method method-get">GET</span></td>
+                <td><code>/api/ui/datamodel</code></td>
+                <td>Returns the canonical Mermaid data-model diagram source string.</td>
+              </tr>
+              <tr>
+                <td><span class="method method-get">GET</span></td>
+                <td><code>/api/ui/graph</code></td>
+                <td>Graph snapshot with nodes, edges, and community IDs for the visual explorer.</td>
+              </tr>
+              <tr>
+                <td><span class="method method-get">GET</span></td>
+                <td><code>/api/ui/system-context</code></td>
+                <td>Returns the configured fixed system role and runtime context, if any.</td>
+              </tr>
+              <tr>
+                <td><span class="method method-put">PUT</span></td>
+                <td><code>/api/ui/system-context</code></td>
+                <td>Sets or updates system context. Requires <code>X-Admin-Key</code> when a config already exists.</td>
+              </tr>
+              <tr>
+                <td><span class="method method-post">POST</span></td>
+                <td><code>/api/ui/topics</code></td>
+                <td>Create a new topic.</td>
+              </tr>
+              <tr>
+                <td><span class="method method-get">GET</span></td>
+                <td><code>/api/ui/topics</code></td>
+                <td>List all topic IDs. Accepts <code>include_archived</code> query param.</td>
+              </tr>
+              <tr>
+                <td><span class="method method-get">GET</span></td>
+                <td><code>/api/ui/topics/{topic_id}</code></td>
+                <td>Fetch full topic data including fields and history.</td>
+              </tr>
+              <tr>
+                <td><span class="method method-patch">PATCH</span></td>
+                <td><code>/api/ui/topics/{topic_id}</code></td>
+                <td>Partially update topic metadata (title, summary, kind, salience, archived).</td>
+              </tr>
+              <tr>
+                <td><span class="method method-delete">DELETE</span></td>
+                <td><code>/api/ui/topics/{topic_id}</code></td>
+                <td>Delete a topic and its edges.</td>
+              </tr>
+              <tr>
+                <td><span class="method method-post">POST</span></td>
+                <td><code>/api/ui/topics/{from_id}/relationships</code></td>
+                <td>Add a typed <code>RELATED</code> edge between two topics.</td>
+              </tr>
+              <tr>
+                <td><span class="method method-delete">DELETE</span></td>
+                <td><code>/api/ui/topics/{from_id}/relationships</code></td>
+                <td>Remove a <code>RELATED</code> edge (<code>to_topic_id</code> and <code>kind</code> as query params).</td>
+              </tr>
+              <tr>
+                <td><span class="method method-post">POST</span></td>
+                <td><code>/api/ui/topics/{topic_id}/fields</code></td>
+                <td>Append a history entry to a field (creates field if absent).</td>
+              </tr>
+              <tr>
+                <td><span class="method method-get">GET</span></td>
+                <td><code>/api/ui/topics/{topic_id}/fields/{field_name}</code></td>
+                <td>Read a field with optional full history (<code>with_history</code> param, default <code>true</code>).</td>
+              </tr>
+              <tr>
+                <td><span class="method method-delete">DELETE</span></td>
+                <td><code>/api/ui/topics/{topic_id}/fields/{field_name}</code></td>
+                <td>Delete a field and its history.</td>
+              </tr>
+              <tr>
+                <td><span class="method method-put">PUT</span></td>
+                <td><code>/api/ui/topics/{topic_id}/fields/{field_name}/ref</code></td>
+                <td>Set or clear <code>ref_topic_id</code> on a field without appending a history entry.</td>
+              </tr>
+              <tr>
+                <td><span class="method method-post">POST</span></td>
+                <td><code>/api/ui/topics/{topic_id}/promote-nested</code></td>
+                <td>Move a set of fields into a new child topic and add a <code>RELATED</code> edge.</td>
+              </tr>
+              <tr>
+                <td><span class="method method-post">POST</span></td>
+                <td><code>/api/ui/topics/{topic_id}/undo-nested</code></td>
+                <td>Reverse a promote-nested: move child fields back into the parent and remove the edge.</td>
+              </tr>
+              <tr>
+                <td><span class="method method-post">POST</span></td>
+                <td><code>/api/ui/topics/{topic_id}/nest-fields</code></td>
+                <td>Group existing fields under a nested key within <code>fields_json</code>.</td>
+              </tr>
+              <tr>
+                <td><span class="method method-post">POST</span></td>
+                <td><code>/api/ui/topics/{topic_id}/unnest-fields</code></td>
+                <td>Flatten a nested field group back to the top level.</td>
+              </tr>
+              <tr>
+                <td><span class="method method-post">POST</span></td>
+                <td><code>/api/ui/transcribe</code></td>
+                <td>Speech-to-text via Groq Whisper. Alias for <code>/api/llm/transcribe</code>, used by the graph UI client.</td>
+              </tr>
             </tbody>
           </table>
 
-          <h2>LLM routes</h2>
+          <h2>LLM routes <code>/api/llm</code></h2>
           <table>
             <thead>
               <tr>
@@ -82,16 +194,21 @@
             </thead>
             <tbody>
               <tr>
-                <td>POST</td>
+                <td><span class="method method-post">POST</span></td>
                 <td><code>/api/llm/chat</code></td>
-                <td>Intent-routed chat with provider selection (Ollama/Groq), tool loops, and optional Study ingest pipeline.</td>
+                <td>Intent-routed chat with Ollama or Groq, tool loops, and optional two-phase Study ingest pipeline.</td>
+              </tr>
+              <tr>
+                <td><span class="method method-post">POST</span></td>
+                <td><code>/api/llm/transcribe</code></td>
+                <td>Speech-to-text via Groq Whisper. Requires <code>GROQ_API_KEY</code>; independent of chat provider.</td>
               </tr>
             </tbody>
           </table>
 
           <h2>Static UI mount</h2>
           <p>
-            <code>/ui/*</code> serves files from <code>src/memstate/api/static/ui</code> when directory exists.
+            <code>/ui/*</code> serves files from <code>src/memstate/api/static/ui/</code> when the directory exists. The mount is set up at startup and is not a router endpoint.
           </p>
 
           <h2>Cross-reference</h2>
@@ -101,6 +218,7 @@
             <li><a href="../operations/revision.html">Operation: revision</a></li>
             <li><a href="../operations/forget.html">Operation: forget</a></li>
             <li><a href="../architecture/http-stack.html">HTTP, UI, and LLM stack</a></li>
+            <li><a href="../operations/run-config.html">Run and configuration</a></li>
           </ul>
         </main>
         <footer class="page-footer">HTTP reference index: routes, auth boundary, and module ownership.</footer>

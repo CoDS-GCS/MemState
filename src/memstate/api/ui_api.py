@@ -7,12 +7,13 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, UploadFile
 from pydantic import BaseModel, Field
 
 from memstate.api.deps import get_graph_store
 from memstate.api.ui_graph_payload import build_ui_graph_snapshot
 from memstate.config import Settings, get_settings
+from memstate.llm.groq_transcribe import transcribe_audio_bytes
 from memstate.datamodel.fields import TopicFields, new_history_entry
 from memstate.store.graph_store import REF_UNCHANGED, GraphStore
 
@@ -39,6 +40,22 @@ def _utc_iso() -> str:
 @router.get("/datamodel")
 def datamodel_diagram() -> dict[str, str]:
     return {"mermaid": DATAMODEL_MERMAID}
+
+
+@router.post("/transcribe")
+async def transcribe_voice_clip(
+    audio: UploadFile = File(..., description="Recorded speech from the UI mic (webm, wav, mp3, m4a, …)"),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, str]:
+    """Same as POST /api/llm/transcribe — lives under /api/ui for the graph UI client."""
+    raw = await audio.read()
+    text = await transcribe_audio_bytes(
+        raw,
+        filename=audio.filename or "audio.webm",
+        content_type=audio.content_type or "application/octet-stream",
+        settings=settings,
+    )
+    return {"text": text}
 
 
 @router.get("/graph")

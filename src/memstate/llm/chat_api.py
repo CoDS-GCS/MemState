@@ -6,12 +6,13 @@ import asyncio
 from typing import Any, Literal
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
 from memstate.api.deps import get_graph_store
 from memstate.config import Settings, get_settings
 from memstate.llm.groq_chat import run_groq_chat
+from memstate.llm.groq_transcribe import transcribe_audio_bytes
 from memstate.llm.intent_router import classify_intent, dialogue_text_for_classifier
 from memstate.llm.ollama_chat import run_ollama_chat
 from memstate.llm.ollama_url import normalize_ollama_base_url, validate_client_ollama_url
@@ -552,3 +553,22 @@ async def llm_chat(body: ChatBody, store: GraphStore = Depends(get_graph_store))
         "intent_source": intent_source,
         "max_tool_rounds": tool_rounds,
     }
+
+
+@router.post("/transcribe")
+async def transcribe_audio(
+    audio: UploadFile = File(..., description="Recorded speech (e.g. webm, wav, mp3, m4a)"),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, str]:
+    """
+    Speech-to-text via Groq Whisper (OpenAI-compatible transcription API).
+    Requires GROQ_API_KEY on the server; independent of chat provider (Ollama vs Groq).
+    """
+    raw = await audio.read()
+    text = await transcribe_audio_bytes(
+        raw,
+        filename=audio.filename or "audio.webm",
+        content_type=audio.content_type or "application/octet-stream",
+        settings=settings,
+    )
+    return {"text": text}

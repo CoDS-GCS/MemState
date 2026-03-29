@@ -4,14 +4,14 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>MemState — graph &amp; controls</title>
-    <link rel="stylesheet" href="styles.css?v=memstate-ui-20260337" />
+    <link rel="stylesheet" href="styles.css?v=memstate-ui-20260341" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
     <script src="https://cdn.jsdelivr.net/npm/vis-network@9.1.9/standalone/umd/vis-network.min.js" crossorigin></script>
     <script src="https://cdn.jsdelivr.net/npm/marked@11.1.1/marked.min.js" crossorigin></script>
     <script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.8/dist/purify.min.js" crossorigin></script>
-    <script src="app.js?v=memstate-ui-20260337" defer></script>
+    <script src="app.js?v=memstate-ui-20260341" defer></script>
   </head>
   <body>
     <div id="backend-banner" class="backend-banner" hidden role="status"></div>
@@ -222,10 +222,10 @@
           </label>
           <label
             class="chat-setting chat-setting-full chat-setting-sound"
-            title="Read assistant replies aloud (text-to-speech). Mic dictation always types in the box and sends after 5 seconds of silence."
+            title="Read assistant replies aloud (browser text-to-speech). Mic uses server Groq Whisper after you pause 5s, then sends to the assistant."
           >
             <span>Voice chat</span>
-            <input id="chat-voice-enabled" type="checkbox" aria-label="Voice chat: spoken replies and voice input" />
+            <input id="chat-voice-enabled" type="checkbox" aria-label="Speak assistant replies aloud (text-to-speech); does not control the mic" />
           </label>
         </div>
         <div
@@ -250,13 +250,13 @@
         </div>
         <div id="chat-log" class="chat-log"></div>
         <form id="form-chat" class="chat-input-row">
-          <textarea id="chat-input" rows="2" placeholder="Type or mic: text appears as you speak; pause 5s to send" autocomplete="off"></textarea>
+          <textarea id="chat-input" rows="2" placeholder="Type, or mic (Whisper on server). Voice chat = spoken replies only." autocomplete="off"></textarea>
           <div class="chat-input-actions">
             <button
               type="button"
               class="btn-icon chat-voice-mic"
               id="btn-chat-voice"
-              title="Voice input (Chrome, Edge, or Safari)"
+              title="Record speech; server transcribes with Groq Whisper"
               aria-label="Voice input"
               aria-pressed="false"
               disabled

@@ -42,7 +42,7 @@
               <tr>
                 <td><code>/api/llm/chat</code></td>
                 <td><code>memstate.llm.chat_api</code></td>
-                <td>Intent routing, provider calls, tool loops, optional Study pipeline.</td>
+                <td>Intent routing, provider calls, tool loops, optional Study pipeline; also exposes <code>/api/llm/transcribe</code> for Groq Whisper speech-to-text.</td>
               </tr>
               <tr>
                 <td><code>/ui/*</code></td>
@@ -61,6 +61,7 @@
           <ul>
             <li>If <code>MEMSTATE_API_KEY</code> is unset: all routes are open.</li>
             <li>If set: protected routes require either <code>X-API-Key</code> or <code>Authorization: Bearer &lt;key&gt;</code>.</li>
+            <li><code>MEMSTATE_ADMIN_KEY</code> (falls back to <code>MEMSTATE_API_KEY</code>) gates updates to system context via <code>X-Admin-Key</code> header on <code>PUT /api/ui/system-context</code>.</li>
             <li>Health endpoints and static UI remain reachable without auth for operational usability.</li>
           </ul>
 

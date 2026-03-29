@@ -98,6 +98,10 @@
               <tr><td><code>MEMSTATE_CHAT_INTENT_TURNS</code></td><td>8</td><td>Dialogue turns included during intent classification context.</td></tr>
               <tr><td><code>MEMSTATE_CHAT_MAX_TOOL_ROUNDS</code></td><td>32</td><td>Maximum tool-call loop iterations in chat flow.</td></tr>
               <tr><td><code>MEMSTATE_CHAT_CHUNK_THRESHOLD_CHARS</code></td><td>10000</td><td>Threshold for entering Study-mode ingest flow.</td></tr>
+              <tr><td><code>MEMSTATE_CHAT_CHUNK_PER_SEGMENT_TOOL_ROUNDS</code></td><td>72</td><td>Tool budget for Study phase A (8–256).</td></tr>
+              <tr><td><code>MEMSTATE_STUDY_PHASE_DELAY_SECONDS</code></td><td>8.0</td><td>Pause (seconds) between Study phase A and B to reduce Groq TPM bursts.</td></tr>
+              <tr><td><code>MEMSTATE_GROQ_RATE_LIMIT_MAX_RETRIES</code></td><td>20</td><td>Max retries on Groq 429 responses.</td></tr>
+              <tr><td><code>MEMSTATE_GROQ_RATE_LIMIT_BACKOFF_CAP_SECONDS</code></td><td>120.0</td><td>Per-retry sleep cap for Groq rate-limit backoff.</td></tr>
             </tbody>
           </table>
 

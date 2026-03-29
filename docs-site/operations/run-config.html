@@ -49,6 +49,9 @@ python -m memstate.api.cli</code></pre>
               <tr><td><code>MEMSTATE_OLLAMA_MODEL</code></td><td><code>llama3.2:latest</code></td><td>Default Ollama model id.</td></tr>
               <tr><td><code>MEMSTATE_GROQ_MODEL</code></td><td><code>openai/gpt-oss-20b</code></td><td>Default Groq model id.</td></tr>
               <tr><td><code>GROQ_API_KEY</code></td><td>unset</td><td>Groq credential (loaded without prefix).</td></tr>
+              <tr><td><code>MEMSTATE_ADMIN_KEY</code></td><td>unset</td><td>Stronger key for protected config updates (e.g. system context). Falls back to MEMSTATE_API_KEY.</td></tr>
+              <tr><td><code>MEMSTATE_OLLAMA_ALLOW_REMOTE</code></td><td><code>false</code></td><td>Allow client-supplied Ollama URLs to non-localhost hosts. Disabled by default (SSRF risk).</td></tr>
+              <tr><td><code>MEMSTATE_GROQ_WHISPER_MODEL</code></td><td><code>whisper-large-v3-turbo</code></td><td>Groq Whisper model for speech-to-text transcription endpoints.</td></tr>
             </tbody>
           </table>
 
@@ -67,6 +70,10 @@ python -m memstate.api.cli</code></pre>
               <tr><td><code>MEMSTATE_CHAT_CHUNK_THRESHOLD_CHARS</code></td><td>10000</td><td>Threshold for Study two-phase ingest.</td></tr>
               <tr><td><code>MEMSTATE_CHAT_CHUNK_PER_SEGMENT_TOOL_ROUNDS</code></td><td>72</td><td>Tool budget used in Study phase A.</td></tr>
               <tr><td><code>MEMSTATE_STUDY_PHASE_DELAY_SECONDS</code></td><td>8.0</td><td>Pause between Study phase A and phase B.</td></tr>
+              <tr><td><code>MEMSTATE_GROQ_RATE_LIMIT_MAX_RETRIES</code></td><td>20</td><td>Max retries on Groq 429 / rate_limit_exceeded (1–100).</td></tr>
+              <tr><td><code>MEMSTATE_GROQ_RATE_LIMIT_BACKOFF_CAP_SECONDS</code></td><td>120.0</td><td>Cap (seconds) for Groq rate-limit backoff sleep per retry (1–600).</td></tr>
+              <tr><td><code>MEMSTATE_QUERY_FIELD_SALIENCE_BUMP</code></td><td>0.1</td><td>Per-field salience increase when read tools return field data on query intent (0–2).</td></tr>
+              <tr><td><code>MEMSTATE_FIELD_SALIENCE_MAX</code></td><td>10.0</td><td>Upper bound for field salience values (0.1–10).</td></tr>
             </tbody>
           </table>
 
