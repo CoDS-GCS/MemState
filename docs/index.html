@@ -4,7 +4,33 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>MemState &mdash; Long-term memory for AI agents</title>
-    <link rel="stylesheet" href="styles.css" />
+    <!--
+      GitHub Pages project URLs are often .../RepoName with no trailing slash. Same-directory
+      links like styles.css then resolve to the site root (wrong). Resolve assets and in-page
+      links against the real docs directory (see also docs/js/nav.js rootBase for sidebars).
+    -->
+    <script>
+      (function () {
+        function memstateDocRoot() {
+          var path = location.pathname || "/";
+          path = path.replace(/\/index\.html?$/i, "/");
+          if (path.endsWith("/")) return path;
+          var slash = path.lastIndexOf("/");
+          var last = path.slice(slash + 1);
+          if (!last || last.indexOf(".") < 0) return path + "/";
+          return path.slice(0, slash + 1);
+        }
+        function memstateResolve(rel) {
+          if (location.protocol === "file:") {
+            return new URL(rel, location.href.replace(/[^/]*$/, "")).href;
+          }
+          return new URL(memstateDocRoot() + rel.replace(/^\//, ""), location.origin).href;
+        }
+        window.__memstateDocRoot = memstateDocRoot();
+        window.__memstateResolve = memstateResolve;
+        document.write('<link rel="stylesheet" href="' + memstateResolve("styles.css") + '">');
+      })();
+    </script>
   </head>
   <body class="has-sidebar" data-doc-audience="product" data-doc-page="index">
     <div class="doc-layout">
@@ -276,6 +302,19 @@
         <footer class="page-footer">MemState &mdash; long-term memory infrastructure for AI agents.</footer>
       </div>
     </div>
-    <script src="js/nav.js" defer></script>
+    <script>
+      (function () {
+        if (location.protocol !== "file:") {
+          document.querySelectorAll('a[href^="product/"], a[href^="developers/"]').forEach(function (a) {
+            var h = a.getAttribute("href");
+            if (h) a.setAttribute("href", window.__memstateResolve(h));
+          });
+        }
+        var s = document.createElement("script");
+        s.src = window.__memstateResolve("js/nav.js");
+        s.defer = true;
+        document.body.appendChild(s);
+      })();
+    </script>
   </body>
 </html>

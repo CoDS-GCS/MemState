@@ -48,6 +48,17 @@
 
   function rootBase() {
 
+    /* index.html sets __memstateDocRoot so links work on GitHub Pages when the URL is
+       /RepoName with no trailing slash (same-directory hrefs would otherwise hit the host root). */
+    if (
+      location.protocol !== "file:" &&
+      typeof window.__memstateDocRoot === "string" &&
+      window.__memstateDocRoot.length &&
+      (!page || page === "index")
+    ) {
+      return window.__memstateDocRoot;
+    }
+
     if (!page || page === "index") return "./";
 
     var depth = page.split("/").filter(Boolean).length - 1;
