@@ -9,5 +9,10 @@ __pycache__/
 dist/
 build/
 
+
+.claude/
+.cursor/
+
+
 # Cursor doc-refresh hook flag (transient)
 .cursor/doc-refresh-needed.flag

@@ -1645,40 +1645,41 @@ function runForceLayout(nodes, links, cidOf) {
         d3
           .forceLink(simLinks)
           .id((d) => d.id)
-          .distance(240)
-          .strength(0.22),
+          .distance(340)
+          .strength(0.18),
       )
       .force(
         "charge",
-        d3.forceManyBody().strength(-1700).distanceMin(18).distanceMax(1400),
+        d3.forceManyBody().strength(-2600).distanceMin(24).distanceMax(1800),
       )
       .force(
         "x",
         d3
           .forceX()
           .x((d) => (centers.get(d.community) || { x: 0 }).x)
-          .strength(0.11),
+          .strength(0.09),
       )
       .force(
         "y",
         d3
           .forceY()
           .y((d) => (centers.get(d.community) || { y: 0 }).y)
-          .strength(0.11),
+          .strength(0.09),
       )
-      .force("collide", rectangleCollideForce(18, 1))
+      .force("collide", rectangleCollideForce(28, 1))
       .alpha(1)
-      .alphaDecay(0.025)
-      .velocityDecay(0.4)
+      .alphaDecay(0.022)
+      .velocityDecay(0.42)
       .stop();
 
-    const ticks = Math.min(520, 260 + simNodes.length * 5);
+    const ticks = Math.min(600, 320 + simNodes.length * 6);
     for (let i = 0; i < ticks; i++) sim.tick();
 
-    // Final pure-separation pass — guarantees no visible card overlap.
-    const separate = rectangleCollideForce(22, 1);
+    // Final pure-separation pass — guarantees no visible card overlap and
+    // gives edges more room to curve around neighbours.
+    const separate = rectangleCollideForce(32, 1);
     separate.initialize(simNodes);
-    for (let i = 0; i < 80; i++) separate();
+    for (let i = 0; i < 120; i++) separate();
 
     const out = new Map();
     for (const s of simNodes) out.set(s.id, { x: s.x, y: s.y });
@@ -1733,7 +1734,8 @@ function buildVisDatasets(nodes, links) {
     return vis;
   });
 
-  // Distribute roundness among parallel edges so they don't stack.
+  // Distribute roundness + alternate curve direction among parallel edges so
+  // they don't stack on top of each other.
   const pairKey = (a, b) => (a < b ? `${a}|${b}` : `${b}|${a}`);
   /** @type {Map<string, number>} */
   const pairCounts = new Map();
@@ -1749,41 +1751,60 @@ function buildVisDatasets(nodes, links) {
     const count = pairCounts.get(k) || 1;
     const idx = pairSeen.get(k) || 0;
     pairSeen.set(k, idx + 1);
-    let roundness = 0.22;
+    // Alternate clockwise / counter-clockwise curves for parallel edges;
+    // single edges get a gentle curve so they bend around neighbour cards
+    // instead of slicing straight through them.
+    let smoothType = "curvedCW";
+    let roundness = 0.28;
     if (count > 1) {
-      const step = 0.18;
-      roundness = 0.12 + idx * step;
+      const step = 0.22;
+      const isEven = idx % 2 === 0;
+      smoothType = isEven ? "curvedCW" : "curvedCCW";
+      roundness = 0.2 + Math.floor(idx / 2) * step;
+    } else {
+      // Hash-based alternating for visual variety when many single edges
+      // arrive at the same node.
+      let h = 0;
+      for (let c = 0; c < k.length; c++) h = (h * 31 + k.charCodeAt(c)) | 0;
+      smoothType = (h & 1) === 0 ? "curvedCW" : "curvedCCW";
     }
+
+    const relKind = e.isRef ? "field ref" : e.label || "RELATED";
+    const labelText = e.label || (e.isRef ? "ref" : "");
     return {
       id: `e${i}`,
       from: e.source,
       to: e.target,
-      label: e.label || undefined,
+      // Labels hidden by default (they overlapped cards); shown as tooltip +
+      // as edge label only on hover / selection via `hoverEdge` handler.
+      label: undefined,
+      originalLabel: labelText,
+      title: e.label ? `${relKind}: ${e.label}` : relKind,
       color: {
-        color: e.isRef ? "#22c55e" : "#60a5fa",
-        highlight: "#bfdbfe",
-        hover: "#bfdbfe",
-        opacity: 0.55,
+        color: e.isRef ? "#34d399" : "#60a5fa",
+        highlight: e.isRef ? "#86efac" : "#bfdbfe",
+        hover: e.isRef ? "#86efac" : "#bfdbfe",
+        opacity: 0.72,
       },
-      dashes: e.isRef ? [4, 3] : false,
-      width: 1.1,
-      selectionWidth: 1.8,
-      hoverWidth: 0.6,
-      arrows: { to: { enabled: true, scaleFactor: 0.5, type: "arrow" } },
+      dashes: e.isRef ? [5, 4] : false,
+      width: 1.25,
+      selectionWidth: 2.0,
+      hoverWidth: 0.8,
+      arrows: { to: { enabled: true, scaleFactor: 0.85, type: "arrow" } },
       arrowStrikethrough: false,
-      endPointOffset: { from: 2, to: 2 },
+      endPointOffset: { from: 3, to: 3 },
       font: {
-        size: 9,
-        color: "#94a3b8",
-        strokeWidth: 3,
-        strokeColor: "rgba(10, 14, 22, 0.9)",
+        size: 10,
+        color: "#cbd5f5",
+        strokeWidth: 4,
+        strokeColor: "rgba(10, 14, 22, 0.95)",
         align: "middle",
         face: CARD_FONT,
       },
+      labelHighlightBold: false,
       smooth: {
         enabled: true,
-        type: "cubicBezier",
-        forceDirection: "none",
+        type: smoothType,
         roundness,
       },
     };
@@ -1976,6 +1997,27 @@ function renderGraph(apiData) {
   net.on("select", () => updateGraphDeleteTopicButton());
   net.on("deselect", () => updateGraphDeleteTopicButton());
   updateGraphDeleteTopicButton();
+
+  // Reveal edge label on hover / selection — keeps the graph readable while
+  // still exposing relationship kinds (e.g. "memberOf", "authors", ref fields).
+  const showEdgeLabel = (id) => {
+    if (!id) return;
+    const edge = data.edges.get(id);
+    if (!edge || !edge.originalLabel) return;
+    data.edges.update({ id, label: edge.originalLabel });
+  };
+  const hideEdgeLabel = (id) => {
+    if (!id) return;
+    data.edges.update({ id, label: undefined });
+  };
+  net.on("hoverEdge", (params) => showEdgeLabel(params.edge));
+  net.on("blurEdge", (params) => hideEdgeLabel(params.edge));
+  net.on("selectEdge", (params) => (params.edges || []).forEach(showEdgeLabel));
+  net.on("deselectEdge", (params) =>
+    ((params.previousSelection && params.previousSelection.edges) || []).forEach(
+      hideEdgeLabel,
+    ),
+  );
 
   wireGraphTooltip(net);
 
