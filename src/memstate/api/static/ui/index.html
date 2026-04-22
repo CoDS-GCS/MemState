@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>MemState — graph &amp; controls</title>
-    <link rel="stylesheet" href="styles.css?v=memstate-ui-20260422-edges" />
+    <link rel="stylesheet" href="styles.css?v=memstate-ui-20260422-wizard" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
@@ -12,7 +12,7 @@
     <script src="https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js" crossorigin></script>
     <script src="https://cdn.jsdelivr.net/npm/marked@11.1.1/marked.min.js" crossorigin></script>
     <script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.8/dist/purify.min.js" crossorigin></script>
-    <script src="app.js?v=memstate-ui-20260422-edges" defer></script>
+    <script src="app.js?v=memstate-ui-20260422-wizard" defer></script>
   </head>
   <body>
     <div id="backend-banner" class="backend-banner" hidden role="status"></div>
@@ -176,7 +176,6 @@
             </button>
           </div>
           <div id="network"></div>
-          <div id="graph-tooltip" class="graph-tooltip" hidden role="tooltip" aria-live="polite"></div>
           <div id="graph-node-menu" class="graph-node-menu" hidden role="menu" aria-label="Topic actions"></div>
           <div id="empty-state" class="empty-state">
             <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" opacity="0.4">
@@ -189,7 +188,7 @@
           <div class="legend">
             <span><i class="rel"></i> RELATED</span>
             <span><i class="ref"></i> field ref</span>
-            <span class="legend-hint">Wheel zoom · pan · drag · click topic for details · hover an edge to see its kind · right-click for menu (delete) · ring = community</span>
+            <span class="legend-hint">Wheel zoom · pan · drag · click topic for details · select an edge to see its kind · right-click for menu (delete) · ring = community</span>
           </div>
         </div>
       </main>

@@ -585,6 +585,93 @@ tbody tr:hover { background: rgba(127, 127, 127, 0.04); }
 .method-patch  { background: var(--m-patch-bg);  color: var(--m-patch-fg);  border: 1px solid var(--m-patch-bd);  }
 
 /* ---------------------------------------------------------
+   Status badges (implementation status, etc.)
+   --------------------------------------------------------- */
+.status-impl,
+.status-future,
+.status-partial {
+  display: inline-block;
+  padding: 0.16em 0.55em;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  line-height: 1.5;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+.status-impl {
+  background: var(--green-bg);
+  color: var(--green);
+  border: 1px solid var(--green-border);
+}
+.status-future {
+  background: var(--surface-raised);
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  font-weight: 500;
+}
+.status-partial {
+  background: var(--amber-bg);
+  color: var(--amber);
+  border: 1px solid var(--amber-border);
+}
+
+/* ---------------------------------------------------------
+   Definition blocks (formal definitions from the paper)
+   --------------------------------------------------------- */
+.definition {
+  margin: 1rem 0 1.25rem;
+  padding: 0.9rem 1.1rem 0.95rem;
+  border: 1px solid var(--accent-border);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--accent-bg);
+  font-size: 0.92rem;
+  line-height: 1.65;
+  color: var(--text-secondary);
+}
+.definition .definition-label {
+  display: block;
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--accent-bright);
+  margin-bottom: 0.35rem;
+}
+.definition strong { color: var(--text); }
+
+.algorithm {
+  margin: 1rem 0 1.25rem;
+  padding: 0.85rem 1.1rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  font-size: 0.86rem;
+}
+.algorithm .algorithm-label {
+  display: block;
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text-dim);
+  margin-bottom: 0.35rem;
+}
+.algorithm ol {
+  margin: 0.35rem 0 0;
+  padding-left: 1.3rem;
+  counter-reset: algo;
+  list-style: decimal;
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+}
+.algorithm ol li { line-height: 1.6; }
+.algorithm ol ol { padding-left: 1.1rem; margin-top: 0.15rem; }
+
+/* ---------------------------------------------------------
    Grid + cards
    --------------------------------------------------------- */
 .grid-2 {

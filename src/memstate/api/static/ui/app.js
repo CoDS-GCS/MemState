@@ -495,108 +495,8 @@ function buildTopicTooltipPayload(apiNode, community) {
   };
 }
 
-function renderTopicTooltipHtml(p) {
-  const parts = [];
-  parts.push(`<div class="graph-tooltip-head">${escapeHtml(p.head)}</div>`);
-  parts.push('<dl class="graph-tooltip-meta">');
-  parts.push(`<dt>Kind</dt><dd>${escapeHtml(String(p.topicKind))}</dd>`);
-  parts.push(`<dt>Salience</dt><dd>${escapeHtml(String(p.salience ?? "—"))}</dd>`);
-  parts.push(`<dt>Fields</dt><dd>${p.fieldCount}</dd>`);
-  if (p.archived) parts.push("<dt>Status</dt><dd>archived</dd>");
-  if (p.community != null && Number.isFinite(Number(p.community))) {
-    parts.push(`<dt>Community</dt><dd>${escapeHtml(String(p.community))}</dd>`);
-  }
-  parts.push(`<dt>ID</dt><dd>${escapeHtml(p.idShort)}</dd>`);
-  parts.push("</dl>");
-  if (p.fields && p.fields.length) {
-    parts.push('<ul class="graph-tooltip-fields">');
-    const max = 12;
-    for (let i = 0; i < Math.min(p.fields.length, max); i++) {
-      const f = p.fields[i];
-      const ref = f.ref
-        ? ` <span style="opacity:.88">→ ${escapeHtml(f.ref)}</span>`
-        : "";
-      parts.push(
-        `<li><strong>${escapeHtml(f.name)}</strong> (${escapeHtml(f.type)})${ref}</li>`
-      );
-      if (f.nested && f.nested.length) {
-        parts.push('<ul class="graph-tooltip-nested-fields">');
-        for (const sf of f.nested) {
-          parts.push(
-            `<li><span class="graph-tooltip-nested-mark">└</span> <strong>${escapeHtml(sf.name)}</strong> (${escapeHtml(sf.type)})</li>`
-          );
-        }
-        parts.push("</ul>");
-      }
-    }
-    if (p.fields.length > max) {
-      parts.push(
-        `<li style="border-left-color:var(--muted);opacity:.88">… +${p.fields.length - max} more</li>`
-      );
-    }
-    parts.push("</ul>");
-  }
-  return parts.join("");
-}
-
 function hideGraphTooltip() {
-  const tip = document.getElementById("graph-tooltip");
-  if (tip) {
-    tip.hidden = true;
-    tip.innerHTML = "";
-  }
-}
-
-/**
- * @param {HTMLElement} tipEl
- * @param {Record<string, unknown>} params
- */
-function positionGraphTooltip(tipEl, params) {
-  const wrap = graphView.container?.closest(".graph-wrap");
-  if (!wrap || !tipEl) return;
-  const r = wrap.getBoundingClientRect();
-  const e = params.event;
-  let x = 16;
-  let y = 16;
-  if (e && typeof e.clientX === "number") {
-    x = e.clientX - r.left + 12;
-    y = e.clientY - r.top + 12;
-  } else {
-    const p = params.pointer?.DOM;
-    if (p && graphView.container) {
-      const nr = graphView.container.getBoundingClientRect();
-      x = nr.left - r.left + p.x + 12;
-      y = nr.top - r.top + p.y + 12;
-    }
-  }
-  tipEl.style.left = `${x}px`;
-  tipEl.style.top = `${y}px`;
-  const pad = 8;
-  const tw = tipEl.offsetWidth;
-  const th = tipEl.offsetHeight;
-  if (x + tw > wrap.clientWidth - pad) x = Math.max(pad, wrap.clientWidth - tw - pad);
-  if (y + th > wrap.clientHeight - pad) y = Math.max(pad, wrap.clientHeight - th - pad);
-  tipEl.style.left = `${x}px`;
-  tipEl.style.top = `${y}px`;
-}
-
-function wireGraphTooltip(net) {
-  const tip = document.getElementById("graph-tooltip");
-  if (!tip) return;
-
-  net.on("hoverNode", (params) => {
-    const id = params.node;
-    const payload = graphView.nodeTooltipPayload?.get(id);
-    const html = payload ? renderTopicTooltipHtml(payload) : "";
-    if (!html) return;
-    tip.innerHTML = html;
-    tip.hidden = false;
-    requestAnimationFrame(() => positionGraphTooltip(tip, params));
-  });
-
-  net.on("blurNode", () => hideGraphTooltip());
-  net.on("dragStart", () => hideGraphTooltip());
-  net.on("zoom", () => hideGraphTooltip());
+  /* legacy no-op: node hover tooltip removed (use click → topic wizard). */
 }
 
 function buildGraphData(data) {
@@ -712,13 +612,22 @@ function historyTimelineOpacity(hist, index) {
 
 /**
  * @param {unknown[]} hist
+ * @param {{ variant?: "default" | "compact" }} [opts]
  */
-function renderFieldTimelineHtml(hist) {
+function renderFieldTimelineHtml(hist, opts = {}) {
+  const compact = opts.variant === "compact";
   const parts = [];
   const h = Array.isArray(hist) ? hist : [];
   if (h.length) {
-    parts.push('<div class="topic-wizard-field-timeline">');
-    parts.push('<div class="topic-wizard-timeline-heading">Value timeline</div>');
+    const wrapClass = compact
+      ? "topic-wizard-field-timeline topic-wizard-field-timeline--compact"
+      : "topic-wizard-field-timeline";
+    parts.push(`<div class="${wrapClass}">`);
+    parts.push(
+      compact
+        ? '<div class="topic-wizard-timeline-heading topic-wizard-timeline-heading--compact">History</div>'
+        : '<div class="topic-wizard-timeline-heading">Value timeline</div>',
+    );
     parts.push('<ul class="topic-wizard-timeline" role="list">');
     for (let i = 0; i < h.length; i++) {
       const e = h[i];
@@ -742,7 +651,9 @@ function renderFieldTimelineHtml(hist) {
         : "topic-wizard-timeline-item topic-wizard-timeline-item--past";
       const badge = isCurrent
         ? '<span class="topic-wizard-timeline-badge">Current</span>'
-        : '<span class="topic-wizard-timeline-badge topic-wizard-timeline-badge--past">Earlier</span>';
+        : compact
+          ? '<span class="topic-wizard-timeline-badge topic-wizard-timeline-badge--past" title="Earlier revision">Prior</span>'
+          : '<span class="topic-wizard-timeline-badge topic-wizard-timeline-badge--past">Earlier</span>';
       const opRaw = e && typeof e === "object" && e.operation != null ? String(e.operation).trim() : "";
       const opTag = opRaw
         ? `<span class="topic-wizard-timeline-op" title="Revision operation">${escapeHtml(opRaw)}</span>`
@@ -1720,9 +1631,15 @@ function buildVisDatasets(nodes, links) {
   const visNodes = nodes.map((n) => {
     const cid = cidOf(n);
     const p = forcePos ? forcePos.get(n.id) : fallback?.get(n.id);
+    const layout = n._cardLayout || buildCardLayout(n);
+    n._cardLayout = layout;
+    // vis-network's first layout pass runs before ctxRenderer reports
+    // nodeDimensions; `size` seeds a sane bbox so edge intersections and
+    // arrowheads are not computed for a tiny default circle.
     const vis = {
       id: n.id,
       shape: "custom",
+      size: Math.ceil(Math.max(layout.width, layout.height) / 2),
       ctxRenderer: makeCardRenderer(n, cid),
       label: undefined,
       physics: false,
@@ -1786,13 +1703,19 @@ function buildVisDatasets(nodes, links) {
         hover: e.isRef ? "#86efac" : "#bfdbfe",
         opacity: 0.72,
       },
-      dashes: e.isRef ? [5, 4] : false,
-      width: 1.25,
+      // Solid strokes: canvas dashes often leave the last gap short of the
+      // arrowhead, so the head looks "floating"; ref vs RELATED is color.
+      dashes: false,
+      width: e.isRef ? 1.05 : 1.25,
       selectionWidth: 2.0,
       hoverWidth: 0.8,
-      arrows: { to: { enabled: true, scaleFactor: 0.85, type: "arrow" } },
-      arrowStrikethrough: false,
-      endPointOffset: { from: 3, to: 3 },
+      arrows: { to: { enabled: true, scaleFactor: 0.68, type: "arrow" } },
+      // Must be true or vis ignores endPointOffset in bezier border math
+      // (see vis-network bezier-edge-base.ts).
+      arrowStrikethrough: true,
+      // Positive = stop slightly outside the true border so tips sit on the
+      // card edge instead of clipping into rounded corners / shadow.
+      endPointOffset: { from: 4, to: 6 },
       font: {
         size: 10,
         color: "#cbd5f5",
@@ -1831,7 +1754,11 @@ const VIS_NETWORK_OPTIONS = {
     borderWidthSelected: 0,
     shadow: false,
   },
-  edges: { selectionWidth: 1.6 },
+  edges: {
+    selectionWidth: 1.6,
+    arrowStrikethrough: true,
+    endPointOffset: { from: 4, to: 6 },
+  },
 };
 
 function initGraph(container) {
@@ -2018,8 +1945,6 @@ function renderGraph(apiData) {
       hideEdgeLabel,
     ),
   );
-
-  wireGraphTooltip(net);
 
   const w = graphView.container.clientWidth;
   const h = graphView.container.clientHeight;
@@ -3164,7 +3089,11 @@ function showFieldWizard(payload) {
     );
   }
   parts.push("</dl>");
-  parts.push(renderFieldTimelineHtml(Array.isArray(payload.history) ? payload.history : []));
+  parts.push(
+    renderFieldTimelineHtml(Array.isArray(payload.history) ? payload.history : [], {
+      variant: "compact",
+    }),
+  );
   parts.push("</section>");
   body.innerHTML = parts.join("");
 

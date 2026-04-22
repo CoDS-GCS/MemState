@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Data model - fields and history</title>
+    <title>Data model - fields and value history</title>
     <link rel="stylesheet" href="../styles.css" />
   </head>
   <body class="has-sidebar" data-doc-page="data-model/fields">
@@ -11,34 +11,55 @@
       <aside id="doc-sidebar" aria-label="Documentation navigation"></aside>
       <div class="doc-inner">
         <header class="page-header">
-          <h1>Fields and revision history</h1>
+          <h1>Fields and value history</h1>
         </header>
         <main class="page-main">
           <p>
-            Fields are stored as a name-keyed map inside <code>fields_json</code>. Each field includes type metadata, optional topic reference, per-field salience, and
-            an ordered revision history (newest first).
+            Fields are the fine-grained state carried by each topic. A topic <em>u<sub>i</sub></em> exposes a
+            name-keyed map of fields <em>f<sub>i,j</sub></em> in <code>fields_json</code>; each field carries type
+            metadata, optional topic reference, per-field salience, and an ordered value history (newest first).
           </p>
 
-          <h2>Field record schema</h2>
+          <h2 id="value-history">Value history H<sub>i,j</sub></h2>
+          <p>
+            For each field <em>f<sub>i,j</sub></em> of topic <em>u<sub>i</sub></em>, MemState maintains a
+            time-ordered value history
+            <strong>H<sub>i,j</sub> = &#10216;(v<sub>1</sub>, t<sub>1</sub>, &pi;<sub>1</sub>), &hellip;, (v<sub>k</sub>,
+            t<sub>k</sub>, &pi;<sub>k</sub>)&#10217;</strong>, where each entry records a value <em>v</em>, a
+            timestamp <em>t</em>, and the provenance <em>&pi;</em> of the source interaction that produced it (for
+            example, a user message or a revision event). This is the primary evidence structure that supports query
+            soundness (Definition 8): the system distinguishes the current value <em>v<sub>k</sub></em> from prior
+            values <em>v<sub>1</sub>, &hellip;, v<sub>k&minus;1</sub></em> and returns historical values only when
+            the query explicitly asks for them.
+          </p>
+
+          <div class="callout">
+            <strong>Why histories and not overwrites.</strong> Overwriting a field value destroys
+            <em>H<sub>i,j</sub></em> and irreversibly truncates <em>V<sub>i</sub></em>, violating query soundness for
+            any historical or provenance query. Ingestion therefore appends rather than overwrites; revision marks
+            superseded entries without deleting them.
+          </div>
+
+          <h2 id="schema">Field record schema</h2>
           <pre><code>{
-  "field_name": {
+  "field_name": {                            // f_{i,j}
     "field_type": "string|int|float|bool|date|datetime|list|json",
-    "ref_topic_id": "optional-topic-id",
-    "salience": 1.0,
-    "history": [
+    "ref_topic_id": "optional-topic-id",     // pointer into S_t
+    "salience": 1.0,                         // reinforced by retrieval
+    "history": [                             // H_{i,j}, newest-first
       {
         "id": "uuid",
-        "valid_from": "2026-03-24T12:00:00+00:00",
-        "value": "...",
+        "valid_from": "2026-03-24T12:00:00+00:00",   // t
+        "value": "...",                               // v
         "why_changed": "optional",
         "impact_expected": "optional",
-        "provenance": "api|ui|llm|mcp|..."
+        "provenance": "api|ui|llm|mcp|..."            // π
       }
     ]
   }
 }</code></pre>
 
-          <h2>Supported field types</h2>
+          <h2 id="supported-types">Supported field types</h2>
           <table>
             <thead>
               <tr>
@@ -59,39 +80,42 @@
             </tbody>
           </table>
 
-          <h2>Temporal semantics</h2>
+          <h2 id="temporal-semantics">Temporal semantics</h2>
           <ul>
-            <li>History order is newest first; <code>history[0]</code> is current value.</li>
-            <li>Append operations always create a new revision id when absent.</li>
-            <li>History length is capped by <code>Policies.max_field_history</code> (default <code>500</code>).</li>
-            <li>Old revisions are truncated from the tail when cap is exceeded.</li>
+            <li>History order is newest-first; <code>history[0]</code> is the current value <em>v<sub>k</sub></em>.</li>
+            <li>Append operations always create a new revision id (UUID) when absent.</li>
+            <li>History length is capped by <code>Policies.max_field_history</code> (default <code>500</code>); old
+              revisions are truncated from the tail when the cap is exceeded.</li>
+            <li>Provenance <em>&pi;</em> identifies the source channel (<code>api</code>, <code>ui</code>,
+              <code>llm</code>, <code>mcp</code>, internal revision event, &hellip;).</li>
           </ul>
 
-          <h2>Field salience behavior</h2>
+          <h2 id="field-salience">Field salience</h2>
           <ul>
-            <li>Each field stores a salience float in [0, 10]. Invalid values are clamped in validators.</li>
-            <li>Query-route LLM read tools can bump field salience (configurable via settings).</li>
-            <li>Topic salience may be synchronized to the average of field saliences after field mutations.</li>
+            <li>Each field carries a salience float in <code>[0, 10]</code>. Invalid values are clamped in validators.</li>
+            <li>Retrieval reinforces salience on read; forgetting consults it on policy evaluation.</li>
+            <li>Topic salience is synchronized to the mean of field saliences after field mutations
+              (<code>sync_topic_salience_from_fields</code>).</li>
           </ul>
 
-          <h2>Revision lifecycle diagram</h2>
+          <h2 id="lifecycle">Revision lifecycle</h2>
           <pre class="sequence"><code>Incoming write (UI API, /v1 ingest, or LLM tool)
-  -> build FieldHistoryEntry (id, valid_from, value, provenance)
+  -> build FieldHistoryEntry (id, valid_from=t, value=v, provenance=π)
   -> append_field_history(topic_id, field_name, entry)
   -> insert at history index 0
   -> trim to max_field_history
   -> persist fields_json
   -> sync topic salience from field salience average</code></pre>
 
-          <h2>Implementation references</h2>
+          <h2 id="impl-refs">Implementation references</h2>
           <ul>
             <li><code>datamodel.fields.TopicField</code>: field schema, type coercion, salience clamp.</li>
             <li><code>datamodel.fields.FieldHistoryEntry</code>: revision payload, extra fields allowed.</li>
             <li><code>store.GraphStore.append_field_history</code>: mutation path and history capping.</li>
-            <li><code>core.Executor._field_bundle</code>: query-side serialization of current/history slices.</li>
+            <li><code>core.Executor._field_bundle</code>: retrieval-side serialization of current/history slices.</li>
           </ul>
         </main>
-        <footer class="page-footer">Field model reference: typing, history, salience, and mutation lifecycle.</footer>
+        <footer class="page-footer">Field model reference: typing, value history, salience, and mutation lifecycle.</footer>
       </div>
     </div>
     <script src="../js/nav.js" defer></script>

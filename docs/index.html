@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>MemState - official system documentation</title>
+    <title>MemState - System documentation</title>
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body class="has-sidebar" data-doc-page="index">
@@ -11,163 +11,265 @@
       <aside id="doc-sidebar" aria-label="Documentation navigation"></aside>
       <div class="doc-inner">
         <header class="page-header">
-          <h1>MemState official system documentation</h1>
+          <h1>MemState</h1>
         </header>
         <main class="page-main">
           <p>
-            MemState is a single-process memory service built on FastAPI and embedded Kuzu. It stores structured,
-            versioned knowledge as a <em>topic graph</em> and exposes it through three access surfaces on one shared
-            store: <code>/v1</code> for product memory semantics, <code>/api/ui</code> for low-level graph operations,
-            and <code>/api/llm/chat</code> for tool-based natural language access.
+            MemState is the reference implementation of <strong>Governed Evolving Memory</strong> (GEM), a
+            data-management model for long-term AI agent memory. It replaces record-level CRUD semantics with four
+            state-level operators <em>ingestion</em>, <em>revision</em>, <em>forgetting</em>, and <em>retrieval</em>
+            acting over a governed evolving state. The system is packaged as a single FastAPI process backed by an
+            embedded Kuzu property graph, and exposes three access surfaces on one shared store: <code>/v1</code> for
+            product semantics, <code>/api/ui</code> for low-level graph operations, and <code>/api/llm/chat</code> for
+            tool-based natural language access.
           </p>
 
           <div class="callout">
-            This site is the official engineering reference for maintainers and integrators. Every behavior described
-            here is mapped to the current codebase under <code>src/memstate</code>.
+            This site is the engineering reference for maintainers and integrators. Every behavior described here is
+            mapped to the current codebase under <code>src/memstate</code>; every abstraction is traceable to the
+            MemState paper, <em>Is Agent Memory a Database?</em>, which this documentation treats as the source of
+            truth for definitions and operators.
           </div>
 
           <!-- ============================================================ -->
-          <h2>Data model: the Topic graph</h2>
+          <h2 id="governed-evolving-memory">Governed evolving memory</h2>
           <p>
-            MemState stores knowledge as a <strong>topic graph</strong>: each Topic is a single versioned unit with typed fields (each with per-field history), one
-            embedding vector, salience-driven retention, and explicit RELATED edges for structure.
-          </p>
-          <p>
-            Home page stays high-level; the full rationale and the Topic anatomy diagram live in
-            <a href="data-model/overview.html#why-topic-graph">Data model / Topic model</a>.
-          </p>
-
-          <!-- ============================================================ -->
-          <h2>Low-level operations: GraphStore primitives</h2>
-
-          <p>
-            Internally, all behavior decomposes into a small set of primitive operations implemented in
-            <code>memstate.store.graph_store</code>. These are the only code paths that issue Cypher and touch the embedded
-            database directly.
-          </p>
-          <p>
-            Start with the primitive reference if you're implementing new behavior, debugging Cypher, or tracing side
-            effects.
+            Classical databases localize correctness at the record or transaction level and expose primitive storage
+            operations (<code>insert</code>, <code>update</code>, <code>delete</code>, <code>select</code>). This is
+            insufficient for agent memory, which must integrate new input into existing knowledge, reconcile internal
+            contradictions, attenuate low-relevance content under policy control, and reinforce relevance through
+            access. MemState models memory as a governed evolving state whose content, structure, and policies change
+            continuously over time.
           </p>
 
-          <p><a href="api/index.html">API / Endpoint index</a> is the easiest way to find the UI and graph routes for calling primitives from tools.</p>
+          <div class="figure-block">
+            <svg class="diagram-svg" viewBox="0 0 900 300" xmlns="http://www.w3.org/2000/svg" aria-label="Governed evolving memory overview">
+              <defs>
+                <marker id="arr-hero" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+                  <path d="M0,0 L0,6 L8,3 z" fill="#8b949e" />
+                </marker>
+              </defs>
 
-          <h3>Primitive operations reference</h3>
+              <!-- Central state box -->
+              <rect x="340" y="90" width="220" height="120" rx="10" fill="#10161d" stroke="#3b82f6" stroke-width="1.6" />
+              <text x="450" y="118" text-anchor="middle" fill="#60a5fa" font-size="14" font-family="Inter, sans-serif" font-weight="600">Memory state M&#8348;</text>
+              <text x="450" y="142" text-anchor="middle" fill="#c9d1d9" font-size="12" font-family="Inter, sans-serif">D&#8348; &nbsp; stored content</text>
+              <text x="450" y="162" text-anchor="middle" fill="#c9d1d9" font-size="12" font-family="Inter, sans-serif">S&#8348; &nbsp; structural organization</text>
+              <text x="450" y="182" text-anchor="middle" fill="#c9d1d9" font-size="12" font-family="Inter, sans-serif">P&#8348; &nbsp; evolution policies</text>
 
+              <!-- Ingestion -->
+              <rect x="40" y="40" width="180" height="54" rx="8" fill="#10161d" stroke="#4ade80" />
+              <text x="130" y="63" text-anchor="middle" fill="#4ade80" font-size="12" font-family="Inter, sans-serif" font-weight="600">Ingestion &nbsp;U(I&#8348;)</text>
+              <text x="130" y="82" text-anchor="middle" fill="#8b949e" font-size="11" font-family="Inter, sans-serif">integrate new input into state</text>
+              <line x1="220" y1="82" x2="340" y2="125" stroke="#4ade80" stroke-width="1.4" marker-end="url(#arr-hero)" />
+
+              <!-- Revision -->
+              <rect x="40" y="132" width="180" height="54" rx="8" fill="#10161d" stroke="#fbbf24" />
+              <text x="130" y="155" text-anchor="middle" fill="#fbbf24" font-size="12" font-family="Inter, sans-serif" font-weight="600">Revision &nbsp;U(&#916;)</text>
+              <text x="130" y="174" text-anchor="middle" fill="#8b949e" font-size="11" font-family="Inter, sans-serif">reorganize from internal evidence</text>
+              <line x1="220" y1="158" x2="340" y2="158" stroke="#fbbf24" stroke-width="1.4" marker-end="url(#arr-hero)" />
+
+              <!-- Forgetting -->
+              <rect x="40" y="220" width="180" height="54" rx="8" fill="#10161d" stroke="#c084fc" />
+              <text x="130" y="243" text-anchor="middle" fill="#c084fc" font-size="12" font-family="Inter, sans-serif" font-weight="600">Forgetting &nbsp;F</text>
+              <text x="130" y="262" text-anchor="middle" fill="#8b949e" font-size="11" font-family="Inter, sans-serif">policy-governed attenuation</text>
+              <line x1="220" y1="238" x2="340" y2="188" stroke="#c084fc" stroke-width="1.4" marker-end="url(#arr-hero)" />
+
+              <!-- Retrieval -->
+              <rect x="680" y="132" width="180" height="54" rx="8" fill="#10161d" stroke="#60a5fa" />
+              <text x="770" y="155" text-anchor="middle" fill="#60a5fa" font-size="12" font-family="Inter, sans-serif" font-weight="600">Retrieval &nbsp;R(M&#8348;, q)</text>
+              <text x="770" y="174" text-anchor="middle" fill="#8b949e" font-size="11" font-family="Inter, sans-serif">read-write with relevance reinforcement</text>
+              <line x1="560" y1="158" x2="680" y2="158" stroke="#60a5fa" stroke-width="1.4" marker-end="url(#arr-hero)" />
+
+              <!-- Output arrow -->
+              <line x1="770" y1="186" x2="770" y2="240" stroke="#8b949e" stroke-width="1.3" marker-end="url(#arr-hero)" />
+              <text x="770" y="258" text-anchor="middle" fill="#8b949e" font-size="11" font-family="Inter, sans-serif">answer o</text>
+
+              <text x="450" y="282" text-anchor="middle" fill="#8b949e" font-size="11" font-family="Inter, sans-serif">State transition: M&#8348;&#8330;&#8321; = U(M&#8348;, I&#8348;, R&#8348;)</text>
+            </svg>
+            <p class="diagram-caption">
+              Memory is modeled as <em>M<sub>t</sub> = (D<sub>t</sub>, S<sub>t</sub>, P<sub>t</sub>)</em> and evolves
+              through four state-level operators under explicit policy control.
+            </p>
+          </div>
+
+          <h3 id="memory-state">Memory state (Definition 1)</h3>
+          <p>
+            At time <em>t</em>, the agent's memory state is the tuple <strong>M<sub>t</sub> = (D<sub>t</sub>,
+            S<sub>t</sub>, P<sub>t</sub>)</strong>, where:
+          </p>
+          <ul>
+            <li><strong>D<sub>t</sub></strong> is the stored informational content organized as semantic units
+              (topics, in MemState's instantiation).</li>
+            <li><strong>S<sub>t</sub></strong> is the structural organization over that content
+              (typed relations, temporal order, associations).</li>
+            <li><strong>P<sub>t</sub></strong> is the set of evolution policies of the form
+              <em>&#10216;event, condition, action&#10217;</em> (Definition 3) that govern access, ingestion, revision,
+              and forgetting.</li>
+          </ul>
+          <p>
+            Memory evolves according to the state transition <strong>M<sub>t+1</sub> = U(M<sub>t</sub>, I<sub>t</sub>,
+            R<sub>t</sub>)</strong>, where <em>I<sub>t</sub></em> denotes new external inputs at time <em>t</em> and
+            <em>R<sub>t</sub></em> denotes internal operations that may alter memory state (Definition 2). See
+            <a href="data-model/overview.html#state-abstraction">Data model / State abstraction</a> for the MemState
+            instantiation.
+          </p>
+
+          <h3 id="four-operators">The four state-level operators</h3>
           <table>
             <thead>
-              <tr><th>Category</th><th>Primitive</th><th>What it does</th></tr>
+              <tr>
+                <th>Operator</th>
+                <th>Formal transition</th>
+                <th>Role in memory evolution</th>
+                <th>Access</th>
+              </tr>
             </thead>
             <tbody>
               <tr>
-                <td rowspan="5"><strong>Topic</strong></td>
-                <td><code>create_topic</code></td>
-                <td>INSERT a new Topic node with scalar properties and embedding</td>
+                <td><strong>Ingestion</strong> (Def. 4)</td>
+                <td><code>M<sub>t+1</sub> = U(M<sub>t</sub>, I<sub>t</sub>, &empty;)</code></td>
+                <td>Integrate input <em>I<sub>t</sub></em> into existing semantic units rather than appending
+                  independent records.</td>
+                <td>Client-facing (synchronous)</td>
               </tr>
               <tr>
-                <td><code>get_topic</code></td>
-                <td>Fetch one topic row including <code>fields_json</code>, <code>topic_history_json</code>, embedding</td>
+                <td><strong>Revision</strong> (Def. 5)</td>
+                <td><code>M<sub>t+1</sub> = U(M<sub>t</sub>, &empty;, rev(&Delta;))</code></td>
+                <td>Reorganize memory from internal evidence <em>&Delta;</em>: consolidate, reconcile, repair.</td>
+                <td>Internal (policy-triggered)</td>
               </tr>
               <tr>
-                <td><code>update_topic_meta</code></td>
-                <td>SET scalar properties (title, summary, salience, archived, topic_kind); does not touch fields</td>
+                <td><strong>Forgetting</strong> (Def. 6)</td>
+                <td><code>M<sub>t+1</sub> = U(M<sub>t</sub>, &empty;, F)</code></td>
+                <td>Regulate influence of stored content by relevance; non-destructive graduated attenuation.</td>
+                <td>Internal (policy-triggered)</td>
               </tr>
               <tr>
-                <td><code>update_topic_embedding</code></td>
-                <td>SET embedding vector only; called after title/summary changes</td>
+                <td><strong>Retrieval</strong> (Def. 7)</td>
+                <td><code>R(M<sub>t</sub>, q) &rarr; o</code>, may induce <code>U(M<sub>t</sub>, &empty;, R<sub>q</sub>)</code></td>
+                <td>Map query to output and reinforce relevance of accessed content (read-write, not read-only).</td>
+                <td>Client-facing (synchronous)</td>
+              </tr>
+            </tbody>
+          </table>
+          <p>
+            MemState exposes these operators through <code>/v1/ingest</code>, <code>/v1/query</code>, and internal
+            reasoner maintenance. Each operator is documented on its own page under
+            <a href="operations/ingest.html">Operations</a>.
+          </p>
+
+          <h3 id="memory-correctness">Memory correctness (Definition 8)</h3>
+          <p>
+            Correctness in persistent agent memory cannot be defined at the record level because contradictory or
+            outdated entries may legitimately coexist within <em>D<sub>t</sub></em>. Let <em>u<sub>i</sub> &isin;
+            D<sub>t</sub></em> be a semantic unit with a time-ordered value history
+            <em>V<sub>i</sub> = &#10216;(v<sub>1</sub>, t<sub>1</sub>, &pi;<sub>1</sub>), &hellip;, (v<sub>k</sub>,
+            t<sub>k</sub>, &pi;<sub>k</sub>)&#10217;</em>, where each entry records a value <em>v</em>, a timestamp
+            <em>t</em>, and provenance <em>&pi;</em>. A memory system is correct if:
+          </p>
+          <ol>
+            <li><strong>Query soundness.</strong> For every query <em>q</em> and state <em>M<sub>t</sub></em>, the
+              response <em>R(M<sub>t</sub>, q) &rarr; o</em> reflects the most recent non-archived value
+              <em>v<sub>k</sub></em> as current; prior values appear only when <em>q</em> explicitly requests
+              historical or provenance context.</li>
+            <li><strong>Transition soundness.</strong> Every state transition <em>M<sub>t</sub> &rarr;
+              M<sub>t+1</sub></em> produced by <em>U</em> respects policy constraints in <em>P<sub>t</sub></em>, and no
+              revision produces a state in which a superseded value is returned as current on a subsequent query.</li>
+          </ol>
+
+          <!-- ============================================================ -->
+          <h2 id="realization">MemState: realizing GEM on Kuzu</h2>
+          <p>
+            Among classical data models, the property graph is the closest substrate for GEM because it supports typed
+            nodes, typed edges, and indexed properties. MemState builds on Kuzu and extends it along three axes that a
+            bare property graph does not provide:
+          </p>
+          <ul>
+            <li><strong>Self-contained semantic units.</strong> Each <em>topic</em> node materializes one coherent
+              unit (title, summary, fields, histories, embedding) so one read returns full context without multi-hop
+              traversal.</li>
+            <li><strong>Field-level value history.</strong> Every field keeps a time-ordered history
+              <em>H<sub>i,j</sub> = &#10216;(v, t, &pi;)&#10217;</em> with value, timestamp, and provenance, enabling
+              point-in-time queries and preserving evidence required for revision.</li>
+            <li><strong>Co-located semantic ranking.</strong> Embeddings are stored on the topic node itself, so
+              similarity search and graph traversal operate over one consistent record with no cross-store drift.</li>
+          </ul>
+          <p>
+            Structure <em>S<sub>t</sub></em> links topic nodes through typed <code>RELATED</code> edges: <em>extension
+            edges</em> connect topics in the same broader context, while <em>association edges</em> connect related
+            but independent topics. Policies <em>P<sub>t</sub></em> are declarative rules that govern when the graph
+            evolves through transitions such as splitting oversized topics, linking related topics, or compressing and
+            archiving low-salience content.
+          </p>
+
+          <!-- ============================================================ -->
+          <h2 id="operators-implementation">Operator inventory and implementation status</h2>
+          <p>
+            MemState is a partial realization of GEM intended to validate the core abstraction. The table below,
+            mirroring Table 3 of the paper, lists the full operator inventory. Rows marked <strong class="status-impl">Implemented</strong>
+            are shipping in the current prototype; rows marked <span class="status-future">Specified</span> are
+            defined in the paper but deferred to future work.
+          </p>
+
+          <table>
+            <thead>
+              <tr>
+                <th>Operator</th>
+                <th>Core action</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><a href="operations/ingest.html">Ingestion</a></td>
+                <td>Candidate match &rarr; place (<code>new_topic</code> / <code>extend_topic</code> /
+                  <code>version_field</code>) &rarr; embedding refresh &rarr; maintenance trigger</td>
+                <td><strong class="status-impl">Implemented</strong></td>
               </tr>
               <tr>
-                <td><code>delete_topic</code></td>
-                <td>DETACH DELETE — removes node and all incident RELATED edges</td>
+                <td><a href="operations/query.html">Retrieval &mdash; topic mode</a></td>
+                <td>Topic select (embedding similarity) &rarr; field/history read &rarr; optional graph expansion
+                  &rarr; salience reinforcement</td>
+                <td><strong class="status-impl">Implemented</strong></td>
               </tr>
               <tr>
-                <td rowspan="5"><strong>Field</strong></td>
-                <td><code>create_field</code></td>
-                <td>Initialize a named field entry in <code>fields_json</code> with type, optional ref, optional first value</td>
+                <td>Retrieval &mdash; temporal mode</td>
+                <td>Temporal predicate scan over field histories &rarr; topic grouping &rarr; graph expansion</td>
+                <td><span class="status-future">Specified</span></td>
               </tr>
               <tr>
-                <td><code>append_field_history</code></td>
-                <td>Prepend a new <code>FieldHistoryEntry</code> to the field's history list; enforce max_history cap</td>
+                <td>Retrieval &mdash; structural mode</td>
+                <td>Graph/schema traversal &rarr; topic set &rarr; field summary</td>
+                <td><span class="status-future">Specified</span></td>
               </tr>
               <tr>
-                <td><code>get_field_with_history</code></td>
-                <td>Return the full field including all history entries</td>
+                <td><a href="operations/forget.html">Forgetting &mdash; topic level</a></td>
+                <td>Salience scan &rarr; archive topics below <em>&theta;<sub>archive</sub></em></td>
+                <td><strong class="status-impl">Implemented</strong></td>
               </tr>
               <tr>
-                <td><code>delete_field</code></td>
-                <td>Remove field key from <code>fields_json</code></td>
+                <td>Forgetting &mdash; field level</td>
+                <td>Field salience scan &rarr; summarize <em>H<sub>i,j</sub></em> below
+                  <em>&theta;<sub>summary</sub></em> or hide field below <em>&theta;<sub>remove</sub></em></td>
+                <td><span class="status-future">Specified</span></td>
               </tr>
               <tr>
-                <td><code>set_field_ref</code></td>
-                <td>Point a field's <code>ref_topic_id</code> at another topic (enables expansion)</td>
+                <td><a href="operations/revision.html">Revision &mdash; duplicate merge</a></td>
+                <td>Duplicate detection &rarr; field/edge transfer &rarr; topic merge</td>
+                <td><strong class="status-impl">Implemented</strong></td>
               </tr>
               <tr>
-                <td rowspan="4"><strong>Structure</strong></td>
-                <td><code>promote_fields_to_nested_topic</code></td>
-                <td>Move selected fields to a new child topic; add RELATED edge + optional parent ref field</td>
-              </tr>
-              <tr>
-                <td><code>undo_promote_nested_topic</code></td>
-                <td>Merge child fields back to parent; delete child topic and RELATED edge</td>
-              </tr>
-              <tr>
-                <td><code>nest_fields_in_topic</code></td>
-                <td>Collapse selected fields into one <code>json</code> bundle field on the same topic (no new topic)</td>
-              </tr>
-              <tr>
-                <td><code>unnest_fields_in_topic</code></td>
-                <td>Expand a bundle field back to top-level fields</td>
-              </tr>
-              <tr>
-                <td rowspan="3"><strong>Edges</strong></td>
-                <td><code>add_related_edge</code></td>
-                <td>CREATE/MERGE a RELATED edge with a named kind string</td>
-              </tr>
-              <tr>
-                <td><code>remove_relationship</code></td>
-                <td>DELETE a specific RELATED edge by (from, to, kind)</td>
-              </tr>
-              <tr>
-                <td><code>list_relationships</code></td>
-                <td>Return neighbor topic IDs and edge kinds, filtered by direction</td>
-              </tr>
-              <tr>
-                <td rowspan="2"><strong>Salience</strong></td>
-                <td><code>sync_topic_salience_from_fields</code></td>
-                <td>Recompute topic salience as mean of all field saliences; SET on topic node</td>
-              </tr>
-              <tr>
-                <td><code>bump_field_salience_on_query</code></td>
-                <td>Increment field saliences by bump amount (capped); re-sync topic salience</td>
-              </tr>
-              <tr>
-                <td rowspan="2"><strong>History</strong></td>
-                <td><code>append_topic_history</code></td>
-                <td>Append a <code>TopicHistoryEvent</code> to <code>topic_history_json</code></td>
-              </tr>
-              <tr>
-                <td><code>merge_topics</code></td>
-                <td>Merge fields and edges from drop topic into keep topic; DETACH DELETE drop</td>
+                <td>Revision &mdash; correction, schema, redundancy</td>
+                <td>Evidence detection &rarr; targeted revision pipeline (conflict, schema evolution,
+                  dependency repair, redundancy compression)</td>
+                <td><span class="status-future">Specified</span></td>
               </tr>
             </tbody>
           </table>
 
           <!-- ============================================================ -->
-          <h2>High-level operations: ingest, query, revise, forget</h2>
-
-          <p>
-            Product clients usually interact with MemState through <strong>semantic operations</strong> that compose the primitives into a coherent workflow.
-            Each operation is documented in the Operations section:
-          </p>
-          <ul>
-            <li><a href="operations/ingest.html">Ingest</a>: write or extend knowledge; compute embeddings; set salience; create edges.</li>
-            <li><a href="operations/query.html">Query</a>: multi-stage retrieval (semantic + structural + temporal) with salience bump-on-read.</li>
-            <li><a href="operations/revision.html">Revise</a>: internal maintenance (duplicate merging) triggered after ingest.</li>
-            <li><a href="operations/forget.html">Forget</a>: internal archiving pass driven by salience and memory pressure.</li>
-          </ul>
-
-          <!-- ============================================================ -->
-          <h2>System design</h2>
+          <h2 id="access-surfaces">Access surfaces</h2>
           <div class="figure-block">
             <svg class="diagram-svg" viewBox="0 0 920 280" xmlns="http://www.w3.org/2000/svg" aria-label="MemState system overview diagram">
               <defs>
@@ -176,54 +278,139 @@
                 </marker>
               </defs>
               <rect x="20" y="92" width="130" height="72" rx="8" fill="#10161d" stroke="#30363d" />
-              <text x="85" y="120" text-anchor="middle" fill="#e6edf3" font-size="14" font-family="Segoe UI, sans-serif">Clients</text>
-              <text x="85" y="142" text-anchor="middle" fill="#8b949e" font-size="12" font-family="Segoe UI, sans-serif">SDK, UI, bots</text>
+              <text x="85" y="120" text-anchor="middle" fill="#e6edf3" font-size="14" font-family="Inter, sans-serif">Clients</text>
+              <text x="85" y="142" text-anchor="middle" fill="#8b949e" font-size="12" font-family="Inter, sans-serif">SDK, UI, agents</text>
 
               <line x1="150" y1="128" x2="200" y2="128" stroke="#8b949e" stroke-width="1.5" marker-end="url(#arr)" />
 
-              <rect x="205" y="36" width="190" height="184" rx="8" fill="#10161d" stroke="#58a6ff" />
-              <text x="300" y="64" text-anchor="middle" fill="#58a6ff" font-size="14" font-family="Segoe UI, sans-serif" font-weight="600">FastAPI app</text>
-              <text x="300" y="88" text-anchor="middle" fill="#c9d1d9" font-size="12" font-family="Segoe UI, sans-serif">/v1/ingest, /v1/query</text>
-              <text x="300" y="108" text-anchor="middle" fill="#c9d1d9" font-size="12" font-family="Segoe UI, sans-serif">/api/ui/*</text>
-              <text x="300" y="128" text-anchor="middle" fill="#c9d1d9" font-size="12" font-family="Segoe UI, sans-serif">/api/llm/chat</text>
-              <text x="300" y="148" text-anchor="middle" fill="#c9d1d9" font-size="12" font-family="Segoe UI, sans-serif">/ui (static explorer)</text>
-              <text x="300" y="178" text-anchor="middle" fill="#8b949e" font-size="11" font-family="Segoe UI, sans-serif">optional API-key auth on JSON routes</text>
+              <rect x="205" y="36" width="190" height="184" rx="8" fill="#10161d" stroke="#60a5fa" />
+              <text x="300" y="64" text-anchor="middle" fill="#60a5fa" font-size="14" font-family="Inter, sans-serif" font-weight="600">FastAPI app</text>
+              <text x="300" y="88" text-anchor="middle" fill="#c9d1d9" font-size="12" font-family="Inter, sans-serif">/v1/ingest, /v1/query</text>
+              <text x="300" y="108" text-anchor="middle" fill="#c9d1d9" font-size="12" font-family="Inter, sans-serif">/api/ui/*</text>
+              <text x="300" y="128" text-anchor="middle" fill="#c9d1d9" font-size="12" font-family="Inter, sans-serif">/api/llm/chat</text>
+              <text x="300" y="148" text-anchor="middle" fill="#c9d1d9" font-size="12" font-family="Inter, sans-serif">/ui (static explorer)</text>
+              <text x="300" y="178" text-anchor="middle" fill="#8b949e" font-size="11" font-family="Inter, sans-serif">optional API-key auth on JSON routes</text>
 
               <line x1="395" y1="128" x2="440" y2="128" stroke="#8b949e" stroke-width="1.5" marker-end="url(#arr)" />
 
-              <rect x="445" y="60" width="185" height="136" rx="8" fill="#10161d" stroke="#2ea043" />
-              <text x="538" y="90" text-anchor="middle" fill="#2ea043" font-size="14" font-family="Segoe UI, sans-serif" font-weight="600">Core services</text>
-              <text x="538" y="114" text-anchor="middle" fill="#c9d1d9" font-size="12" font-family="Segoe UI, sans-serif">Executor (v1 semantics)</text>
-              <text x="538" y="134" text-anchor="middle" fill="#c9d1d9" font-size="12" font-family="Segoe UI, sans-serif">Reasoner (background policy)</text>
-              <text x="538" y="154" text-anchor="middle" fill="#c9d1d9" font-size="12" font-family="Segoe UI, sans-serif">MemoryToolRunner (LLM tools)</text>
+              <rect x="445" y="60" width="185" height="136" rx="8" fill="#10161d" stroke="#4ade80" />
+              <text x="538" y="90" text-anchor="middle" fill="#4ade80" font-size="14" font-family="Inter, sans-serif" font-weight="600">Core services</text>
+              <text x="538" y="114" text-anchor="middle" fill="#c9d1d9" font-size="12" font-family="Inter, sans-serif">Executor (ingest / retrieval)</text>
+              <text x="538" y="134" text-anchor="middle" fill="#c9d1d9" font-size="12" font-family="Inter, sans-serif">Reasoner (revise / forget)</text>
+              <text x="538" y="154" text-anchor="middle" fill="#c9d1d9" font-size="12" font-family="Inter, sans-serif">MemoryToolRunner (LLM tools)</text>
 
               <line x1="630" y1="128" x2="680" y2="128" stroke="#8b949e" stroke-width="1.5" marker-end="url(#arr)" />
 
-              <rect x="685" y="72" width="140" height="112" rx="8" fill="#10161d" stroke="#d29922" />
-              <text x="755" y="104" text-anchor="middle" fill="#d29922" font-size="14" font-family="Segoe UI, sans-serif" font-weight="600">GraphStore</text>
-              <text x="755" y="126" text-anchor="middle" fill="#c9d1d9" font-size="12" font-family="Segoe UI, sans-serif">Cypher facade</text>
-              <text x="755" y="146" text-anchor="middle" fill="#c9d1d9" font-size="12" font-family="Segoe UI, sans-serif">topic/field/edge ops</text>
+              <rect x="685" y="72" width="140" height="112" rx="8" fill="#10161d" stroke="#fbbf24" />
+              <text x="755" y="104" text-anchor="middle" fill="#fbbf24" font-size="14" font-family="Inter, sans-serif" font-weight="600">GraphStore</text>
+              <text x="755" y="126" text-anchor="middle" fill="#c9d1d9" font-size="12" font-family="Inter, sans-serif">Cypher facade</text>
+              <text x="755" y="146" text-anchor="middle" fill="#c9d1d9" font-size="12" font-family="Inter, sans-serif">primitive operations</text>
 
               <line x1="825" y1="128" x2="875" y2="128" stroke="#8b949e" stroke-width="1.5" marker-end="url(#arr)" />
-              <rect x="878" y="84" width="34" height="88" rx="6" fill="#10161d" stroke="#a371f7" />
-              <text x="895" y="126" text-anchor="middle" fill="#a371f7" font-size="12" font-family="Segoe UI, sans-serif" transform="rotate(-90 895 126)">memstate.kuzu</text>
+              <rect x="878" y="84" width="34" height="88" rx="6" fill="#10161d" stroke="#c084fc" />
+              <text x="895" y="126" text-anchor="middle" fill="#c084fc" font-size="12" font-family="Inter, sans-serif" transform="rotate(-90 895 126)">memstate.kuzu</text>
 
-              <text x="460" y="248" text-anchor="middle" fill="#8b949e" font-size="12" font-family="Segoe UI, sans-serif">Single process. Single shared graph handle per database path.</text>
+              <text x="460" y="248" text-anchor="middle" fill="#8b949e" font-size="12" font-family="Inter, sans-serif">Single process. Single shared graph handle per database path.</text>
             </svg>
-            <p class="diagram-caption">The three user-facing surfaces converge on one shared <code>GraphStore</code> and one embedded Kuzu file.</p>
+            <p class="diagram-caption">Three user-facing surfaces converge on one shared <code>GraphStore</code> and one
+              embedded Kuzu file.</p>
           </div>
 
           <!-- ============================================================ -->
-          <h2>Read this documentation by intent</h2>
+          <h2 id="primitive-reference">Primitive operations reference</h2>
+          <p>
+            Every state-level operator decomposes into a fixed set of <em>primitives</em>: typed single-step storage
+            actions organized at three levels (Section 5.2 of the paper). Primitives are the only code paths that
+            issue Cypher and touch the embedded database directly, and they are reused across operators to make
+            evolution explicit, composable, and verifiable.
+          </p>
+
+          <table>
+            <thead>
+              <tr><th>Level</th><th>Primitive</th><th>What it does</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td rowspan="5"><strong>Field level</strong></td>
+                <td><code>create_field</code></td>
+                <td>Initialize a named field entry in <code>fields_json</code> with type and optional initial value.</td>
+              </tr>
+              <tr>
+                <td><code>append_field_history</code></td>
+                <td>Prepend a <code>FieldHistoryEntry</code> <em>(v, t, &pi;)</em> to <em>H<sub>i,j</sub></em>; enforce
+                  <code>max_field_history</code>.</td>
+              </tr>
+              <tr>
+                <td><code>get_field_with_history</code></td>
+                <td>Return the full field including all history entries.</td>
+              </tr>
+              <tr>
+                <td><code>bump_field_salience_on_query</code></td>
+                <td>Increment field saliences (capped) and re-sync topic salience; backs retrieval reinforcement.</td>
+              </tr>
+              <tr>
+                <td><code>set_field_ref</code></td>
+                <td>Point a field's <code>ref_topic_id</code> at another topic, enabling expansion.</td>
+              </tr>
+              <tr>
+                <td rowspan="5"><strong>Topic level</strong></td>
+                <td><code>create_topic</code></td>
+                <td>Insert a new Topic node with scalar properties and embedding.</td>
+              </tr>
+              <tr>
+                <td><code>get_topic</code></td>
+                <td>Fetch one topic row including <code>fields_json</code>, <code>topic_history_json</code>, embedding.</td>
+              </tr>
+              <tr>
+                <td><code>update_topic_meta</code> / <code>update_topic_embedding</code></td>
+                <td>Set scalar properties (title, summary, salience, archived, topic_kind) or embedding vector.</td>
+              </tr>
+              <tr>
+                <td><code>merge_topics</code></td>
+                <td>Transfer fields and edges from drop topic into keep topic, then detach-delete drop (revision
+                  primitive).</td>
+              </tr>
+              <tr>
+                <td><code>promote_fields_to_nested_topic</code> / <code>undo_promote_nested_topic</code></td>
+                <td>Split an overloaded topic into parent/child, or fold a child back; reversible.</td>
+              </tr>
+              <tr>
+                <td rowspan="3"><strong>Graph level</strong></td>
+                <td><code>add_related_edge</code></td>
+                <td>Create or merge a <code>RELATED</code> edge with a named kind string (extension or association).</td>
+              </tr>
+              <tr>
+                <td><code>remove_relationship</code></td>
+                <td>Delete a specific <code>RELATED</code> edge by <em>(from, to, kind)</em>.</td>
+              </tr>
+              <tr>
+                <td><code>list_relationships</code></td>
+                <td>Return neighbor topic IDs and edge kinds, filtered by direction.</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <p>
+            See <a href="operations/low-level.html">Operations / Low-level UI API</a> for the HTTP surface that
+            exposes these primitives directly to editors and tooling.
+          </p>
+
+          <!-- ============================================================ -->
+          <h2 id="read-by-intent">Read this documentation by intent</h2>
           <table>
             <thead>
               <tr>
-                <th>If you need to...</th>
+                <th>If you need to&hellip;</th>
                 <th>Start here</th>
                 <th>Then read</th>
               </tr>
             </thead>
             <tbody>
+              <tr>
+                <td>Understand the formal memory-state model</td>
+                <td><a href="data-model/overview.html">Data model / State abstraction</a></td>
+                <td><a href="data-model/fields.html">Fields and value history</a></td>
+              </tr>
               <tr>
                 <td>Understand runtime architecture and boundaries</td>
                 <td><a href="architecture/overview.html">Architecture / Runtime overview</a></td>
@@ -232,48 +419,54 @@
               <tr>
                 <td>Understand storage and schema behavior</td>
                 <td><a href="architecture/storage.html">Architecture / Storage and schema</a></td>
-                <td><a href="data-model/overview.html">Data model / Topic model</a></td>
+                <td><a href="data-model/overview.html">Data model / State abstraction</a></td>
               </tr>
               <tr>
-                <td>Tune retention and reasoning behavior</td>
-                <td><a href="architecture/reasoning.html">Architecture / Reasoner behavior</a></td>
-                <td><a href="data-model/limits-and-config.html">Data model / Limits and stages</a></td>
+                <td>Tune policies for retention and maintenance</td>
+                <td><a href="architecture/reasoning.html">Architecture / Policy engine</a></td>
+                <td><a href="data-model/limits-and-config.html">Data model / Limits and thresholds</a></td>
               </tr>
               <tr>
-                <td>Understand client-facing memory operations</td>
-                <td><a href="operations/ingest.html">Operations / Ingest (client)</a></td>
-                <td><a href="operations/query.html">Operations / Query (client)</a></td>
+                <td>Understand client-facing operators</td>
+                <td><a href="operations/ingest.html">Operations / Ingestion</a></td>
+                <td><a href="operations/query.html">Operations / Retrieval</a></td>
               </tr>
               <tr>
-                <td>Understand internal policy maintenance operations</td>
-                <td><a href="operations/revision.html">Operations / Revision (internal)</a></td>
-                <td><a href="operations/forget.html">Operations / Forget (internal)</a></td>
+                <td>Understand internal maintenance operators</td>
+                <td><a href="operations/revision.html">Operations / Revision</a></td>
+                <td><a href="operations/forget.html">Operations / Forgetting</a></td>
               </tr>
               <tr>
                 <td>Browse the full API endpoint index</td>
                 <td><a href="api/index.html">API / Endpoint index</a></td>
-                <td><a href="data-model/fields.html">Data model / Fields and history</a></td>
+                <td><a href="operations/high-level.html">High-level API flow</a></td>
               </tr>
             </tbody>
           </table>
 
-          <h2>Source map</h2>
+          <h2 id="source-map">Source map</h2>
           <ul>
             <li><code>memstate.api.main</code>: app creation, route registration, auth dependency, health endpoints.</li>
-            <li><code>memstate.api.deps</code>: singleton wiring for <code>Executor</code>, <code>Reasoner</code>, and shared <code>GraphStore</code>.</li>
-            <li><code>memstate.core.executor</code>: all <code>/v1</code> ingest and query semantics, embedding, salience bumping.</li>
-            <li><code>memstate.store.graph_store</code> and <code>store.kuzu_adapter</code>: all Cypher primitives, schema bootstrap, Kuzu access layer.</li>
-            <li><code>memstate.reasoner.engine</code>: event-based policy loop (forget + duplicate revise).</li>
+            <li><code>memstate.api.deps</code>: singleton wiring for <code>Executor</code>, <code>Reasoner</code>, and
+              shared <code>GraphStore</code>.</li>
+            <li><code>memstate.core.executor</code>: ingestion placement semantics and retrieval composition over
+              primitives; embedding and salience reinforcement.</li>
+            <li><code>memstate.store.graph_store</code> and <code>store.kuzu_adapter</code>: all Cypher primitives,
+              schema bootstrap, Kuzu access layer.</li>
+            <li><code>memstate.reasoner.engine</code>: policy-triggered revision and forgetting loop.</li>
             <li><code>memstate.llm.chat_api</code> and <code>llm.tool_runner</code>: routed chat and tool execution.</li>
-            <li><code>memstate.config</code>: all tunable thresholds — <code>forget_salience_threshold</code>, <code>topic_count_soft_limit</code>, <code>max_field_history</code>, <code>query_salience_bump</code>, <code>embedding_dimension</code>.</li>
+            <li><code>memstate.config</code>: all tunable thresholds &mdash; <code>forget_salience_threshold</code>,
+              <code>topic_count_soft_limit</code>, <code>max_field_history</code>, <code>query_salience_bump</code>,
+              <code>embedding_dimension</code>.</li>
           </ul>
 
-          <h2>Quick start</h2>
+          <h2 id="quick-start">Quick start</h2>
           <pre><code>pip install -e .
 python -m memstate.api.cli</code></pre>
           <p>Default UI: <code>http://127.0.0.1:8765/ui/</code></p>
         </main>
-        <footer class="page-footer">MemState official documentation: architecture, data model, operations, and API behavior.</footer>
+        <footer class="page-footer">MemState official documentation &mdash; architecture, data model, operators, and
+          API behavior.</footer>
       </div>
     </div>
     <script src="js/nav.js" defer></script>
