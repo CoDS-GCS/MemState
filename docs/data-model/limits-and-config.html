@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Data model - limits, stages, and configuration</title>
+    <title>Data model - limits, thresholds, and configuration</title>
     <link rel="stylesheet" href="../styles.css" />
   </head>
   <body class="has-sidebar" data-doc-page="data-model/limits-and-config">
@@ -11,108 +11,155 @@
       <aside id="doc-sidebar" aria-label="Documentation navigation"></aside>
       <div class="doc-inner">
         <header class="page-header">
-          <h1>Limits, query stages, and configuration</h1>
+          <h1>Limits, thresholds, and configuration</h1>
         </header>
         <main class="page-main">
           <p>
-            MemState behavior is controlled by two distinct configuration layers:
-            <strong>Policies</strong> (code-level defaults used by executor/reasoner) and <strong>Settings</strong> (environment-driven runtime options).
+            MemState exposes governance through two layers: <strong>Policies</strong> (<em>P<sub>t</sub></em>
+            defaults consumed by executor and reasoner) and <strong>Settings</strong> (runtime options driven by
+            environment variables). The forgetting policy in particular is expressed as a <em>ladder of thresholds</em>
+            &#8212; see <a href="#forgetting-ladder">Forgetting ladder</a>.
           </p>
 
-          <h2>Policies (core behavior defaults)</h2>
+          <h2 id="policies">Policies (<em>P<sub>t</sub></em> defaults)</h2>
           <table>
             <thead>
-              <tr>
-                <th>Policy field</th>
-                <th>Default</th>
-                <th>Behavior impact</th>
-              </tr>
+              <tr><th>Policy field</th><th>Default</th><th>Role</th></tr>
             </thead>
             <tbody>
-              <tr><td><code>max_field_history</code></td><td>500</td><td>Max revisions retained per field.</td></tr>
-              <tr><td><code>embedding_dimension</code></td><td>384</td><td>Expected vector size for embedding providers.</td></tr>
-              <tr><td><code>query_salience_bump</code></td><td>0.1</td><td>Added to topic salience when topic appears in query results.</td></tr>
-              <tr><td><code>forget_salience_threshold</code></td><td>0.05</td><td>Below this, reasoner can archive topic in forget flow.</td></tr>
-              <tr><td><code>topic_count_soft_limit</code></td><td>500</td><td>Threshold for more aggressive reasoner forget behavior.</td></tr>
-              <tr><td><code>max_topics_for_forget_scan</code></td><td>10000</td><td>Bound for forget-scan operations.</td></tr>
+              <tr><td><code>max_field_history</code></td><td>500</td><td>Cap on |<em>H<sub>i,j</sub></em>| per field.</td></tr>
+              <tr><td><code>embedding_dimension</code></td><td>384</td><td>Expected topic embedding width.</td></tr>
+              <tr><td><code>query_salience_bump</code></td><td>0.1</td><td>Reinforcement added by retrieval (read-write).</td></tr>
+              <tr><td><code>forget_salience_threshold</code></td><td>0.05</td><td>Salience cutoff that enables archival in the forget operator.</td></tr>
+              <tr><td><code>topic_count_soft_limit</code></td><td>500</td><td>Pressure point that escalates forget aggressiveness.</td></tr>
+              <tr><td><code>max_topics_for_forget_scan</code></td><td>10000</td><td>Scan bound used by forget flow.</td></tr>
             </tbody>
           </table>
 
           <div class="callout">
-            By default these policy values are code defaults, not direct environment variables. Override by constructing custom policy objects in integration code/tests.
+            Policy values are code-level defaults used by <code>memstate.core.models.Policies</code>. Override by
+            constructing custom policy objects in integration code or tests.
           </div>
 
-          <h2>Query stages</h2>
-          <p><code>POST /v1/query</code> accepts stage subsets from <code>semantic</code>, <code>structural</code>, and <code>temporal</code> (default is all three).</p>
+          <h2 id="forgetting-ladder">Forgetting ladder (paper definition vs. current prototype)</h2>
+          <p>
+            The paper defines forgetting as a three-stage attenuation ladder parameterized by salience thresholds
+            <em>&theta;<sub>summary</sub> &gt; &theta;<sub>remove</sub> &gt; &theta;<sub>archive</sub></em>. The
+            current MemState prototype implements the archival stage and treats the remaining stages as future work.
+          </p>
           <table>
             <thead>
               <tr>
                 <th>Stage</th>
-                <th>What executor does</th>
+                <th>Paper threshold</th>
+                <th>Effect on state</th>
+                <th>Prototype support</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Summarize</td>
+                <td><em>&theta;<sub>summary</sub></em></td>
+                <td>Compress older history into summaries while keeping the topic active.</td>
+                <td><span class="status-future">Future</span></td>
+              </tr>
+              <tr>
+                <td>Detach / remove from active working set</td>
+                <td><em>&theta;<sub>remove</sub></em></td>
+                <td>Detach less-salient fields or connectors from active retrieval; retain for explicit lookup.</td>
+                <td><span class="status-future">Future</span></td>
+              </tr>
+              <tr>
+                <td>Archive</td>
+                <td><em>&theta;<sub>archive</sub></em></td>
+                <td>Mark topic as archived so it is excluded from default active scans and retrieval candidates.</td>
+                <td><span class="status-impl">Implemented</span> via <code>forget_salience_threshold</code> and
+                  <code>archived</code> flag.</td>
+              </tr>
+            </tbody>
+          </table>
+          <p>
+            Forgetting is non-destructive: archived topics and their field histories remain in the store and are
+            excluded only from <em>default</em> active scans. Explicit queries targeting archived topics can still
+            reach them, which is what the paper calls <em>non-destructive attenuation by relevance</em>.
+          </p>
+
+          <h2 id="retrieval-stages">Retrieval stages</h2>
+          <p>
+            <code>POST /v1/query</code> accepts any subset of <code>semantic</code>, <code>structural</code>, and
+            <code>temporal</code>; the default is all three. These stages implement the three retrieval modes
+            described in the paper.
+          </p>
+          <table>
+            <thead>
+              <tr>
+                <th>Stage</th>
+                <th>Retrieval mode</th>
+                <th>What the executor does</th>
                 <th>Output effect</th>
               </tr>
             </thead>
             <tbody>
               <tr>
                 <td><code>semantic</code></td>
-                <td>Embeds query, runs vector KNN or cosine fallback over topic embeddings.</td>
-                <td>Candidate ranking and <code>similarity</code> scores in topic bundles.</td>
+                <td>Topic retrieval</td>
+                <td>Embeds query, runs vector KNN (or cosine fallback) over topic embeddings.</td>
+                <td>Ranked candidate list with <code>similarity</code> scores.</td>
               </tr>
               <tr>
                 <td><code>structural</code></td>
-                <td>Loads topic neighbors (<code>RELATED</code>) and selected fields.</td>
-                <td>Populates <code>neighbors[]</code> and field entries in response.</td>
+                <td>Structural retrieval</td>
+                <td>Expands candidates via <code>RELATED</code> neighbors and selected fields.</td>
+                <td>Populates <code>neighbors[]</code> and field entries.</td>
               </tr>
               <tr>
                 <td><code>temporal</code></td>
-                <td>Controls whether field history can be expanded.</td>
-                <td>Full history only when <code>temporal</code> stage is enabled and <code>explain=true</code>.</td>
+                <td>Temporal retrieval</td>
+                <td>Enables field-history expansion when combined with <code>explain=true</code>.</td>
+                <td>Returns full <em>H<sub>i,j</sub></em> instead of current-value snapshot.</td>
               </tr>
             </tbody>
           </table>
 
-          <h2>Stage interaction diagram</h2>
+          <h2 id="stage-interaction">Stage interaction</h2>
           <pre class="sequence"><code>query request
   -> build candidate topic ids
        semantic on  -> vector/cosine ranking
        semantic off -> topic_ids allowlist or embedding scan order
   -> for each candidate topic
        structural on -> neighbors + selected fields
-       temporal on + explain=true -> full field history
+       temporal on + explain=true -> full field history (H_{i,j})
        otherwise -> current field snapshot only
-  -> salience bump and topic history append
+  -> salience bump (reinforcement) and topic history append
   -> response summary_text + candidates[]</code></pre>
 
-          <h2>Settings relevant to data and retrieval</h2>
+          <h2 id="settings">Settings (environment variables)</h2>
           <table>
             <thead>
-              <tr>
-                <th>Environment variable</th>
-                <th>Default</th>
-                <th>Usage</th>
-              </tr>
+              <tr><th>Environment variable</th><th>Default</th><th>Role</th></tr>
             </thead>
             <tbody>
-              <tr><td><code>MEMSTATE_QUERY_FIELD_SALIENCE_BUMP</code></td><td>0.1</td><td>Per-field salience bump for query-routed LLM read tools.</td></tr>
-              <tr><td><code>MEMSTATE_FIELD_SALIENCE_MAX</code></td><td>10.0</td><td>Upper bound for field salience values.</td></tr>
-              <tr><td><code>MEMSTATE_CHAT_INTENT_TURNS</code></td><td>8</td><td>Dialogue turns included during intent classification context.</td></tr>
-              <tr><td><code>MEMSTATE_CHAT_MAX_TOOL_ROUNDS</code></td><td>32</td><td>Maximum tool-call loop iterations in chat flow.</td></tr>
-              <tr><td><code>MEMSTATE_CHAT_CHUNK_THRESHOLD_CHARS</code></td><td>10000</td><td>Threshold for entering Study-mode ingest flow.</td></tr>
-              <tr><td><code>MEMSTATE_CHAT_CHUNK_PER_SEGMENT_TOOL_ROUNDS</code></td><td>72</td><td>Tool budget for Study phase A (8–256).</td></tr>
-              <tr><td><code>MEMSTATE_STUDY_PHASE_DELAY_SECONDS</code></td><td>8.0</td><td>Pause (seconds) between Study phase A and B to reduce Groq TPM bursts.</td></tr>
-              <tr><td><code>MEMSTATE_GROQ_RATE_LIMIT_MAX_RETRIES</code></td><td>20</td><td>Max retries on Groq 429 responses.</td></tr>
-              <tr><td><code>MEMSTATE_GROQ_RATE_LIMIT_BACKOFF_CAP_SECONDS</code></td><td>120.0</td><td>Per-retry sleep cap for Groq rate-limit backoff.</td></tr>
+              <tr><td><code>MEMSTATE_QUERY_FIELD_SALIENCE_BUMP</code></td><td>0.1</td><td>Per-field reinforcement on query-routed reads.</td></tr>
+              <tr><td><code>MEMSTATE_FIELD_SALIENCE_MAX</code></td><td>10.0</td><td>Upper bound on per-field salience.</td></tr>
+              <tr><td><code>MEMSTATE_CHAT_INTENT_TURNS</code></td><td>8</td><td>Dialogue turns included during intent classification.</td></tr>
+              <tr><td><code>MEMSTATE_CHAT_MAX_TOOL_ROUNDS</code></td><td>32</td><td>Upper bound on chat tool-call iterations.</td></tr>
+              <tr><td><code>MEMSTATE_CHAT_CHUNK_THRESHOLD_CHARS</code></td><td>10000</td><td>Activates Study-mode chunked ingest.</td></tr>
+              <tr><td><code>MEMSTATE_CHAT_CHUNK_PER_SEGMENT_TOOL_ROUNDS</code></td><td>72</td><td>Tool budget per Study phase A segment (8&ndash;256).</td></tr>
+              <tr><td><code>MEMSTATE_STUDY_PHASE_DELAY_SECONDS</code></td><td>8.0</td><td>Pause between Study phase A and B for rate-limit smoothing.</td></tr>
+              <tr><td><code>MEMSTATE_GROQ_RATE_LIMIT_MAX_RETRIES</code></td><td>20</td><td>Retries on Groq 429 responses.</td></tr>
+              <tr><td><code>MEMSTATE_GROQ_RATE_LIMIT_BACKOFF_CAP_SECONDS</code></td><td>120.0</td><td>Backoff cap for Groq rate-limit retries.</td></tr>
             </tbody>
           </table>
 
-          <h2>Practical limits and caveats</h2>
+          <h2 id="practical">Practical limits and caveats</h2>
           <ul>
-            <li><code>top_k</code> bounds the number of candidate topics returned/processed in query response construction.</li>
+            <li><code>top_k</code> bounds the number of candidate topics returned by retrieval.</li>
             <li><code>version_field</code> ingest placement requires exactly one field and a valid <code>topic_id</code>.</li>
-            <li>Large nested <code>json</code> fields are allowed, but payload size affects memory/IO and API response latency.</li>
+            <li>Large nested <code>json</code> values are allowed, but payload size affects retrieval latency.</li>
+            <li>Archived topics are retained; forgetting is non-destructive (paper, Definition 6).</li>
           </ul>
         </main>
-        <footer class="page-footer">Configuration reference: policy defaults, query-stage semantics, and runtime tuning knobs.</footer>
+        <footer class="page-footer">Configuration reference: policy defaults, forgetting ladder, retrieval stages, and runtime tuning knobs.</footer>
       </div>
     </div>
     <script src="../js/nav.js" defer></script>

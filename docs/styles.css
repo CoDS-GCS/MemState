@@ -585,6 +585,229 @@ tbody tr:hover { background: rgba(127, 127, 127, 0.04); }
 .method-patch  { background: var(--m-patch-bg);  color: var(--m-patch-fg);  border: 1px solid var(--m-patch-bd);  }
 
 /* ---------------------------------------------------------
+   Hero section (product landing, top of a page)
+   --------------------------------------------------------- */
+.hero {
+  position: relative;
+  margin: 0 0 2rem;
+  padding: 2.25rem 2rem 2rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background:
+    radial-gradient(800px 300px at 8% -20%, rgba(59, 130, 246, 0.12), transparent 60%),
+    radial-gradient(600px 240px at 100% 0%, rgba(139, 92, 246, 0.10), transparent 60%),
+    linear-gradient(180deg, var(--surface) 0%, var(--bg-subtle) 100%);
+  overflow: hidden;
+}
+.hero::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(to right, rgba(127, 127, 127, 0.05) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(127, 127, 127, 0.05) 1px, transparent 1px);
+  background-size: 28px 28px;
+  mask-image: radial-gradient(500px 260px at 20% 20%, #000 20%, transparent 75%);
+  -webkit-mask-image: radial-gradient(500px 260px at 20% 20%, #000 20%, transparent 75%);
+  pointer-events: none;
+}
+.hero > * { position: relative; }
+.hero .eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent-bright);
+  padding: 0.28rem 0.65rem;
+  border: 1px solid var(--accent-border);
+  background: var(--accent-bg);
+  border-radius: 999px;
+  margin-bottom: 1rem;
+}
+.hero .eyebrow::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--accent);
+  box-shadow: 0 0 10px var(--accent);
+}
+.hero h1.hero-title {
+  margin: 0 0 0.7rem;
+  font-size: 2rem;
+  line-height: 1.15;
+  letter-spacing: -0.03em;
+  font-weight: 700;
+  color: var(--text);
+  max-width: 40ch;
+}
+.hero .hero-sub {
+  margin: 0;
+  font-size: 1rem;
+  line-height: 1.65;
+  color: var(--text-secondary);
+  max-width: 60ch;
+}
+.hero .hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  margin-top: 1.4rem;
+}
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.5rem 0.95rem;
+  border-radius: var(--radius);
+  font-size: 0.84rem;
+  font-weight: 500;
+  border: 1px solid var(--border);
+  background: var(--surface-raised);
+  color: var(--text);
+  transition: background 120ms var(--ease), border-color 120ms var(--ease), transform 120ms var(--ease);
+}
+.btn:hover { background: var(--surface); border-color: var(--accent-border); text-decoration: none; color: var(--text); }
+.btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.btn-primary:hover { background: var(--accent-bright); border-color: var(--accent-bright); color: #fff; }
+
+/* ---------------------------------------------------------
+   Feature card grid (product landing)
+   --------------------------------------------------------- */
+.feature-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 0.85rem;
+  margin: 1rem 0 1.5rem;
+}
+.feature-card {
+  position: relative;
+  padding: 1.1rem 1.1rem 1.15rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  transition: border-color 140ms var(--ease), transform 140ms var(--ease), background 140ms var(--ease);
+}
+.feature-card:hover {
+  border-color: var(--accent-border);
+  background: var(--bg-subtle);
+}
+.feature-card .feature-icon {
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--accent-bg);
+  color: var(--accent-bright);
+  border: 1px solid var(--accent-border);
+  margin-bottom: 0.75rem;
+  font-size: 0.95rem;
+}
+.feature-card h3 {
+  margin: 0 0 0.35rem;
+  font-size: 0.94rem;
+  color: var(--text);
+}
+.feature-card p {
+  margin: 0;
+  font-size: 0.85rem;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+
+/* ---------------------------------------------------------
+   Step list (pipeline / how it works)
+   --------------------------------------------------------- */
+.steps {
+  list-style: none;
+  counter-reset: step;
+  padding: 0;
+  margin: 0.65rem 0 1.2rem;
+  display: grid;
+  gap: 0.6rem;
+}
+.steps > li {
+  counter-increment: step;
+  position: relative;
+  padding: 0.75rem 1rem 0.8rem 3rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+  line-height: 1.6;
+}
+.steps > li::before {
+  content: counter(step);
+  position: absolute;
+  left: 0.85rem;
+  top: 0.72rem;
+  width: 1.55rem;
+  height: 1.55rem;
+  border-radius: 999px;
+  background: var(--accent-bg);
+  color: var(--accent-bright);
+  border: 1px solid var(--accent-border);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.78rem;
+  font-weight: 700;
+  font-family: var(--font-mono);
+}
+.steps > li strong { color: var(--text); }
+
+/* ---------------------------------------------------------
+   Concept block (plain-language paper concepts, replaces .definition)
+   --------------------------------------------------------- */
+.concept {
+  margin: 1rem 0 1.25rem;
+  padding: 0.95rem 1.15rem 1rem;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--bg-subtle);
+  font-size: 0.92rem;
+  line-height: 1.68;
+  color: var(--text-secondary);
+}
+.concept .concept-label {
+  display: block;
+  font-size: 0.66rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--accent-bright);
+  margin-bottom: 0.3rem;
+}
+.concept strong { color: var(--text); }
+
+/* ---------------------------------------------------------
+   Pill tag
+   --------------------------------------------------------- */
+.tag {
+  display: inline-block;
+  padding: 0.12em 0.55em;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  border: 1px solid var(--border);
+  background: var(--surface-raised);
+  color: var(--text-secondary);
+  vertical-align: middle;
+}
+
+/* ---------------------------------------------------------
    Status badges (implementation status, etc.)
    --------------------------------------------------------- */
 .status-impl,

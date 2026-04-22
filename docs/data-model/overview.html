@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Data model - state abstraction</title>
+    <title>Data model &mdash; overview</title>
     <link rel="stylesheet" href="../styles.css" />
   </head>
   <body class="has-sidebar" data-doc-page="data-model/overview">
@@ -11,217 +11,198 @@
       <aside id="doc-sidebar" aria-label="Documentation navigation"></aside>
       <div class="doc-inner">
         <header class="page-header">
-          <h1>State abstraction and topic model</h1>
+          <h1>Data model</h1>
         </header>
         <main class="page-main">
+          <section class="hero">
+            <span class="eyebrow">Data model</span>
+            <h1 class="hero-title">Topics, fields, and links.</h1>
+            <p class="hero-sub">
+              MemState stores everything the agent knows as a graph of <strong>topics</strong>. Each topic is one
+              self-contained unit of knowledge &mdash; its own fields, its own history, its own embedding, and its
+              own links to other topics.
+            </p>
+          </section>
+
+          <!-- ============================================================ -->
+          <h2 id="three-parts">Memory has three parts</h2>
           <p>
-            MemState models memory as a governed evolving state
-            <strong>M<sub>t</sub> = (D<sub>t</sub>, S<sub>t</sub>, P<sub>t</sub>)</strong>. This page specifies what
-            each component is, how topics realize <em>D<sub>t</sub></em>, and why the property graph alone is not
-            sufficient.
+            Every MemState deployment keeps three things in sync. Together they make up the state the agent reads
+            and writes through.
           </p>
 
-          <h2 id="state-abstraction">State abstraction</h2>
-
-          <div class="definition">
-            <span class="definition-label">Definition 1 &mdash; Governed evolving state</span>
-            At time <em>t</em>, an agent's memory state is the tuple
-            <strong>M<sub>t</sub> = (D<sub>t</sub>, S<sub>t</sub>, P<sub>t</sub>)</strong>, where <em>D<sub>t</sub></em>
-            denotes stored informational content organized as <em>semantic units</em>, <em>S<sub>t</sub></em> denotes
-            the structural organization over that content (relations, temporal order, associations), and
-            <em>P<sub>t</sub></em> denotes policies governing access, ingestion, revision, and forgetting.
+          <div class="feature-grid">
+            <div class="feature-card">
+              <div class="feature-icon">&#x1f5c2;</div>
+              <h3>Content</h3>
+              <p>The topics themselves &mdash; the things the agent remembers, each with its own fields, summary, and embedding.</p>
+            </div>
+            <div class="feature-card">
+              <div class="feature-icon">&#x1f517;</div>
+              <h3>Structure</h3>
+              <p>Typed links between topics, plus field-level references that let retrieval expand context.</p>
+            </div>
+            <div class="feature-card">
+              <div class="feature-icon">&#x2699;</div>
+              <h3>Policies</h3>
+              <p>The rules that govern every change: history limits, salience thresholds, and archival behavior.</p>
+            </div>
           </div>
 
-          <div class="definition">
-            <span class="definition-label">Definition 2 &mdash; Memory evolution</span>
-            Memory evolves according to a state transition function
-            <strong>M<sub>t+1</sub> = U(M<sub>t</sub>, I<sub>t</sub>, R<sub>t</sub>)</strong>, where
-            <em>I<sub>t</sub></em> denotes new inputs or experiences at time <em>t</em>, and <em>R<sub>t</sub></em>
-            denotes internal operations that may alter memory state.
-          </div>
-
-          <div class="definition">
-            <span class="definition-label">Definition 3 &mdash; Evolution policies</span>
-            <em>P<sub>t</sub></em> is a set of typed rules of the form
-            <strong>&#10216;event, condition, action&#10217;</strong>, where <em>event</em> identifies the operation
-            that triggers evaluation, <em>condition</em> is a predicate over the current memory state
-            <em>M<sub>t</sub></em>, and <em>action</em> is a state-level transition to apply when the condition holds.
-            Policies are declarative: they specify <em>what</em> transitions should occur and when, independently of
-            <em>how</em> operators execute them.
-          </div>
-
-          <table>
-            <thead>
-              <tr><th>Component</th><th>Purpose</th><th>MemState instantiation</th></tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td><strong>D<sub>t</sub></strong> &mdash; content</td>
-                <td>The semantic units that carry the agent's knowledge.</td>
-                <td>Topic nodes. Each topic is one self-contained unit with a title, summary, embedding, and typed
-                  fields whose values are maintained as time-ordered histories.</td>
-              </tr>
-              <tr>
-                <td><strong>S<sub>t</sub></strong> &mdash; structure</td>
-                <td>How units are connected so that changes propagate appropriately.</td>
-                <td>Typed <code>RELATED</code> edges between topics (<em>extension</em> and <em>association</em>)
-                  plus field-level <code>ref_topic_id</code> pointers.</td>
-              </tr>
-              <tr>
-                <td><strong>P<sub>t</sub></strong> &mdash; policies</td>
-                <td>Rules governing when and how the state is allowed to change.</td>
-                <td>Declarative thresholds and triggers configured in <code>memstate.config.Policies</code> and
-                  evaluated by <code>memstate.reasoner.engine.Reasoner</code>.</td>
-              </tr>
-            </tbody>
-          </table>
-
-          <h2 id="why-not-pure-models">Why not a pure property graph, vector DB, or document store</h2>
+          <!-- ============================================================ -->
+          <h2 id="why-graph">Why a graph, and why not just a graph</h2>
           <p>
-            Existing data models instantiate parts of <em>(D<sub>t</sub>, S<sub>t</sub>)</em> but leave
-            <em>P<sub>t</sub></em> external, so governed state evolution is not expressible at the data model
-            layer. The table below summarizes the gap each paradigm leaves relative to GEM semantics.
+            MemState is built on an embedded property graph (Kuzu) because typed nodes and typed edges are the
+            cleanest way to express <em>what</em> a topic is and <em>how</em> it relates to others. But a plain
+            graph is not enough on its own for agent memory.
           </p>
 
           <table>
             <thead>
               <tr>
-                <th>Model</th>
-                <th>Primary limitation under GEM</th>
+                <th>Classical model</th>
+                <th>What's missing for agent memory</th>
               </tr>
             </thead>
             <tbody>
               <tr>
-                <td>Property graph (Kuzu, Neo4j)</td>
-                <td>Supports topology as <em>S<sub>t</sub></em>, but no field-level value history and no first-class
-                  <em>P<sub>t</sub></em>. Structure is typed, policy semantics are not.</td>
+                <td>Plain property graph</td>
+                <td>No history on attributes. A change overwrites the old value instead of recording when it changed.</td>
               </tr>
               <tr>
                 <td>Vector database</td>
-                <td>Weak <em>S<sub>t</sub></em> (geometric proximity only). Outdated and updated embeddings coexist;
-                  retrieval is similarity-only and read-only.</td>
+                <td>Ranks by similarity only. Has no concept of freshness, supersession, or structural neighbors.</td>
               </tr>
               <tr>
                 <td>Document store</td>
-                <td>Document-level overwrite rather than dependency-aware revision. Cross-document structure is
-                  denormalized; no retrieval-induced state change.</td>
+                <td>Every write tends to overwrite the whole document. Cross-document relationships are flattened out.</td>
               </tr>
               <tr>
                 <td>Temporal database</td>
-                <td>Preserves past states but provides no belief reconciliation: without <em>P<sub>t</sub></em>,
-                  earlier values are never marked superseded.</td>
+                <td>Keeps past states but doesn't know when a past value was <em>corrected</em> versus merely changed.</td>
               </tr>
             </tbody>
           </table>
 
-          <h3 id="mem-extends-kuzu">How MemState extends Kuzu</h3>
-          <p>
-            The property graph is the closest classical substrate because it supports typed nodes, typed edges, and
-            indexed properties. MemState builds on Kuzu and extends it along three axes.
-          </p>
-          <ul>
-            <li><strong>Self-contained semantic units.</strong> Property graphs distribute facts across many nodes
-              and edges. MemState materializes each topic as one node containing its fields, histories, and summary,
-              so one read returns the full context.</li>
-            <li><strong>Field-level value history.</strong> Property graphs support temporal edges but not attribute
-              histories. MemState stores a time-ordered history
-              <em>H<sub>i,j</sub> = &#10216;(v, t, &pi;)&#10217;</em> per field, enabling direct history lookup.</li>
-            <li><strong>Co-located semantic ranking.</strong> MemState stores embeddings on the topic node itself, so
-              similarity search and graph traversal operate over one consistent record with no cross-store drift.</li>
-          </ul>
+          <p>MemState adds three things on top of the graph substrate:</p>
+
+          <ol class="steps">
+            <li><strong>Topic nodes carry full context.</strong> Title, summary, fields, embedding, salience, and links all live on one node. One read returns the full picture of one thing.</li>
+            <li><strong>Every field keeps its history.</strong> When a value changes, the previous value is preserved with its timestamp and source, so retrieval can distinguish the current truth from what used to be true.</li>
+            <li><strong>Semantic ranking is co-located.</strong> The embedding lives on the topic node, so semantic search and graph traversal share one record &mdash; no drift between a vector store and a graph store.</li>
+          </ol>
 
           <!-- ============================================================ -->
-          <h2 id="topic-as-semantic-unit">Topic as semantic unit</h2>
+          <h2 id="topic-anatomy">Anatomy of a topic</h2>
           <p>
-            Each topic <em>u<sub>i</sub> &isin; D<sub>t</sub></em> is a self-contained memory unit the agent can read
-            in one access. Using topics instead of entities reduces multi-hop retrieval, lets topic titles guide
-            candidate selection, and allows sparse facts to first coexist in one parent topic before revision
-            promotes a coherent subset into a new topic as knowledge grows.
+            A topic is the boundary of what MemState stores as one indexed, versioned unit. Everything you need to
+            know about one subject lives on one node.
           </p>
 
           <div class="figure-block">
-            <svg class="diagram-svg" viewBox="0 0 860 250" xmlns="http://www.w3.org/2000/svg" aria-label="Topic node anatomy diagram">
+            <svg class="diagram-svg" viewBox="0 0 860 300" xmlns="http://www.w3.org/2000/svg" aria-label="Topic node anatomy">
               <defs>
-                <marker id="arr2" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
-                  <path d="M0,0 L0,6 L8,3 z" fill="#8b949e" />
-                </marker>
+                <marker id="arr-tpc" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3 z" fill="#64748b"/></marker>
+                <linearGradient id="tpcgrad" x1="0" y1="0" x2="1" y2="1">
+                  <stop offset="0" stop-color="#1e293b"/>
+                  <stop offset="1" stop-color="#0f172a"/>
+                </linearGradient>
               </defs>
 
-              <rect x="20" y="20" width="340" height="210" rx="8" fill="#10161d" stroke="#fbbf24" stroke-width="1.5" />
-              <text x="190" y="46" text-anchor="middle" fill="#fbbf24" font-size="13" font-family="Inter, sans-serif" font-weight="600">Topic u&#7522; (semantic unit)</text>
+              <rect x="30" y="40" width="360" height="220" rx="12" fill="url(#tpcgrad)" stroke="#3b82f6" stroke-width="1.6"/>
+              <text x="210" y="70" text-anchor="middle" fill="#60a5fa" font-size="14" font-family="Inter, sans-serif" font-weight="600">Topic</text>
 
-              <text x="36" y="70" fill="#c9d1d9" font-size="11" font-family="Cascadia Code, monospace">id, title, summary, topic_kind</text>
-              <text x="36" y="88" fill="#c9d1d9" font-size="11" font-family="Cascadia Code, monospace">salience  (0&#8211;10, avg of fields)</text>
-              <text x="36" y="106" fill="#c9d1d9" font-size="11" font-family="Cascadia Code, monospace">embedding  [384 floats]</text>
-              <text x="36" y="124" fill="#c9d1d9" font-size="11" font-family="Cascadia Code, monospace">archived, created_at, updated_at</text>
+              <text x="52" y="100" fill="#e2e8f0" font-size="12" font-family="Inter, sans-serif" font-weight="600">Identity &amp; metadata</text>
+              <text x="52" y="118" fill="#94a3b8" font-size="11" font-family="Inter, sans-serif">id &middot; title &middot; summary &middot; kind</text>
+              <text x="52" y="134" fill="#94a3b8" font-size="11" font-family="Inter, sans-serif">created_at &middot; updated_at &middot; archived</text>
 
-              <line x1="36" y1="134" x2="344" y2="134" stroke="#27272a" stroke-width="1" />
+              <text x="52" y="162" fill="#e2e8f0" font-size="12" font-family="Inter, sans-serif" font-weight="600">Salience</text>
+              <text x="52" y="180" fill="#94a3b8" font-size="11" font-family="Inter, sans-serif">importance score (0-10)</text>
 
-              <text x="36" y="154" fill="#60a5fa" font-size="11" font-family="Cascadia Code, monospace">fields_json  &rarr;  { f&#7522;&#8330;&#11388; : TopicField }</text>
-              <text x="52" y="172" fill="#8b949e" font-size="10" font-family="Cascadia Code, monospace">field_type, salience, ref_topic_id</text>
-              <text x="52" y="188" fill="#8b949e" font-size="10" font-family="Cascadia Code, monospace">H&#7522;&#8330;&#11388; : &#10216;(v, t, &#960;)&#10217; history</text>
-              <text x="52" y="204" fill="#8b949e" font-size="10" font-family="Cascadia Code, monospace">capped by max_field_history</text>
+              <text x="52" y="208" fill="#e2e8f0" font-size="12" font-family="Inter, sans-serif" font-weight="600">Fields</text>
+              <text x="52" y="226" fill="#94a3b8" font-size="11" font-family="Inter, sans-serif">typed values + full history per field</text>
 
-              <line x1="360" y1="110" x2="440" y2="110" stroke="#8b949e" stroke-width="1.5" marker-end="url(#arr2)" />
-              <text x="400" y="100" text-anchor="middle" fill="#8b949e" font-size="10" font-family="Inter, sans-serif">RELATED (extension)</text>
+              <text x="52" y="254" fill="#e2e8f0" font-size="12" font-family="Inter, sans-serif" font-weight="600">Embedding</text>
+              <text x="52" y="272" fill="#94a3b8" font-size="11" font-family="Inter, sans-serif">384-dim vector for semantic search</text>
 
-              <rect x="445" y="72" width="160" height="76" rx="8" fill="#10161d" stroke="#fbbf24" stroke-width="1.5" />
-              <text x="525" y="96" text-anchor="middle" fill="#fbbf24" font-size="12" font-family="Inter, sans-serif">Topic u&#11388;</text>
-              <text x="525" y="116" text-anchor="middle" fill="#8b949e" font-size="10" font-family="Cascadia Code, monospace">id, title &hellip;</text>
-              <text x="525" y="134" text-anchor="middle" fill="#8b949e" font-size="10" font-family="Cascadia Code, monospace">fields_json &hellip;</text>
+              <rect x="480" y="60" width="160" height="60" rx="10" fill="#0f172a" stroke="#334155"/>
+              <text x="560" y="84" text-anchor="middle" fill="#e2e8f0" font-size="12" font-family="Inter, sans-serif">Another topic</text>
+              <text x="560" y="102" text-anchor="middle" fill="#64748b" font-size="10" font-family="Inter, sans-serif">extension link</text>
+              <line x1="390" y1="100" x2="480" y2="88" stroke="#475569" stroke-width="1.4" marker-end="url(#arr-tpc)"/>
 
-              <line x1="360" y1="160" x2="430" y2="160" stroke="#c084fc" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arr2)" />
-              <text x="395" y="178" text-anchor="middle" fill="#c084fc" font-size="9" font-family="Inter, sans-serif">ref_topic_id</text>
+              <rect x="480" y="140" width="160" height="60" rx="10" fill="#0f172a" stroke="#334155"/>
+              <text x="560" y="164" text-anchor="middle" fill="#e2e8f0" font-size="12" font-family="Inter, sans-serif">Another topic</text>
+              <text x="560" y="182" text-anchor="middle" fill="#64748b" font-size="10" font-family="Inter, sans-serif">association link</text>
+              <line x1="390" y1="170" x2="480" y2="170" stroke="#475569" stroke-width="1.4" marker-end="url(#arr-tpc)"/>
 
-              <rect x="640" y="50" width="200" height="120" rx="8" fill="#10161d" stroke="#4ade80" />
-              <text x="740" y="74" text-anchor="middle" fill="#4ade80" font-size="12" font-family="Inter, sans-serif" font-weight="600">Embedding</text>
-              <text x="740" y="94" text-anchor="middle" fill="#8b949e" font-size="10" font-family="Inter, sans-serif">title + summary &rarr; 384-dim</text>
-              <text x="740" y="110" text-anchor="middle" fill="#8b949e" font-size="10" font-family="Inter, sans-serif">cosine similarity for KNN</text>
-              <text x="740" y="126" text-anchor="middle" fill="#8b949e" font-size="10" font-family="Inter, sans-serif">one vector per topic</text>
-              <text x="740" y="142" text-anchor="middle" fill="#8b949e" font-size="10" font-family="Inter, sans-serif">(not per field, not chunked)</text>
-              <text x="740" y="158" text-anchor="middle" fill="#8b949e" font-size="10" font-family="Inter, sans-serif">Kuzu native or numpy fallback</text>
+              <rect x="480" y="220" width="160" height="60" rx="10" fill="#0f172a" stroke="#334155"/>
+              <text x="560" y="244" text-anchor="middle" fill="#e2e8f0" font-size="12" font-family="Inter, sans-serif">Another topic</text>
+              <text x="560" y="262" text-anchor="middle" fill="#64748b" font-size="10" font-family="Inter, sans-serif">field reference</text>
+              <line x1="390" y1="220" x2="480" y2="250" stroke="#475569" stroke-width="1.4" stroke-dasharray="4 3" marker-end="url(#arr-tpc)"/>
+
+              <rect x="680" y="100" width="150" height="120" rx="10" fill="#0f172a" stroke="#22c55e"/>
+              <text x="755" y="126" text-anchor="middle" fill="#4ade80" font-size="12" font-family="Inter, sans-serif" font-weight="600">Embedding</text>
+              <text x="755" y="148" text-anchor="middle" fill="#94a3b8" font-size="10" font-family="Inter, sans-serif">title + summary</text>
+              <text x="755" y="164" text-anchor="middle" fill="#94a3b8" font-size="10" font-family="Inter, sans-serif">&rarr; one vector per topic</text>
+              <text x="755" y="186" text-anchor="middle" fill="#94a3b8" font-size="10" font-family="Inter, sans-serif">KNN or cosine search</text>
+              <text x="755" y="202" text-anchor="middle" fill="#64748b" font-size="10" font-family="Inter, sans-serif">(not per-field, not chunked)</text>
             </svg>
-            <p class="diagram-caption">
-              A topic node carries its fields as versioned JSON, its embedding as a native vector, and its cross-topic
-              links as typed graph edges.
-            </p>
+            <p class="diagram-caption">A topic carries its identity, its versioned fields, its importance, its embedding, and its links &mdash; all on one node.</p>
           </div>
 
-          <h3 id="topic-versus-entity">Topic versus entity (modeling boundary)</h3>
+          <!-- ============================================================ -->
+          <h2 id="topic-vs-entity">Topic versus entity: where to draw the line</h2>
           <p>
-            MemState does not add a separate <em>Entity</em> node type. The topic is the boundary of what is stored as
-            one indexed, versioned unit. Informally, an entity is anything you mean in the world (a person, paper,
-            concept, task); a topic is how that meaning is packaged for the store.
+            An <em>entity</em> is anything the agent talks about &mdash; a person, a paper, a task, a concept. A
+            <em>topic</em> is how the agent stores one of those as a first-class unit of knowledge. Not every
+            entity needs to be its own topic.
           </p>
-          <ul>
-            <li>Multiple entities may live <em>inside</em> one topic when each is small, needs no standalone identity,
-              and is not heavily shared across the graph.</li>
-            <li>Keep subordinate facts as field values (strings, JSON, lists) while they stay local to the topic's
-              narrative and lifecycle.</li>
-            <li><strong>Split and promote</strong> to a new topic when an embedded entity grows complex, is
-              associated with many other topics, or should be queried as a first-class unit. Model the link with
-              <code>RELATED</code> and/or <code>ref_topic_id</code> and move the heavy payload out of the parent topic.</li>
-          </ul>
 
-          <h2 id="topic-schema">Topic record (schema contract)</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>Situation</th>
+                <th>What to do</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>The entity is small, local to one topic's narrative, and not reused elsewhere.</td>
+                <td>Keep it inside the parent topic as a field value (string, list, or JSON).</td>
+              </tr>
+              <tr>
+                <td>The entity grows complex, starts being referenced from other topics, or needs its own history.</td>
+                <td>Promote it to its own topic. Link from the parent with an extension or association edge, or from a field with a reference.</td>
+              </tr>
+              <tr>
+                <td>Two things share real-world meaning but have independent lifecycles.</td>
+                <td>Keep them as separate topics and connect them with an association link.</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <!-- ============================================================ -->
+          <h2 id="schema">Topic record</h2>
+          <p>The physical shape of a topic node on disk.</p>
+
           <table>
             <thead>
               <tr>
                 <th>Property</th>
                 <th>Type</th>
-                <th>Role in behavior</th>
+                <th>Role</th>
               </tr>
             </thead>
             <tbody>
               <tr>
                 <td><code>id</code></td>
-                <td>STRING (PK)</td>
-                <td>Stable topic identity used by APIs, edges, and field references.</td>
+                <td>STRING (primary key)</td>
+                <td>Stable identity used by APIs, links, and field references.</td>
               </tr>
               <tr>
                 <td><code>title</code>, <code>summary</code></td>
                 <td>STRING</td>
-                <td>Human-readable metadata and default text source for embedding generation.</td>
+                <td>Human-readable metadata and the default source text for the embedding.</td>
               </tr>
               <tr>
                 <td><code>topic_kind</code></td>
@@ -231,64 +212,77 @@
               <tr>
                 <td><code>salience</code>, <code>failed_salience</code></td>
                 <td>DOUBLE</td>
-                <td>Importance and failure-signaling channels used by retrieval reinforcement and forgetting policy.</td>
+                <td>Importance and failure signals used by retrieval reinforcement and forgetting.</td>
               </tr>
               <tr>
                 <td><code>fields_json</code></td>
                 <td>STRING (JSON)</td>
-                <td>Typed field map with per-field history <em>H<sub>i,j</sub></em> and optional
-                  <code>ref_topic_id</code>.</td>
+                <td>Typed field map with per-field history and optional field-level references.</td>
               </tr>
               <tr>
                 <td><code>topic_history_json</code></td>
                 <td>STRING (JSON)</td>
-                <td>Append-only topic-level event trail (created / salience / meta / embedding / failed_signal).</td>
+                <td>Append-only audit trail of topic-level events.</td>
               </tr>
               <tr>
                 <td><code>embedding</code></td>
                 <td>DOUBLE[]</td>
-                <td>Semantic search vector used by KNN or cosine fallback ranking.</td>
+                <td>Semantic search vector.</td>
               </tr>
               <tr>
                 <td><code>archived</code></td>
                 <td>BOOLEAN</td>
-                <td>Exclusion flag for default active scans and retrieval candidate generation.</td>
+                <td>Excludes the topic from default retrieval candidates without deleting it.</td>
               </tr>
               <tr>
                 <td><code>created_at</code>, <code>updated_at</code></td>
                 <td>STRING (ISO timestamp)</td>
-                <td>Temporal metadata for operations and debugging.</td>
+                <td>Temporal metadata.</td>
               </tr>
             </tbody>
           </table>
 
-          <h2 id="two-history-channels">Two distinct history channels</h2>
-          <ul>
-            <li><strong>Topic history (<code>topic_history_json</code>).</strong> Audit events about topic-level
-              changes (creation, salience updates, metadata updates).</li>
-            <li><strong>Field history (<code>fields_json.*.history[]</code>).</strong> Value-level temporal revisions
-              for each field; realizes <em>H<sub>i,j</sub> = &#10216;(v, t, &pi;)&#10217;</em> from the paper.</li>
-          </ul>
+          <div class="callout">
+            There are two distinct histories on a topic. <strong>Topic history</strong> logs node-level events like
+            creation, salience changes, and embedding refreshes. <strong>Field history</strong> logs each value
+            change on each field.
+          </div>
 
-          <h2 id="modeling-principles">Modeling principles</h2>
-          <ul>
-            <li>Use scalar topic columns for properties frequently used in filtering, ranking, or maintenance.</li>
-            <li>Use fields for domain-specific attributes that evolve without schema migrations.</li>
-            <li>Use <code>RELATED</code> for structural graph relationships and <code>ref_topic_id</code> for
-              field-level references.</li>
-            <li>Prefer one topic with many small embedded entities until reuse, complexity, or revision boundaries
-              argue for another topic (see <a href="#topic-versus-entity">Topic versus entity</a>).</li>
-          </ul>
+          <!-- ============================================================ -->
+          <h2 id="principles">Modeling principles</h2>
 
-          <h2 id="next-pages">Next pages</h2>
+          <div class="feature-grid">
+            <div class="feature-card">
+              <div class="feature-icon">&#x2713;</div>
+              <h3>Use scalar columns for hot paths</h3>
+              <p>Properties you filter, rank, or maintain on (<code>salience</code>, <code>archived</code>, timestamps) stay as top-level columns.</p>
+            </div>
+            <div class="feature-card">
+              <div class="feature-icon">&#x2713;</div>
+              <h3>Use fields for domain attributes</h3>
+              <p>Anything domain-specific that evolves &mdash; owner, status, location, metrics &mdash; belongs in <code>fields_json</code> with full history.</p>
+            </div>
+            <div class="feature-card">
+              <div class="feature-icon">&#x2713;</div>
+              <h3>Use links for relationships</h3>
+              <p>Typed edges for structural relationships; field-level references for attribute-scoped pointers.</p>
+            </div>
+            <div class="feature-card">
+              <div class="feature-icon">&#x2713;</div>
+              <h3>Start simple, split later</h3>
+              <p>Keep small entities inside a parent topic. Only promote them when they earn standalone identity.</p>
+            </div>
+          </div>
+
+          <h2 id="next">Next</h2>
           <ul>
             <li><a href="fields.html">Fields and value history</a></li>
-            <li><a href="relationships.html">Relationships and refs</a></li>
+            <li><a href="relationships.html">Relationships and references</a></li>
             <li><a href="limits-and-config.html">Limits and thresholds</a></li>
             <li><a href="diagram.html">Diagram gallery</a></li>
           </ul>
         </main>
-        <footer class="page-footer">Data model reference: state abstraction, topic schema, and persistence shape.</footer>
+        <footer class="page-footer">Data model reference: topics, fields, structure, and the policies that govern them.</footer>
       </div>
     </div>
     <script src="../js/nav.js" defer></script>

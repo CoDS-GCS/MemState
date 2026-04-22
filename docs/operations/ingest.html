@@ -11,13 +11,54 @@
       <aside id="doc-sidebar" aria-label="Documentation navigation"></aside>
       <div class="doc-inner">
         <header class="page-header">
-          <h1>Operation: ingest (client-accessible)</h1>
+          <h1>Ingestion operator <code>U(I<sub>t</sub>)</code></h1>
         </header>
         <main class="page-main">
           <p>
-            Ingest is the write entrypoint for external clients. In code, its objective is to convert an <code>IngestRequest</code> into validated topic/field/edge
-            mutations through <code>Executor.ingest()</code>, while enforcing placement rules and preparing downstream maintenance triggers.
+            <strong>Ingestion</strong> is the write-side state transition that integrates new input
+            <em>I<sub>t</sub></em> into the current memory state, producing an updated state
+            <em>M<sub>t+1</sub></em>. It is the externally triggered operator of the four state-level operators in
+            GEM and is exposed as <code>POST /v1/ingest</code>.
           </p>
+
+          <div class="definition">
+            <span class="definition-label">Definition 4 &mdash; Ingestion</span>
+            Ingestion is a state transition <strong>M<sub>t+1</sub> = U(M<sub>t</sub>, I<sub>t</sub>)</strong> that
+            integrates new input <em>I<sub>t</sub></em> into the existing memory state. The operator consults
+            <em>D<sub>t</sub></em> and <em>S<sub>t</sub></em> to decide placement, applies low-level primitives
+            governed by <em>P<sub>t</sub></em>, and persists the result.
+          </div>
+
+          <div class="algorithm">
+            <span class="algorithm-label">Algorithm 1 &mdash; Ingestion pipeline</span>
+            <ol>
+              <li>Read input <em>I<sub>t</sub></em> and derive a placement decision from <em>D<sub>t</sub></em>
+                (similarity scan, structural hints).</li>
+              <li>Select a placement mode: create a new topic, extend an existing topic, or version a field.</li>
+              <li>Apply primitives governed by <em>P<sub>t</sub></em> (field-level append, topic-level metadata,
+                graph-level edge merge).</li>
+              <li>Append provenance <em>&pi;</em> and timestamp <em>t</em> to each affected
+                <em>H<sub>i,j</sub></em>; enforce <code>max_field_history</code>.</li>
+              <li>Refresh the topic embedding and return <code>IngestResponse</code>; schedule downstream maintenance
+                via the reasoner.</li>
+            </ol>
+          </div>
+
+          <h2>Role of primitives</h2>
+          <p>
+            Ingestion is composed from primitives in the three-level hierarchy defined in the GEM paper. The executor
+            chooses primitives based on placement; primitives execute, validated by <em>P<sub>t</sub></em>.
+          </p>
+          <table>
+            <thead>
+              <tr><th>Level</th><th>Primitive used by ingest</th><th>Effect</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>Field</td><td><code>append_field_history</code></td><td>Append <em>(v, t, &pi;)</em> to <em>H<sub>i,j</sub></em>.</td></tr>
+              <tr><td>Topic</td><td><code>create_topic</code>, <code>update_topic_embedding</code></td><td>Create a new semantic unit or refresh its embedding.</td></tr>
+              <tr><td>Graph</td><td><code>add_related_edge</code></td><td>MERGE a typed <code>RELATED</code> edge.</td></tr>
+            </tbody>
+          </table>
 
           <h2>Operation lifecycle map</h2>
           <div class="figure-block">
