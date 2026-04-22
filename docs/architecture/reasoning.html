@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Architecture - reasoner behavior</title>
+    <title>Architecture &mdash; reasoner</title>
     <link rel="stylesheet" href="../styles.css" />
   </head>
   <body class="has-sidebar" data-doc-page="architecture/reasoning">
@@ -11,124 +11,154 @@
       <aside id="doc-sidebar" aria-label="Documentation navigation"></aside>
       <div class="doc-inner">
         <header class="page-header">
-          <h1>Reasoner behavior</h1>
+          <h1>Reasoner</h1>
         </header>
         <main class="page-main">
-          <p>
-            The reasoner is a rule-based maintenance engine invoked on lifecycle events. It uses the same executor/store objects as request handlers, but it runs after
-            the client response for ingest and query endpoints.
-          </p>
+          <section class="hero">
+            <span class="eyebrow">Architecture &middot; Reasoner</span>
+            <h1 class="hero-title">Background maintenance, triggered by events.</h1>
+            <p class="hero-sub">
+              The reasoner is the background engine that keeps memory healthy. It consolidates duplicates,
+              archives low-value topics, and does its work after the client response has already returned &mdash;
+              so maintenance never adds latency to the request path.
+            </p>
+          </section>
 
-          <h2>Design intent</h2>
-          <ul>
-            <li>Keep core API semantics stable while allowing memory-maintenance policy to evolve independently.</li>
-            <li>Run lightweight bounded heuristics instead of opaque models for cleanup tasks.</li>
-            <li>Avoid adding request latency by executing maintenance in background callbacks.</li>
-          </ul>
+          <!-- ============================================================ -->
+          <h2 id="intent">Design intent</h2>
 
-          <h2>Event to action matrix</h2>
+          <div class="feature-grid">
+            <div class="feature-card">
+              <div class="feature-icon">&#x2699;</div>
+              <h3>Stable API, evolving policy</h3>
+              <p>Client-facing semantics stay stable while retention policy evolves independently inside the reasoner.</p>
+            </div>
+            <div class="feature-card">
+              <div class="feature-icon">&#x1f3d7;</div>
+              <h3>Lightweight heuristics</h3>
+              <p>Bounded, explainable heuristics for cleanup &mdash; not opaque models in the hot path.</p>
+            </div>
+            <div class="feature-card">
+              <div class="feature-icon">&#x23f1;</div>
+              <h3>Off the critical path</h3>
+              <p>Runs as a FastAPI background task after the response is sent, so requests never wait on maintenance.</p>
+            </div>
+          </div>
+
+          <!-- ============================================================ -->
+          <h2 id="events">Events the reasoner listens to</h2>
+
           <table>
             <thead>
               <tr>
                 <th>Event</th>
-                <th>Forget action</th>
-                <th>Revise action</th>
+                <th>Forget</th>
+                <th>Revise</th>
               </tr>
             </thead>
             <tbody>
               <tr>
                 <td><code>ingest_complete</code></td>
-                <td>Runs if topic count >= <code>topic_count_soft_limit</code>.</td>
-                <td>Runs duplicate-title revise when total topic count is positive.</td>
+                <td>Runs when topic count is at or above the soft limit.</td>
+                <td>Runs duplicate detection when the store has topics.</td>
               </tr>
               <tr>
                 <td><code>query_complete</code></td>
-                <td>Runs if topic count >= <code>topic_count_soft_limit</code>.</td>
-                <td>Not executed for this event.</td>
+                <td>Runs when topic count is at or above the soft limit.</td>
+                <td>Skipped.</td>
               </tr>
               <tr>
                 <td><code>cron</code></td>
-                <td>Runs if topic count >= soft limit.</td>
-                <td>Runs duplicate-title revise when topic count is positive.</td>
+                <td>Runs when topic count is at or above the soft limit.</td>
+                <td>Runs duplicate detection when the store has topics.</td>
               </tr>
               <tr>
                 <td><code>memory_pressure</code></td>
-                <td>Always runs forget (independent of count threshold).</td>
-                <td>Not executed for this event.</td>
+                <td>Always runs &mdash; pressure bypasses the count gate.</td>
+                <td>Skipped.</td>
               </tr>
             </tbody>
           </table>
 
-          <h2>Decision flow diagram</h2>
+          <!-- ============================================================ -->
+          <h2 id="flow">Decision flow</h2>
           <div class="figure-block">
-            <svg class="diagram-svg" viewBox="0 0 860 300" xmlns="http://www.w3.org/2000/svg" aria-label="Reasoner decision flow">
+            <svg class="diagram-svg" viewBox="0 0 860 300" xmlns="http://www.w3.org/2000/svg" aria-label="Reasoner flow">
               <defs>
-                <marker id="arr" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L0,6 L7,3 z" fill="#8b949e"/></marker>
+                <marker id="arr-rn" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3 z" fill="#64748b"/></marker>
               </defs>
-              <rect x="30" y="124" width="140" height="52" rx="8" fill="#10161d" stroke="#30363d"/>
-              <text x="100" y="155" text-anchor="middle" fill="#e6edf3" font-size="13" font-family="Segoe UI, sans-serif">Reasoner.run(event)</text>
 
-              <line x1="170" y1="150" x2="250" y2="150" stroke="#8b949e" stroke-width="1.3" marker-end="url(#arr)"/>
+              <rect x="30" y="124" width="160" height="52" rx="10" fill="#0f172a" stroke="#334155"/>
+              <text x="110" y="155" text-anchor="middle" fill="#e2e8f0" font-size="12" font-family="Inter, sans-serif">Reasoner.run(event)</text>
 
-              <polygon points="250,110 410,110 440,150 410,190 250,190 220,150" fill="#10161d" stroke="#58a6ff"/>
-              <text x="330" y="146" text-anchor="middle" fill="#58a6ff" font-size="12" font-family="Segoe UI, sans-serif">is event ingest/cron/memory_pressure?</text>
+              <line x1="190" y1="150" x2="250" y2="150" stroke="#475569" stroke-width="1.3" marker-end="url(#arr-rn)"/>
 
-              <line x1="440" y1="150" x2="515" y2="150" stroke="#8b949e" stroke-width="1.3" marker-end="url(#arr)"/>
+              <polygon points="250,110 410,110 440,150 410,190 250,190 220,150" fill="#0f172a" stroke="#3b82f6"/>
+              <text x="330" y="146" text-anchor="middle" fill="#60a5fa" font-size="12" font-family="Inter, sans-serif">is event ingest / cron / pressure?</text>
 
-              <rect x="520" y="70" width="150" height="60" rx="8" fill="#10161d" stroke="#2ea043"/>
-              <text x="595" y="94" text-anchor="middle" fill="#2ea043" font-size="12" font-family="Segoe UI, sans-serif">forget branch</text>
-              <text x="595" y="112" text-anchor="middle" fill="#c9d1d9" font-size="11" font-family="Segoe UI, sans-serif">run_forget_low_salience()</text>
+              <line x1="440" y1="150" x2="515" y2="150" stroke="#475569" stroke-width="1.3" marker-end="url(#arr-rn)"/>
 
-              <rect x="520" y="168" width="150" height="60" rx="8" fill="#10161d" stroke="#d29922"/>
-              <text x="595" y="192" text-anchor="middle" fill="#d29922" font-size="12" font-family="Segoe UI, sans-serif">revise branch</text>
-              <text x="595" y="210" text-anchor="middle" fill="#c9d1d9" font-size="11" font-family="Segoe UI, sans-serif">run_revise_duplicates()</text>
+              <rect x="520" y="70" width="160" height="60" rx="10" fill="#0f172a" stroke="#22c55e"/>
+              <text x="600" y="94" text-anchor="middle" fill="#4ade80" font-size="12" font-family="Inter, sans-serif">Forget</text>
+              <text x="600" y="112" text-anchor="middle" fill="#94a3b8" font-size="11" font-family="Inter, sans-serif">archive low-salience topics</text>
 
-              <line x1="330" y1="190" x2="330" y2="244" stroke="#8b949e" stroke-width="1.3" marker-end="url(#arr)"/>
-              <rect x="250" y="244" width="160" height="44" rx="8" fill="#10161d" stroke="#30363d"/>
-              <text x="330" y="271" text-anchor="middle" fill="#e6edf3" font-size="12" font-family="Segoe UI, sans-serif">query_complete path</text>
+              <rect x="520" y="168" width="160" height="60" rx="10" fill="#0f172a" stroke="#fbbf24"/>
+              <text x="600" y="192" text-anchor="middle" fill="#fbbf24" font-size="12" font-family="Inter, sans-serif">Revise</text>
+              <text x="600" y="210" text-anchor="middle" fill="#94a3b8" font-size="11" font-family="Inter, sans-serif">merge duplicate topics</text>
 
-              <line x1="410" y1="266" x2="515" y2="266" stroke="#8b949e" stroke-width="1.3" marker-end="url(#arr)"/>
-              <rect x="520" y="242" width="150" height="48" rx="8" fill="#10161d" stroke="#2ea043"/>
-              <text x="595" y="271" text-anchor="middle" fill="#2ea043" font-size="12" font-family="Segoe UI, sans-serif">forget if count >= soft limit</text>
+              <line x1="330" y1="190" x2="330" y2="244" stroke="#475569" stroke-width="1.3" marker-end="url(#arr-rn)"/>
+              <rect x="250" y="244" width="160" height="44" rx="10" fill="#0f172a" stroke="#334155"/>
+              <text x="330" y="271" text-anchor="middle" fill="#e2e8f0" font-size="12" font-family="Inter, sans-serif">query_complete path</text>
 
-              <text x="712" y="95" fill="#8b949e" font-size="11" font-family="Segoe UI, sans-serif">Condition:</text>
-              <text x="712" y="112" fill="#8b949e" font-size="11" font-family="Segoe UI, sans-serif">count >= soft limit OR</text>
-              <text x="712" y="128" fill="#8b949e" font-size="11" font-family="Segoe UI, sans-serif">event == memory_pressure</text>
+              <line x1="410" y1="266" x2="515" y2="266" stroke="#475569" stroke-width="1.3" marker-end="url(#arr-rn)"/>
+              <rect x="520" y="242" width="160" height="48" rx="10" fill="#0f172a" stroke="#22c55e"/>
+              <text x="600" y="271" text-anchor="middle" fill="#4ade80" font-size="12" font-family="Inter, sans-serif">Forget if above soft limit</text>
             </svg>
-            <p class="diagram-caption">Reasoner returns a structured <code>ReasonerResult</code> containing lists of revise and forget actions.</p>
+            <p class="diagram-caption">The reasoner returns a <code>ReasonerResult</code> listing which revise and forget actions it took.</p>
           </div>
 
-          <h2>Forget and revise semantics</h2>
+          <!-- ============================================================ -->
+          <h2 id="semantics">What each action does</h2>
+
           <table>
             <thead>
               <tr>
                 <th>Action</th>
-                <th>Implementation behavior</th>
+                <th>Behavior</th>
                 <th>Effect</th>
               </tr>
             </thead>
             <tbody>
               <tr>
-                <td>Forget low salience</td>
-                <td>Scans non-archived topics and archives entries with salience below <code>forget_salience_threshold</code>.</td>
-                <td>Marks <code>archived=true</code> and halves salience on affected topics.</td>
+                <td>Forget by salience</td>
+                <td>Scans non-archived topics and archives those whose salience is below the threshold.</td>
+                <td>Marks the topic archived and halves its salience; excluded from default retrieval.</td>
               </tr>
               <tr>
                 <td>Revise duplicates</td>
-                <td>Uses title equality heuristic (<code>find_duplicate_titles</code>) and merges pairs.</td>
-                <td>Moves edges/fields toward keep topic and deletes drop topic.</td>
+                <td>Finds topic pairs with identical non-empty titles and merges them.</td>
+                <td>Transfers edges and missing fields onto the surviving topic; removes the duplicate.</td>
               </tr>
             </tbody>
           </table>
 
-          <h2>Operational implications</h2>
+          <!-- ============================================================ -->
+          <h2 id="policy-roadmap">Toward declarative policy</h2>
+          <p>
+            Today's reasoner logic is implemented in code. The direction of travel is a declarative policy engine:
+            rules expressed as <em>event</em> + <em>condition</em> + <em>action</em> triples that operators can
+            tune without touching code. This is on the roadmap; see the <a href="../data-model/limits-and-config.html">configuration reference</a> for current knobs.
+          </p>
+
+          <!-- ============================================================ -->
+          <h2 id="operational">Operational notes</h2>
           <ul>
-            <li>Large ingest bursts can trigger cleanup soon after writes, because <code>ingest_complete</code> runs every request.</li>
-            <li>Duplicate detection is title-based; unrelated topics with identical titles may be merged unless upstream naming is careful.</li>
-            <li>If maintenance policy should not run, reasoner invocation must be disabled in route handlers or guarded by custom conditions.</li>
+            <li>Large ingest bursts trigger cleanup soon after writes, because <code>ingest_complete</code> fires on every ingest call.</li>
+            <li>Duplicate detection today is title-only. Upstream naming hygiene matters.</li>
+            <li>To disable maintenance, skip the reasoner invocation in route handlers or guard it with your own condition.</li>
           </ul>
         </main>
-        <footer class="page-footer">Reasoner reference: event-driven maintenance policy and action semantics.</footer>
+        <footer class="page-footer">Reasoner: event-driven background maintenance for memory health.</footer>
       </div>
     </div>
     <script src="../js/nav.js" defer></script>

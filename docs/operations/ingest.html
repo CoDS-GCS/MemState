@@ -11,54 +11,52 @@
       <aside id="doc-sidebar" aria-label="Documentation navigation"></aside>
       <div class="doc-inner">
         <header class="page-header">
-          <h1>Ingestion operator <code>U(I<sub>t</sub>)</code></h1>
+          <h1>Ingest</h1>
         </header>
         <main class="page-main">
-          <p>
-            <strong>Ingestion</strong> is the write-side state transition that integrates new input
-            <em>I<sub>t</sub></em> into the current memory state, producing an updated state
-            <em>M<sub>t+1</sub></em>. It is the externally triggered operator of the four state-level operators in
-            GEM and is exposed as <code>POST /v1/ingest</code>.
-          </p>
+          <section class="hero">
+            <span class="eyebrow">Operation &middot; Ingest</span>
+            <h1 class="hero-title">The write path into memory.</h1>
+            <p class="hero-sub">
+              Ingest is how new information enters MemState. It decides where a new fact belongs &mdash; a new
+              topic, an extension of an existing one, or an appended value on a field &mdash; and records it with
+              full provenance and history.
+            </p>
+            <div class="hero-actions">
+              <a class="btn btn-primary" href="query.html">Next: Retrieve</a>
+              <a class="btn" href="../api/v1.html#ingest">API reference</a>
+            </div>
+          </section>
 
-          <div class="definition">
-            <span class="definition-label">Definition 4 &mdash; Ingestion</span>
-            Ingestion is a state transition <strong>M<sub>t+1</sub> = U(M<sub>t</sub>, I<sub>t</sub>)</strong> that
-            integrates new input <em>I<sub>t</sub></em> into the existing memory state. The operator consults
-            <em>D<sub>t</sub></em> and <em>S<sub>t</sub></em> to decide placement, applies low-level primitives
-            governed by <em>P<sub>t</sub></em>, and persists the result.
+          <h2 id="how-it-works">How it works</h2>
+          <ol class="steps">
+            <li><strong>Client calls <code>POST /v1/ingest</code>.</strong> The request carries a placement decision and an optional payload of fields and edges.</li>
+            <li><strong>Executor validates and routes.</strong> It checks the placement mode, resolves the target topic (if any), and picks the right write path.</li>
+            <li><strong>Primitives run against the store.</strong> A new topic node is created, fields are appended with full revision metadata, and typed edges are merged.</li>
+            <li><strong>The embedding is refreshed.</strong> Any topic whose text changed gets a new vector so semantic search stays in sync.</li>
+            <li><strong>Background maintenance is scheduled.</strong> The reasoner is notified that ingest completed, which may trigger revision or forget work later.</li>
+          </ol>
+
+          <h2 id="placement-modes">Placement modes</h2>
+          <p>Every ingest call picks one of three modes. They differ only in where the write lands.</p>
+
+          <div class="feature-grid">
+            <div class="feature-card">
+              <div class="feature-icon">&#x2b;</div>
+              <h3>new_topic</h3>
+              <p>Create a brand-new topic with its fields and edges. Use this for genuinely new things.</p>
+            </div>
+            <div class="feature-card">
+              <div class="feature-icon">&#x2192;</div>
+              <h3>extend_topic</h3>
+              <p>Add fields or edges to an existing topic. Use this when you're enriching something you already know.</p>
+            </div>
+            <div class="feature-card">
+              <div class="feature-icon">&#x1f552;</div>
+              <h3>version_field</h3>
+              <p>Append a new revision to exactly one field on an existing topic. Use this when a value changed.</p>
+            </div>
           </div>
-
-          <div class="algorithm">
-            <span class="algorithm-label">Algorithm 1 &mdash; Ingestion pipeline</span>
-            <ol>
-              <li>Read input <em>I<sub>t</sub></em> and derive a placement decision from <em>D<sub>t</sub></em>
-                (similarity scan, structural hints).</li>
-              <li>Select a placement mode: create a new topic, extend an existing topic, or version a field.</li>
-              <li>Apply primitives governed by <em>P<sub>t</sub></em> (field-level append, topic-level metadata,
-                graph-level edge merge).</li>
-              <li>Append provenance <em>&pi;</em> and timestamp <em>t</em> to each affected
-                <em>H<sub>i,j</sub></em>; enforce <code>max_field_history</code>.</li>
-              <li>Refresh the topic embedding and return <code>IngestResponse</code>; schedule downstream maintenance
-                via the reasoner.</li>
-            </ol>
-          </div>
-
-          <h2>Role of primitives</h2>
-          <p>
-            Ingestion is composed from primitives in the three-level hierarchy defined in the GEM paper. The executor
-            chooses primitives based on placement; primitives execute, validated by <em>P<sub>t</sub></em>.
-          </p>
-          <table>
-            <thead>
-              <tr><th>Level</th><th>Primitive used by ingest</th><th>Effect</th></tr>
-            </thead>
-            <tbody>
-              <tr><td>Field</td><td><code>append_field_history</code></td><td>Append <em>(v, t, &pi;)</em> to <em>H<sub>i,j</sub></em>.</td></tr>
-              <tr><td>Topic</td><td><code>create_topic</code>, <code>update_topic_embedding</code></td><td>Create a new semantic unit or refresh its embedding.</td></tr>
-              <tr><td>Graph</td><td><code>add_related_edge</code></td><td>MERGE a typed <code>RELATED</code> edge.</td></tr>
-            </tbody>
-          </table>
 
           <h2>Operation lifecycle map</h2>
           <div class="figure-block">

@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Operations - forget</title>
+    <title>Operations &mdash; forget</title>
     <link rel="stylesheet" href="../styles.css" />
   </head>
   <body class="has-sidebar" data-doc-page="operations/forget">
@@ -11,117 +11,122 @@
       <aside id="doc-sidebar" aria-label="Documentation navigation"></aside>
       <div class="doc-inner">
         <header class="page-header">
-          <h1>Operation: forget (internal, policy-triggered)</h1>
+          <h1>Forget</h1>
         </header>
         <main class="page-main">
+          <section class="hero">
+            <span class="eyebrow">Operation &middot; Forget</span>
+            <h1 class="hero-title">Attenuate what stops earning its place.</h1>
+            <p class="hero-sub">
+              Forget is a background operation that keeps memory lean. It attenuates or archives content that has
+              stopped being relevant &mdash; without deleting it. Everything forgotten stays on disk and is still
+              reachable by explicit lookup.
+            </p>
+            <div class="hero-actions">
+              <a class="btn btn-primary" href="ingest.html">Back to start: Ingest</a>
+            </div>
+          </section>
+
+          <!-- ============================================================ -->
+          <h2 id="non-destructive">Non-destructive by design</h2>
+          <div class="callout">
+            Forget never deletes data. Archived topics are excluded from default scans and default retrieval, but
+            their fields, history, and links remain intact and addressable.
+          </div>
+
+          <!-- ============================================================ -->
+          <h2 id="ladder">The forgetting ladder</h2>
           <p>
-            Forget is an internal retention operation. In code, its objective is to bound active memory by archiving topics whose salience is below a policy threshold,
-            primarily when topic volume crosses soft limits.
+            Forgetting is a progression, not a single toggle. Content moves down the ladder as its importance
+            decays.
           </p>
 
-          <h2>Access and trigger</h2>
-          <ul>
-            <li><strong>Not client-accessible</strong>: no public route directly runs forget.</li>
-            <li><strong>Triggered by reasoner</strong> from events: <code>ingest_complete</code>, <code>query_complete</code>, <code>cron</code>, <code>memory_pressure</code>.</li>
-            <li><strong>Execution path</strong>: <code>Reasoner.run(event)</code> -> <code>Executor.run_forget_low_salience()</code>.</li>
-          </ul>
-          <div class="callout warn">
-            Current behavior: forget runs only when reasoner is invoked. In stock API code that means post-response callbacks from <code>/v1/ingest</code> and <code>/v1/query</code>; UI API and LLM/MCP tool writes do not auto-trigger forget.
-          </div>
-
-          <h2>Objective in code</h2>
-          <div class="callout">
-            <strong>Objective:</strong> deactivate low-value topics by setting <code>archived=true</code> and reducing their salience, so active retrieval focuses on higher-signal memory.
-          </div>
-
-          <h2>Visual flow (current)</h2>
           <div class="figure-block">
-            <svg class="diagram-svg" viewBox="0 0 920 260" xmlns="http://www.w3.org/2000/svg" aria-label="Forget operation flow">
+            <svg class="diagram-svg" viewBox="0 0 860 180" xmlns="http://www.w3.org/2000/svg" aria-label="Forgetting ladder">
               <defs>
-                <marker id="arr-forget" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L0,6 L7,3 z" fill="#8b949e"/></marker>
+                <marker id="arr-fg" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3 z" fill="#64748b"/></marker>
               </defs>
-              <rect x="18" y="96" width="190" height="60" rx="8" fill="#10161d" stroke="#30363d"/>
-              <text x="113" y="122" text-anchor="middle" fill="#e6edf3" font-size="12" font-family="Segoe UI, sans-serif">Reasoner event</text>
-              <text x="113" y="140" text-anchor="middle" fill="#8b949e" font-size="11" font-family="Segoe UI, sans-serif">ingest/query/cron/memory_pressure</text>
 
-              <line x1="208" y1="126" x2="270" y2="126" stroke="#8b949e" stroke-width="1.4" marker-end="url(#arr-forget)"/>
-              <polygon points="270,92 438,92 466,126 438,160 270,160 242,126" fill="#10161d" stroke="#58a6ff"/>
-              <text x="354" y="122" text-anchor="middle" fill="#58a6ff" font-size="12" font-family="Segoe UI, sans-serif">count >= topic_count_soft_limit</text>
-              <text x="354" y="140" text-anchor="middle" fill="#58a6ff" font-size="12" font-family="Segoe UI, sans-serif">or event == memory_pressure</text>
+              <rect x="40" y="50" width="220" height="80" rx="10" fill="#0f172a" stroke="#fbbf24"/>
+              <text x="150" y="78" text-anchor="middle" fill="#fbbf24" font-size="13" font-family="Inter, sans-serif" font-weight="600">Summarize</text>
+              <text x="150" y="98" text-anchor="middle" fill="#94a3b8" font-size="11" font-family="Inter, sans-serif">compress older history</text>
+              <text x="150" y="115" text-anchor="middle" fill="#64748b" font-size="10" font-family="Inter, sans-serif">planned</text>
 
-              <line x1="466" y1="126" x2="528" y2="126" stroke="#8b949e" stroke-width="1.4" marker-end="url(#arr-forget)"/>
-              <rect x="532" y="92" width="180" height="68" rx="8" fill="#10161d" stroke="#2ea043"/>
-              <text x="622" y="118" text-anchor="middle" fill="#2ea043" font-size="12" font-family="Segoe UI, sans-serif">run_forget_low_salience()</text>
-              <text x="622" y="136" text-anchor="middle" fill="#c9d1d9" font-size="11" font-family="Segoe UI, sans-serif">scan active topics</text>
+              <line x1="260" y1="90" x2="305" y2="90" stroke="#475569" stroke-width="1.5" marker-end="url(#arr-fg)"/>
 
-              <line x1="712" y1="126" x2="776" y2="126" stroke="#8b949e" stroke-width="1.4" marker-end="url(#arr-forget)"/>
-              <rect x="780" y="80" width="126" height="92" rx="8" fill="#10161d" stroke="#d29922"/>
-              <text x="843" y="106" text-anchor="middle" fill="#d29922" font-size="12" font-family="Segoe UI, sans-serif">if salience</text>
-              <text x="843" y="122" text-anchor="middle" fill="#d29922" font-size="12" font-family="Segoe UI, sans-serif">&lt; threshold</text>
-              <text x="843" y="142" text-anchor="middle" fill="#c9d1d9" font-size="11" font-family="Segoe UI, sans-serif">archived=true</text>
-              <text x="843" y="158" text-anchor="middle" fill="#c9d1d9" font-size="11" font-family="Segoe UI, sans-serif">salience *= 0.5</text>
+              <rect x="310" y="50" width="220" height="80" rx="10" fill="#0f172a" stroke="#c084fc"/>
+              <text x="420" y="78" text-anchor="middle" fill="#c084fc" font-size="13" font-family="Inter, sans-serif" font-weight="600">Detach</text>
+              <text x="420" y="98" text-anchor="middle" fill="#94a3b8" font-size="11" font-family="Inter, sans-serif">drop from active working set</text>
+              <text x="420" y="115" text-anchor="middle" fill="#64748b" font-size="10" font-family="Inter, sans-serif">planned</text>
 
-              <line x1="622" y1="160" x2="622" y2="238" stroke="#8b949e" stroke-width="1.2" marker-end="url(#arr-forget)"/>
-              <rect x="544" y="238" width="160" height="20" rx="5" fill="#10161d" stroke="#30363d"/>
-              <text x="624" y="252" text-anchor="middle" fill="#8b949e" font-size="10" font-family="Segoe UI, sans-serif">ReasonerResult.forget_actions[]</text>
+              <line x1="530" y1="90" x2="575" y2="90" stroke="#475569" stroke-width="1.5" marker-end="url(#arr-fg)"/>
+
+              <rect x="580" y="50" width="220" height="80" rx="10" fill="#0f172a" stroke="#4ade80"/>
+              <text x="690" y="78" text-anchor="middle" fill="#4ade80" font-size="13" font-family="Inter, sans-serif" font-weight="600">Archive</text>
+              <text x="690" y="98" text-anchor="middle" fill="#94a3b8" font-size="11" font-family="Inter, sans-serif">exclude from default scans</text>
+              <text x="690" y="115" text-anchor="middle" fill="#4ade80" font-size="10" font-family="Inter, sans-serif">shipped</text>
             </svg>
-            <p class="diagram-caption">Forget runs only under policy conditions, then archives low-salience topics.</p>
+            <p class="diagram-caption">Archive is in production today. Summarize and detach are on the roadmap.</p>
           </div>
 
-          <h2>Trigger conditions (current implementation)</h2>
           <table>
             <thead>
-              <tr>
-                <th>Event</th>
-                <th>Condition for forget execution</th>
-              </tr>
+              <tr><th>Stage</th><th>Effect</th><th>Status</th></tr>
             </thead>
             <tbody>
-              <tr><td><code>ingest_complete</code></td><td>Run when total topic count >= <code>Policies.topic_count_soft_limit</code>.</td></tr>
-              <tr><td><code>query_complete</code></td><td>Run when total topic count >= soft limit.</td></tr>
-              <tr><td><code>cron</code></td><td>Run when total topic count >= soft limit.</td></tr>
-              <tr><td><code>memory_pressure</code></td><td>Always run (explicit pressure signal bypasses count gate).</td></tr>
+              <tr><td>Summarize</td><td>Older history is compressed; the topic remains fully active.</td><td><span class="status-future">Planned</span></td></tr>
+              <tr><td>Detach</td><td>Low-value fields or connectors leave the active working set; still reachable explicitly.</td><td><span class="status-future">Planned</span></td></tr>
+              <tr><td>Archive</td><td>The topic is marked archived and excluded from default retrieval; everything stays on disk.</td><td><span class="status-impl">Shipped</span></td></tr>
             </tbody>
           </table>
 
-          <h2>Forget algorithm (current implementation)</h2>
-          <ol>
-            <li>Load non-archived topics via <code>list_topics_for_embedding_scan(include_archived=False)</code>.</li>
-            <li>For each topic, compare <code>salience</code> to <code>forget_salience_threshold</code>.</li>
-            <li>If <code>salience &lt; threshold</code>, set <code>archived=true</code> and <code>salience = salience * 0.5</code>.</li>
-            <li>Append action marker <code>archived:{topic_id}</code>.</li>
+          <!-- ============================================================ -->
+          <h2 id="trigger">How it's triggered</h2>
+          <ul>
+            <li>Forget is <strong>not called directly by clients</strong>. There is no public HTTP route for it.</li>
+            <li>The <strong>reasoner</strong> calls it in response to specific events.</li>
+          </ul>
+
+          <table>
+            <thead>
+              <tr><th>Event</th><th>When forget runs</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><code>ingest_complete</code></td><td>Runs when topic count is at or above the soft limit.</td></tr>
+              <tr><td><code>query_complete</code></td><td>Runs when topic count is at or above the soft limit.</td></tr>
+              <tr><td><code>cron</code></td><td>Runs on a schedule when topic count is at or above the soft limit.</td></tr>
+              <tr><td><code>memory_pressure</code></td><td>Runs unconditionally; pressure signal bypasses the count gate.</td></tr>
+            </tbody>
+          </table>
+
+          <!-- ============================================================ -->
+          <h2 id="algorithm">What archive does today</h2>
+          <ol class="steps">
+            <li><strong>Scan active topics.</strong> Load non-archived topics via the embedding scan list.</li>
+            <li><strong>Compare salience.</strong> For each topic, check its salience against the archive threshold.</li>
+            <li><strong>Archive and attenuate.</strong> If salience is below the threshold, set <code>archived=true</code> and halve the salience value.</li>
+            <li><strong>Record the action.</strong> Append an <code>archived:&lt;topic_id&gt;</code> marker to the reasoner result.</li>
           </ol>
 
-          <h2>Execution sequence</h2>
-          <pre class="sequence"><code>reasoner event
-  -> Reasoner.run(event)
-  -> if event + policy conditions satisfied
-      -> Executor.run_forget_low_salience()
-      -> scan active topics
-      -> archive low-salience topics
-  -> return forget_actions[] in ReasonerResult</code></pre>
-
-          <h2>Policy knobs that control forget</h2>
+          <!-- ============================================================ -->
+          <h2 id="knobs">Knobs</h2>
           <table>
             <thead>
-              <tr>
-                <th>Policy</th>
-                <th>Default</th>
-                <th>Current role</th>
-              </tr>
+              <tr><th>Policy</th><th>Default</th><th>Role</th></tr>
             </thead>
             <tbody>
-              <tr><td><code>topic_count_soft_limit</code></td><td>500</td><td>Primary gate for forget triggers on ingest/query/cron events.</td></tr>
-              <tr><td><code>forget_salience_threshold</code></td><td>0.05</td><td>Topic salience cut-off for archive decisions.</td></tr>
-              <tr><td><code>max_topics_for_forget_scan</code></td><td>10000</td><td>Defined in policy model but not actively enforced in current forget loop.</td></tr>
+              <tr><td><code>topic_count_soft_limit</code></td><td>500</td><td>Gate for running forget on ingest/query/cron events.</td></tr>
+              <tr><td><code>forget_salience_threshold</code></td><td>0.05</td><td>Salience cut-off below which a topic gets archived.</td></tr>
+              <tr><td><code>max_topics_for_forget_scan</code></td><td>10,000</td><td>Scan bound used by the forget flow.</td></tr>
             </tbody>
           </table>
 
-          <h2>Operational implications</h2>
+          <!-- ============================================================ -->
+          <h2 id="implications">Operational implications</h2>
           <ul>
-            <li>Archived topics are skipped by default in active retrieval scans.</li>
-            <li>Forget decisions are currently based only on topic salience, not recency or semantic redundancy.</li>
-            <li>Because query operation bumps salience on touched topics, frequent reads can protect topics from archival.</li>
+            <li>Archived topics are excluded from default active retrieval. They remain reachable with explicit lookups.</li>
+            <li>Forget decisions today look at salience only &mdash; not recency or semantic redundancy.</li>
+            <li>Because retrieval bumps salience on every touched topic, <em>active use protects a topic from being archived</em>.</li>
           </ul>
 
           <h2>Code map</h2>
@@ -131,9 +136,9 @@
             <li><code>memstate.store.graph_store.update_topic_meta</code></li>
           </ul>
 
-          <p><a href="ingest.html">Back to operation start: ingest</a></p>
+          <p><a href="ingest.html">Back to Ingest</a></p>
         </main>
-        <footer class="page-footer">Core operation reference: internal forget trigger rules and retention-state transitions.</footer>
+        <footer class="page-footer">Forget reference: the forgetting ladder, triggers, and non-destructive archival.</footer>
       </div>
     </div>
     <script src="../js/nav.js" defer></script>

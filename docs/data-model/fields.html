@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Data model - fields and value history</title>
+    <title>Data model &mdash; fields and value history</title>
     <link rel="stylesheet" href="../styles.css" />
   </head>
   <body class="has-sidebar" data-doc-page="data-model/fields">
@@ -11,111 +11,169 @@
       <aside id="doc-sidebar" aria-label="Documentation navigation"></aside>
       <div class="doc-inner">
         <header class="page-header">
-          <h1>Fields and value history</h1>
+          <h1>Fields &amp; value history</h1>
         </header>
         <main class="page-main">
+          <section class="hero">
+            <span class="eyebrow">Data model &middot; Fields</span>
+            <h1 class="hero-title">Every field keeps its full history.</h1>
+            <p class="hero-sub">
+              Fields are the fine-grained state on a topic. When a value changes, MemState never silently
+              overwrites it &mdash; the previous value is preserved with its timestamp and source, so retrieval
+              can tell the current truth from what used to be true.
+            </p>
+          </section>
+
+          <!-- ============================================================ -->
+          <h2 id="why-history">Why history and not overwrite</h2>
           <p>
-            Fields are the fine-grained state carried by each topic. A topic <em>u<sub>i</sub></em> exposes a
-            name-keyed map of fields <em>f<sub>i,j</sub></em> in <code>fields_json</code>; each field carries type
-            metadata, optional topic reference, per-field salience, and an ordered value history (newest first).
+            Overwriting a value loses information the agent may need later: when did this change, who changed it,
+            what was the old value? It also breaks any form of audit, rollback, or "what did we believe before"
+            reasoning.
+          </p>
+          <p>
+            MemState treats every field as a <strong>stack of revisions</strong>, newest first. Writes append.
+            Reads return the newest revision by default. Callers that explicitly ask for history get the full
+            timeline.
           </p>
 
-          <h2 id="value-history">Value history H<sub>i,j</sub></h2>
-          <p>
-            For each field <em>f<sub>i,j</sub></em> of topic <em>u<sub>i</sub></em>, MemState maintains a
-            time-ordered value history
-            <strong>H<sub>i,j</sub> = &#10216;(v<sub>1</sub>, t<sub>1</sub>, &pi;<sub>1</sub>), &hellip;, (v<sub>k</sub>,
-            t<sub>k</sub>, &pi;<sub>k</sub>)&#10217;</strong>, where each entry records a value <em>v</em>, a
-            timestamp <em>t</em>, and the provenance <em>&pi;</em> of the source interaction that produced it (for
-            example, a user message or a revision event). This is the primary evidence structure that supports query
-            soundness (Definition 8): the system distinguishes the current value <em>v<sub>k</sub></em> from prior
-            values <em>v<sub>1</sub>, &hellip;, v<sub>k&minus;1</sub></em> and returns historical values only when
-            the query explicitly asks for them.
-          </p>
+          <div class="figure-block">
+            <svg class="diagram-svg" viewBox="0 0 860 250" xmlns="http://www.w3.org/2000/svg" aria-label="Field history stack">
+              <defs>
+                <marker id="arr-fh" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3 z" fill="#64748b"/></marker>
+              </defs>
 
-          <div class="callout">
-            <strong>Why histories and not overwrites.</strong> Overwriting a field value destroys
-            <em>H<sub>i,j</sub></em> and irreversibly truncates <em>V<sub>i</sub></em>, violating query soundness for
-            any historical or provenance query. Ingestion therefore appends rather than overwrites; revision marks
-            superseded entries without deleting them.
+              <text x="80" y="40" fill="#e2e8f0" font-size="13" font-family="Inter, sans-serif" font-weight="600">Field: owner</text>
+
+              <rect x="60" y="60" width="280" height="48" rx="8" fill="#0f172a" stroke="#3b82f6" stroke-width="1.5"/>
+              <text x="80" y="82" fill="#60a5fa" font-size="11" font-family="Inter, sans-serif" font-weight="600">current</text>
+              <text x="200" y="82" fill="#e2e8f0" font-size="12" font-family="Inter, sans-serif">value = "Aya"</text>
+              <text x="80" y="98" fill="#64748b" font-size="10" font-family="Inter, sans-serif">2026-04-22 &middot; provenance: ui</text>
+
+              <rect x="60" y="120" width="280" height="40" rx="8" fill="#0f172a" stroke="#334155"/>
+              <text x="80" y="140" fill="#94a3b8" font-size="12" font-family="Inter, sans-serif">value = "Priya"</text>
+              <text x="80" y="154" fill="#64748b" font-size="10" font-family="Inter, sans-serif">2026-03-10 &middot; provenance: llm</text>
+
+              <rect x="60" y="170" width="280" height="40" rx="8" fill="#0f172a" stroke="#334155"/>
+              <text x="80" y="190" fill="#94a3b8" font-size="12" font-family="Inter, sans-serif">value = "unassigned"</text>
+              <text x="80" y="204" fill="#64748b" font-size="10" font-family="Inter, sans-serif">2026-02-01 &middot; provenance: api</text>
+
+              <text x="480" y="70" fill="#e2e8f0" font-size="12" font-family="Inter, sans-serif" font-weight="600">Reads (default)</text>
+              <text x="480" y="90" fill="#94a3b8" font-size="11" font-family="Inter, sans-serif">&rarr; return current revision</text>
+              <line x1="620" y1="84" x2="660" y2="84" stroke="#475569" stroke-width="1.5" marker-end="url(#arr-fh)"/>
+              <text x="680" y="88" fill="#4ade80" font-size="11" font-family="Inter, sans-serif">"Aya"</text>
+
+              <text x="480" y="140" fill="#e2e8f0" font-size="12" font-family="Inter, sans-serif" font-weight="600">Reads with history</text>
+              <text x="480" y="160" fill="#94a3b8" font-size="11" font-family="Inter, sans-serif">&rarr; return full stack</text>
+              <line x1="620" y1="154" x2="660" y2="154" stroke="#475569" stroke-width="1.5" marker-end="url(#arr-fh)"/>
+              <text x="680" y="158" fill="#c084fc" font-size="11" font-family="Inter, sans-serif">[current + older]</text>
+
+              <text x="480" y="210" fill="#e2e8f0" font-size="12" font-family="Inter, sans-serif" font-weight="600">Writes</text>
+              <text x="480" y="228" fill="#94a3b8" font-size="11" font-family="Inter, sans-serif">&rarr; append new revision</text>
+            </svg>
+            <p class="diagram-caption">Each field is a time-ordered stack of revisions. Writes append. Reads default to the newest one; history is opt-in.</p>
           </div>
 
-          <h2 id="schema">Field record schema</h2>
+          <!-- ============================================================ -->
+          <h2 id="revision">What a revision contains</h2>
+          <p>Every entry in a field's history carries enough metadata to explain the change.</p>
+
+          <table>
+            <thead>
+              <tr><th>Attribute</th><th>Description</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><code>id</code></td><td>Unique revision id (UUID).</td></tr>
+              <tr><td><code>value</code></td><td>The value at this point in time.</td></tr>
+              <tr><td><code>valid_from</code></td><td>Timestamp the revision was recorded.</td></tr>
+              <tr><td><code>provenance</code></td><td>Where the change came from: <code>api</code>, <code>ui</code>, <code>llm</code>, <code>mcp</code>, or an internal revision event.</td></tr>
+              <tr><td><code>why_changed</code></td><td>Optional reason, usually written by the agent or the caller.</td></tr>
+              <tr><td><code>impact_expected</code></td><td>Optional forward-looking note about consequences of the change.</td></tr>
+            </tbody>
+          </table>
+
+          <!-- ============================================================ -->
+          <h2 id="schema">Field record</h2>
           <pre><code>{
-  "field_name": {                            // f_{i,j}
-    "field_type": "string|int|float|bool|date|datetime|list|json",
-    "ref_topic_id": "optional-topic-id",     // pointer into S_t
-    "salience": 1.0,                         // reinforced by retrieval
-    "history": [                             // H_{i,j}, newest-first
+  "owner": {
+    "field_type": "string",
+    "ref_topic_id": null,
+    "salience": 1.2,
+    "history": [
       {
-        "id": "uuid",
-        "valid_from": "2026-03-24T12:00:00+00:00",   // t
-        "value": "...",                               // v
-        "why_changed": "optional",
-        "impact_expected": "optional",
-        "provenance": "api|ui|llm|mcp|..."            // π
+        "id": "6f3...",
+        "valid_from": "2026-04-22T12:00:00+00:00",
+        "value": "Aya",
+        "provenance": "ui",
+        "why_changed": "handoff from Priya"
+      },
+      {
+        "id": "2a1...",
+        "valid_from": "2026-03-10T09:10:00+00:00",
+        "value": "Priya",
+        "provenance": "llm"
       }
     ]
   }
 }</code></pre>
 
-          <h2 id="supported-types">Supported field types</h2>
+          <!-- ============================================================ -->
+          <h2 id="types">Supported types</h2>
           <table>
             <thead>
               <tr>
                 <th>Type</th>
-                <th>Typical value shape</th>
-                <th>Validation behavior</th>
+                <th>Typical value</th>
+                <th>Notes</th>
               </tr>
             </thead>
             <tbody>
-              <tr><td><code>string</code></td><td>Text</td><td>Default fallback for unknown field types.</td></tr>
-              <tr><td><code>int</code></td><td>Integer number</td><td>Stored as JSON value in history.</td></tr>
-              <tr><td><code>float</code></td><td>Numeric</td><td>Stored as JSON value in history.</td></tr>
-              <tr><td><code>bool</code></td><td><code>true</code>/<code>false</code></td><td>Stored as JSON value in history.</td></tr>
-              <tr><td><code>date</code></td><td>Date string</td><td>Convention-based (no strict parser in model validators).</td></tr>
-              <tr><td><code>datetime</code></td><td>Date-time string</td><td>Convention-based.</td></tr>
+              <tr><td><code>string</code></td><td>Free text</td><td>Default type when none is specified.</td></tr>
+              <tr><td><code>int</code></td><td>Integer number</td><td>Stored as JSON number in history.</td></tr>
+              <tr><td><code>float</code></td><td>Decimal number</td><td>Stored as JSON number in history.</td></tr>
+              <tr><td><code>bool</code></td><td><code>true</code> / <code>false</code></td><td>&nbsp;</td></tr>
+              <tr><td><code>date</code></td><td>Date string</td><td>Convention-based; not strictly parsed.</td></tr>
+              <tr><td><code>datetime</code></td><td>Date-time string</td><td>Convention-based; not strictly parsed.</td></tr>
               <tr><td><code>list</code></td><td>JSON array</td><td>Nested content allowed.</td></tr>
-              <tr><td><code>json</code></td><td>Any JSON object/array/scalar</td><td>No inner schema enforcement by MemState.</td></tr>
+              <tr><td><code>json</code></td><td>Any JSON shape</td><td>Opaque to MemState; size affects latency.</td></tr>
             </tbody>
           </table>
 
-          <h2 id="temporal-semantics">Temporal semantics</h2>
+          <!-- ============================================================ -->
+          <h2 id="lifecycle">The write path</h2>
+          <ol class="steps">
+            <li><strong>Caller sends a write.</strong> Either through <code>/v1/ingest</code>, a UI tool, or a chat-driven tool call.</li>
+            <li><strong>MemState builds a new revision.</strong> It assigns a UUID, stamps the time, records the provenance, and carries any reason the caller provided.</li>
+            <li><strong>The revision is prepended.</strong> It becomes the new current value; previous revisions remain in the stack.</li>
+            <li><strong>Limits are enforced.</strong> If the stack exceeds the configured history cap, the oldest revisions are trimmed.</li>
+            <li><strong>Topic salience is refreshed.</strong> The topic's importance score is recomputed from its fields so retrieval stays in sync.</li>
+          </ol>
+
+          <!-- ============================================================ -->
+          <h2 id="salience">Field-level salience</h2>
           <ul>
-            <li>History order is newest-first; <code>history[0]</code> is the current value <em>v<sub>k</sub></em>.</li>
-            <li>Append operations always create a new revision id (UUID) when absent.</li>
-            <li>History length is capped by <code>Policies.max_field_history</code> (default <code>500</code>); old
-              revisions are truncated from the tail when the cap is exceeded.</li>
-            <li>Provenance <em>&pi;</em> identifies the source channel (<code>api</code>, <code>ui</code>,
-              <code>llm</code>, <code>mcp</code>, internal revision event, &hellip;).</li>
+            <li>Each field carries its own salience score between <code>0</code> and <code>10</code>.</li>
+            <li>Retrieval bumps salience on read; forgetting consults it when deciding what to attenuate.</li>
+            <li>The topic's overall salience tracks the average of its field saliences, so the node-level signal is always consistent with its parts.</li>
           </ul>
 
-          <h2 id="field-salience">Field salience</h2>
+          <!-- ============================================================ -->
+          <h2 id="limits">Limits</h2>
           <ul>
-            <li>Each field carries a salience float in <code>[0, 10]</code>. Invalid values are clamped in validators.</li>
-            <li>Retrieval reinforces salience on read; forgetting consults it on policy evaluation.</li>
-            <li>Topic salience is synchronized to the mean of field saliences after field mutations
-              (<code>sync_topic_salience_from_fields</code>).</li>
+            <li><strong>History length</strong> is capped at <code>500</code> revisions per field by default (<code>max_field_history</code>). Oldest revisions are trimmed beyond the cap.</li>
+            <li><strong>Field salience</strong> is clamped to the range <code>[0, 10]</code>.</li>
+            <li><strong>JSON payload size</strong> is not enforced by MemState but affects retrieval and API response latency.</li>
           </ul>
 
-          <h2 id="lifecycle">Revision lifecycle</h2>
-          <pre class="sequence"><code>Incoming write (UI API, /v1 ingest, or LLM tool)
-  -> build FieldHistoryEntry (id, valid_from=t, value=v, provenance=π)
-  -> append_field_history(topic_id, field_name, entry)
-  -> insert at history index 0
-  -> trim to max_field_history
-  -> persist fields_json
-  -> sync topic salience from field salience average</code></pre>
-
-          <h2 id="impl-refs">Implementation references</h2>
+          <h2 id="code">Code map</h2>
           <ul>
-            <li><code>datamodel.fields.TopicField</code>: field schema, type coercion, salience clamp.</li>
-            <li><code>datamodel.fields.FieldHistoryEntry</code>: revision payload, extra fields allowed.</li>
-            <li><code>store.GraphStore.append_field_history</code>: mutation path and history capping.</li>
-            <li><code>core.Executor._field_bundle</code>: retrieval-side serialization of current/history slices.</li>
+            <li><code>memstate.datamodel.fields.TopicField</code> &mdash; field shape, type coercion, salience clamp.</li>
+            <li><code>memstate.datamodel.fields.FieldHistoryEntry</code> &mdash; revision payload.</li>
+            <li><code>memstate.store.GraphStore.append_field_history</code> &mdash; write path and trimming.</li>
+            <li><code>memstate.core.Executor._field_bundle</code> &mdash; read path for current-only and history expansions.</li>
           </ul>
         </main>
-        <footer class="page-footer">Field model reference: typing, value history, salience, and mutation lifecycle.</footer>
+        <footer class="page-footer">Fields reference: typing, value history, salience, and the write path.</footer>
       </div>
     </div>
     <script src="../js/nav.js" defer></script>

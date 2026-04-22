@@ -24,24 +24,26 @@
 
   /* -------------------------------------------------------
      1. Sidebar nav injection
+     -------------------------------------------------------
+     We compute the docs-root-relative base by reading the
+     canonical page id from <body data-doc-page="...">.
+       index                       -> depth 0 -> "./"
+       data-model/fields           -> depth 1 -> "../"
+       architecture/overview       -> depth 1 -> "../"
+       (future)  a/b/c             -> depth 2 -> "../../"
+     This is hosting-agnostic: works on file://, localhost,
+     GitHub Pages (user.github.io/REPO/...), custom domains,
+     or any subdirectory deployment.
      ------------------------------------------------------- */
+  var page = document.body ? document.body.getAttribute("data-doc-page") || "" : "";
+
   function hrefBase() {
-    var path = decodeURIComponent(window.location.pathname).replace(/\\/g, "/");
-    var marker = "/docs-site/";
-    var idx = path.toLowerCase().indexOf(marker);
-    if (idx === -1) {
-      var m = path.match(/docs-site\/(.+)/i);
-      if (!m) return "./";
-      var depth = m[1].split("/").filter(Boolean).length - 1;
-      return depth > 0 ? "../".repeat(depth) : "./";
-    }
-    var rest = path.slice(idx + marker.length);
-    var depth = rest.split("/").filter(Boolean).length - 1;
+    if (!page || page === "index") return "./";
+    var depth = page.split("/").filter(Boolean).length - 1;
     return depth > 0 ? "../".repeat(depth) : "./";
   }
 
   var b = hrefBase();
-  var page = document.body ? document.body.getAttribute("data-doc-page") || "" : "";
 
   var sections = [
     {

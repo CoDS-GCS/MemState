@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Data model - relationships and refs</title>
+    <title>Data model &mdash; relationships</title>
     <link rel="stylesheet" href="../styles.css" />
   </head>
   <body class="has-sidebar" data-doc-page="data-model/relationships">
@@ -11,152 +11,166 @@
       <aside id="doc-sidebar" aria-label="Documentation navigation"></aside>
       <div class="doc-inner">
         <header class="page-header">
-          <h1>Relationships and field refs</h1>
+          <h1>Relationships</h1>
         </header>
         <main class="page-main">
-          <p>
-            Structure <em>S<sub>t</sub></em> links topic nodes so that updates propagate appropriately and so that
-            retrieval can expand context beyond a single semantic unit. MemState represents <em>S<sub>t</sub></em>
-            through two complementary mechanisms: typed <code>RELATED</code> edges between topics and field-level
-            pointers via <code>ref_topic_id</code>.
-          </p>
+          <section class="hero">
+            <span class="eyebrow">Data model &middot; Relationships</span>
+            <h1 class="hero-title">Connect topics so retrieval can follow the story.</h1>
+            <p class="hero-sub">
+              MemState links topics in two ways: with typed edges between topics, and with field-level references
+              that point from an attribute value to another topic. Both participate in retrieval; each serves a
+              different modeling intent.
+            </p>
+          </section>
 
-          <h2 id="edge-kinds">Canonical edge kinds</h2>
-          <p>
-            MemState classifies <code>RELATED</code> edges into two canonical kinds that mirror the structural
-            semantics of the paper. Edge <code>kind</code> is a named string, but inter-topic links should map to one
-            of these two intents.
-          </p>
+          <!-- ============================================================ -->
+          <h2 id="two-kinds">Two kinds of links</h2>
+
+          <div class="feature-grid">
+            <div class="feature-card">
+              <div class="feature-icon">&#x2192;</div>
+              <h3>Extension</h3>
+              <p>The target belongs to the same broader context as the source &mdash; a sub-project, a deliverable, a chapter of a larger topic.</p>
+            </div>
+            <div class="feature-card">
+              <div class="feature-icon">&#x21c4;</div>
+              <h3>Association</h3>
+              <p>Two independent topics that happen to relate &mdash; a person and a project, two concepts that interact, a task and its owner.</p>
+            </div>
+          </div>
 
           <table>
             <thead>
               <tr>
-                <th>Edge intent</th>
+                <th>Intent</th>
                 <th>Meaning</th>
-                <th>Typical <code>kind</code> strings</th>
+                <th>Typical edge names</th>
                 <th>When to use</th>
               </tr>
             </thead>
             <tbody>
               <tr>
                 <td><strong>Extension</strong></td>
-                <td>Connects topics in the same broader context; the target extends or specializes the source (for
-                  example, a sub-project, a deliverable, a session within a workstream).</td>
+                <td>Target extends or specializes the source.</td>
                 <td><code>has_detail</code>, <code>has_subtopic</code>, <code>part_of</code>, <code>extends</code></td>
-                <td>When information about the source topic naturally decomposes into a child topic that retains the
-                  parent's context.</td>
+                <td>The child topic retains the parent's context. Retrieval should expand from parent to child.</td>
               </tr>
               <tr>
                 <td><strong>Association</strong></td>
-                <td>Connects related but independent topics whose contexts are separate (for example, a person and a
-                  project they touched, or two concepts that interact).</td>
-                <td><code>associated_with</code>, <code>mentions</code>, <code>collaborates_with</code>,
-                  <code>references</code></td>
-                <td>When two topics share meaningful relationships without one subsuming the other.</td>
+                <td>Peer-to-peer relationship between independent topics.</td>
+                <td><code>associated_with</code>, <code>mentions</code>, <code>collaborates_with</code>, <code>references</code></td>
+                <td>Two topics share meaning without one subsuming the other.</td>
               </tr>
             </tbody>
           </table>
 
-          <h2 id="mechanism-comparison">RELATED edges versus field refs</h2>
+          <!-- ============================================================ -->
+          <h2 id="mechanisms">Graph edges versus field references</h2>
+          <p>
+            MemState offers two physical ways to connect topics. They are not alternatives &mdash; they model
+            different things. You often use both for the same pair of topics.
+          </p>
+
           <table>
             <thead>
               <tr>
                 <th>Mechanism</th>
-                <th>Stored as</th>
+                <th>Where it lives</th>
                 <th>Best for</th>
               </tr>
             </thead>
             <tbody>
               <tr>
-                <td><code>RELATED</code> edge</td>
-                <td>Kuzu relationship <code>(Topic)-[:RELATED {kind}]-&gt;(Topic)</code></td>
-                <td>Explicit graph traversal, neighborhood queries, structural retrieval.</td>
+                <td>Typed edge (<code>RELATED</code>)</td>
+                <td>Native graph relationship in the store.</td>
+                <td>Traversal, neighborhood expansion during retrieval, structural queries.</td>
               </tr>
               <tr>
-                <td><code>ref_topic_id</code></td>
-                <td>Field attribute inside <code>fields_json</code></td>
-                <td>Document-style references embedded in attribute payload; preserved across history entries.</td>
+                <td>Field reference (<code>ref_topic_id</code>)</td>
+                <td>Attribute on a field record.</td>
+                <td>Attribute-level pointers ("manager is topic X") that should travel with the field value and its history.</td>
               </tr>
             </tbody>
           </table>
 
-          <h2 id="related-semantics"><code>RELATED</code> semantics</h2>
-          <ul>
-            <li><strong>Directed.</strong> An edge is written from <code>from_id</code> to <code>to_id</code>.</li>
-            <li><strong>Idempotent key.</strong> <code>MERGE</code> yields at most one edge for a given
-              <em>(from, to, kind)</em>.</li>
-            <li><strong>Multi-kind.</strong> The same pair may carry several relationship kinds.</li>
-            <li><strong>Retrieval impact.</strong> Structural retrieval and UI graph builders read these edges
-              directly to expand context.</li>
-          </ul>
-
-          <h2 id="ref-semantics"><code>ref_topic_id</code> semantics</h2>
-          <ul>
-            <li>Pointer lives on a field record, not as a native edge in Kuzu tables.</li>
-            <li>Useful when a field value naturally points to another unit (for example,
-              <code>manager.ref_topic_id</code> pointing to a person topic).</li>
-            <li>UI graph snapshots synthesize <code>field_ref</code> edges so refs are visible in visualization.</li>
-            <li>The <code>REF_UNCHANGED</code> sentinel allows appending field history without overwriting the
-              existing ref.</li>
-          </ul>
-
-          <h2 id="diagram">Diagram: structural edge versus field ref</h2>
           <div class="figure-block">
-            <svg class="diagram-svg" viewBox="0 0 860 240" xmlns="http://www.w3.org/2000/svg" aria-label="Relationship mechanism diagram">
+            <svg class="diagram-svg" viewBox="0 0 860 220" xmlns="http://www.w3.org/2000/svg" aria-label="Edge vs field reference">
               <defs>
-                <marker id="arr" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L0,6 L7,3 z" fill="#8b949e"/></marker>
+                <marker id="arr-rel" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3 z" fill="#64748b"/></marker>
               </defs>
-              <rect x="80" y="54" width="220" height="120" rx="10" fill="#10161d" stroke="#60a5fa"/>
-              <text x="190" y="82" text-anchor="middle" fill="#60a5fa" font-size="14" font-family="Inter, sans-serif">Topic A</text>
-              <text x="100" y="108" fill="#c9d1d9" font-size="11" font-family="Inter, sans-serif">fields_json:</text>
-              <text x="100" y="126" fill="#4ade80" font-size="11" font-family="Cascadia Code, monospace">manager.ref_topic_id = "topic-b"</text>
 
-              <rect x="560" y="54" width="220" height="120" rx="10" fill="#10161d" stroke="#60a5fa"/>
-              <text x="670" y="82" text-anchor="middle" fill="#60a5fa" font-size="14" font-family="Inter, sans-serif">Topic B</text>
+              <rect x="80" y="60" width="220" height="120" rx="12" fill="#0f172a" stroke="#3b82f6"/>
+              <text x="190" y="86" text-anchor="middle" fill="#60a5fa" font-size="13" font-family="Inter, sans-serif" font-weight="600">Topic A</text>
+              <text x="100" y="114" fill="#94a3b8" font-size="11" font-family="Inter, sans-serif">fields:</text>
+              <text x="100" y="134" fill="#4ade80" font-size="11" font-family="Inter, sans-serif">manager &rarr; Topic B</text>
+              <text x="100" y="154" fill="#64748b" font-size="10" font-family="Inter, sans-serif">(field reference)</text>
 
-              <line x1="300" y1="96" x2="560" y2="96" stroke="#fbbf24" stroke-width="1.8" marker-end="url(#arr)"/>
-              <text x="430" y="86" text-anchor="middle" fill="#fbbf24" font-size="11" font-family="Inter, sans-serif">RELATED {kind: associated_with}</text>
+              <rect x="560" y="60" width="220" height="120" rx="12" fill="#0f172a" stroke="#3b82f6"/>
+              <text x="670" y="86" text-anchor="middle" fill="#60a5fa" font-size="13" font-family="Inter, sans-serif" font-weight="600">Topic B</text>
 
-              <line x1="300" y1="132" x2="560" y2="132" stroke="#4ade80" stroke-width="1.5" stroke-dasharray="6 4" marker-end="url(#arr)"/>
-              <text x="430" y="154" text-anchor="middle" fill="#4ade80" font-size="11" font-family="Inter, sans-serif">synthetic UI edge from field ref_topic_id</text>
+              <line x1="300" y1="100" x2="560" y2="100" stroke="#fbbf24" stroke-width="2" marker-end="url(#arr-rel)"/>
+              <text x="430" y="92" text-anchor="middle" fill="#fbbf24" font-size="11" font-family="Inter, sans-serif">typed edge &mdash; associated_with</text>
+
+              <line x1="300" y1="140" x2="560" y2="140" stroke="#4ade80" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#arr-rel)"/>
+              <text x="430" y="160" text-anchor="middle" fill="#4ade80" font-size="11" font-family="Inter, sans-serif">field reference (rendered as synthetic edge in UI)</text>
             </svg>
-            <p class="diagram-caption">The model can use both mechanisms simultaneously for the same topic pair.</p>
+            <p class="diagram-caption">You can use a typed edge, a field reference, or both for the same pair of topics.</p>
           </div>
 
-          <h2 id="guidance">Guidance</h2>
+          <!-- ============================================================ -->
+          <h2 id="edge-semantics">Edge semantics</h2>
+          <ul>
+            <li><strong>Directed.</strong> Every edge is written from a source to a target.</li>
+            <li><strong>De-duplicated.</strong> The same <em>(source, target, kind)</em> triple yields one edge, no matter how many times you merge it.</li>
+            <li><strong>Multi-kind.</strong> The same pair of topics can carry multiple named relationships at once.</li>
+            <li><strong>Participates in retrieval.</strong> Structural retrieval expands candidates through these edges to build neighbor context.</li>
+          </ul>
+
+          <h2 id="ref-semantics">Field reference semantics</h2>
+          <ul>
+            <li>A reference is an attribute on a single field record, not a separate row in the graph.</li>
+            <li>It is the right tool when the pointer belongs to a specific attribute (<code>manager</code>, <code>owner</code>, <code>parent_doc</code>).</li>
+            <li>Field references are preserved as the field's history evolves &mdash; a revision can keep the ref unchanged or redirect it.</li>
+            <li>The UI graph renders field references as synthetic edges so you can see them alongside typed edges.</li>
+          </ul>
+
+          <!-- ============================================================ -->
+          <h2 id="guidance">Which one should I use?</h2>
+
           <table>
             <thead>
               <tr>
                 <th>Use case</th>
-                <th>Prefer</th>
-                <th>Reason</th>
+                <th>Pick</th>
+                <th>Why</th>
               </tr>
             </thead>
             <tbody>
               <tr>
-                <td>Parent/child context extension</td>
-                <td><code>RELATED</code> (<em>extension</em>)</td>
-                <td>Communicates structural containment for retrieval expansion.</td>
+                <td>Parent / child topic containment.</td>
+                <td>Typed edge, extension intent.</td>
+                <td>Signals structural containment; retrieval will expand from parent to child.</td>
               </tr>
               <tr>
-                <td>Peer-to-peer association between units</td>
-                <td><code>RELATED</code> (<em>association</em>)</td>
-                <td>Explicit edge semantics with multi-kind support.</td>
+                <td>Peer relationship between two independent topics.</td>
+                <td>Typed edge, association intent.</td>
+                <td>Multi-kind support; graph traversal sees it cleanly.</td>
               </tr>
               <tr>
-                <td>Attribute-level pointer inside one field</td>
-                <td><code>ref_topic_id</code></td>
-                <td>Keeps reference close to field meaning and revision history.</td>
+                <td>Attribute-scoped pointer ("manager", "owner").</td>
+                <td>Field reference.</td>
+                <td>Lives with the field it describes; survives revisions and rollbacks on that field.</td>
               </tr>
               <tr>
-                <td>Typed reference <em>and</em> graph traversability</td>
-                <td>Both</td>
-                <td><code>ref_topic_id</code> for schema meaning; <code>RELATED</code> for graph operations.</td>
+                <td>You want both typed traversal <em>and</em> attribute-scoped meaning.</td>
+                <td>Both.</td>
+                <td>They are not exclusive; the field reference captures attribute meaning, the edge enables traversal.</td>
               </tr>
             </tbody>
           </table>
         </main>
-        <footer class="page-footer">Relationship reference: extension vs association edges, field refs, and modeling guidance.</footer>
+        <footer class="page-footer">Relationship reference: extension vs association, typed edges, and field references.</footer>
       </div>
     </div>
     <script src="../js/nav.js" defer></script>
