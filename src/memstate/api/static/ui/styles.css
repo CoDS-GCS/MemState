@@ -1041,6 +1041,12 @@ select {
   white-space: nowrap;
 }
 
+.system-context-badge.is-configured {
+  color: #34d399;
+  border-color: rgba(52, 211, 153, 0.45);
+  background: rgba(16, 185, 129, 0.08);
+}
+
 .system-context-form {
   gap: 0.4rem;
 }

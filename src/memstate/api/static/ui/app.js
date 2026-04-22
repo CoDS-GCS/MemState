@@ -92,14 +92,27 @@ function setSystemContextCard(data) {
   const adminInput = form.querySelector('input[name="admin_key"]');
   if (!roleInput || !runtimeInput) return;
   const configured = !!(data && data.configured);
+  // Auto-open the panel section when unconfigured so the form is visible.
+  const section = document.querySelector('.panel-section[data-section="system-context"]');
+  if (section && !section.dataset.userToggled) {
+    const toggle = section.querySelector(".section-toggle");
+    const body = section.querySelector(".section-body");
+    if (toggle && body) {
+      const shouldOpen = !configured;
+      toggle.classList.toggle("active", shouldOpen);
+      body.classList.toggle("open", shouldOpen);
+    }
+  }
   if (!configured || !data.system_context) {
     badge.textContent = "Not configured";
+    badge.classList.remove("is-configured");
     roleInput.value = "";
     runtimeInput.value = "";
     if (adminInput) adminInput.value = "";
     return;
   }
   badge.textContent = "Configured";
+  badge.classList.add("is-configured");
   roleInput.value = String(data.system_context.system_role || "");
   runtimeInput.value = String(data.system_context.runtime_context || "");
   if (adminInput) adminInput.value = "";
@@ -223,6 +236,8 @@ function wireCollapsible() {
       const wasOpen = body.classList.contains("open");
       btn.classList.toggle("active", !wasOpen);
       body.classList.toggle("open", !wasOpen);
+      const section = btn.closest(".panel-section");
+      if (section) section.dataset.userToggled = "1";
     });
   });
 }
@@ -1514,20 +1529,202 @@ function makeCardRenderer(n, cid) {
   };
 }
 
+/**
+ * Custom d3-force that separates axis-aligned rectangular nodes.
+ * Each sim node must expose numeric `w` and `h`. Much cleaner than
+ * circle-based collision for card-shaped topics.
+ */
+function rectangleCollideForce(padding = 12, iterations = 2) {
+  /** @type {Array<{ x:number, y:number, w:number, h:number }>} */
+  let nodes = [];
+  function force() {
+    const n = nodes.length;
+    for (let iter = 0; iter < iterations; iter++) {
+      for (let i = 0; i < n; i++) {
+        const a = nodes[i];
+        for (let j = i + 1; j < n; j++) {
+          const b = nodes[j];
+          const dx = b.x - a.x;
+          const dy = b.y - a.y;
+          const minDX = (a.w + b.w) / 2 + padding;
+          const minDY = (a.h + b.h) / 2 + padding;
+          const ox = minDX - Math.abs(dx);
+          const oy = minDY - Math.abs(dy);
+          if (ox > 0 && oy > 0) {
+            if (ox < oy) {
+              const s = (ox / 2) * (dx >= 0 ? 1 : -1);
+              a.x -= s;
+              b.x += s;
+            } else {
+              const s = (oy / 2) * (dy >= 0 ? 1 : -1);
+              a.y -= s;
+              b.y += s;
+            }
+          }
+        }
+      }
+    }
+  }
+  force.initialize = (_nodes) => {
+    nodes = _nodes;
+  };
+  return force;
+}
+
+/**
+ * Compute a community-aware force-directed layout using d3-force.
+ * Returns null if d3 is unavailable so the caller can fall back.
+ *
+ * Forces:
+ *  - link   (attracts connected topics at a moderate distance)
+ *  - charge (global repulsion)
+ *  - x/y    (pulls nodes toward their community centroid)
+ *  - collide (rectangle-aware, uses actual card bbox → no overlap)
+ */
+function runForceLayout(nodes, links, cidOf) {
+  if (typeof d3 === "undefined" || !d3.forceSimulation) return null;
+  if (!nodes.length) return new Map();
+
+  try {
+    const simNodes = nodes.map((n) => {
+      const layout = n._cardLayout || buildCardLayout(n);
+      n._cardLayout = layout;
+      return {
+        id: n.id,
+        w: layout.width,
+        h: layout.height,
+        community: cidOf(n),
+        x: 0,
+        y: 0,
+      };
+    });
+
+    const nodeIds = new Set(simNodes.map((s) => s.id));
+
+    const byComm = new Map();
+    for (const s of simNodes) {
+      if (!byComm.has(s.community)) byComm.set(s.community, []);
+      byComm.get(s.community).push(s);
+    }
+    const cids = [...byComm.keys()].sort(
+      (a, b) => byComm.get(b).length - byComm.get(a).length,
+    );
+    const nc = cids.length;
+    const centers = new Map();
+    if (nc <= 1) {
+      centers.set(cids[0] ?? 0, { x: 0, y: 0 });
+    } else {
+      const R = 260 + Math.sqrt(simNodes.length) * 42;
+      cids.forEach((cid, i) => {
+        const theta = (2 * Math.PI * i) / nc - Math.PI / 2;
+        centers.set(cid, { x: R * Math.cos(theta), y: R * Math.sin(theta) });
+      });
+    }
+    for (const s of simNodes) {
+      const c = centers.get(s.community) || { x: 0, y: 0 };
+      let h = 0;
+      for (let k = 0; k < s.id.length; k++) h = (h * 31 + s.id.charCodeAt(k)) | 0;
+      const jx = (((h >>> 0) % 1000) / 1000 - 0.5) * 140;
+      const jy = (((h >>> 10) % 1000) / 1000 - 0.5) * 140;
+      s.x = c.x + jx;
+      s.y = c.y + jy;
+    }
+
+    // Drop dangling edges (ids that aren't in the node set) before d3 sees
+    // them — otherwise d3.forceLink throws `node not found: <id>` and aborts.
+    const simLinks = links
+      .filter(
+        (l) => l.source !== l.target && nodeIds.has(l.source) && nodeIds.has(l.target),
+      )
+      .map((l) => ({ source: l.source, target: l.target }));
+
+    const sim = d3
+      .forceSimulation(simNodes)
+      .force(
+        "link",
+        d3
+          .forceLink(simLinks)
+          .id((d) => d.id)
+          .distance(240)
+          .strength(0.22),
+      )
+      .force(
+        "charge",
+        d3.forceManyBody().strength(-1700).distanceMin(18).distanceMax(1400),
+      )
+      .force(
+        "x",
+        d3
+          .forceX()
+          .x((d) => (centers.get(d.community) || { x: 0 }).x)
+          .strength(0.11),
+      )
+      .force(
+        "y",
+        d3
+          .forceY()
+          .y((d) => (centers.get(d.community) || { y: 0 }).y)
+          .strength(0.11),
+      )
+      .force("collide", rectangleCollideForce(18, 1))
+      .alpha(1)
+      .alphaDecay(0.025)
+      .velocityDecay(0.4)
+      .stop();
+
+    const ticks = Math.min(520, 260 + simNodes.length * 5);
+    for (let i = 0; i < ticks; i++) sim.tick();
+
+    // Final pure-separation pass — guarantees no visible card overlap.
+    const separate = rectangleCollideForce(22, 1);
+    separate.initialize(simNodes);
+    for (let i = 0; i < 80; i++) separate();
+
+    const out = new Map();
+    for (const s of simNodes) out.set(s.id, { x: s.x, y: s.y });
+    return out;
+  } catch (err) {
+    // Never let a layout hiccup blank out the whole graph — fall back.
+    // eslint-disable-next-line no-console
+    console.warn("[graph] d3 force layout failed, falling back:", err);
+    return null;
+  }
+}
+
 function buildVisDatasets(nodes, links) {
   const { clusterOf } = computeClusters(nodes, links);
-  const layoutPos = computeCommunityClusterPositions(nodes, links);
+  const cidOf = (n) =>
+    n.community != null && Number.isFinite(Number(n.community))
+      ? Number(n.community)
+      : clusterOf.get(n.id) ?? 0;
+
+  const nodeIds = new Set(nodes.map((n) => n.id));
+  // Only keep edges whose endpoints exist; dangling refs corrupt layout + vis.
+  const safeLinks = links.filter(
+    (e) => nodeIds.has(e.source) && nodeIds.has(e.target),
+  );
+  if (safeLinks.length !== links.length) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[graph] dropped ${links.length - safeLinks.length} edges with missing endpoints`,
+    );
+  }
+
+  const forcePos = runForceLayout(nodes, safeLinks, cidOf);
+  const fallback = forcePos
+    ? null
+    : computeCommunityClusterPositions(nodes, safeLinks);
+  const positionsReady = Boolean(forcePos);
+
   const visNodes = nodes.map((n) => {
-    const cid =
-      n.community != null && Number.isFinite(Number(n.community))
-        ? Number(n.community)
-        : clusterOf.get(n.id) ?? 0;
-    const p = layoutPos.get(n.id);
+    const cid = cidOf(n);
+    const p = forcePos ? forcePos.get(n.id) : fallback?.get(n.id);
     const vis = {
       id: n.id,
       shape: "custom",
       ctxRenderer: makeCardRenderer(n, cid),
       label: undefined,
+      physics: false,
     };
     if (p) {
       vis.x = p.x;
@@ -1535,48 +1732,70 @@ function buildVisDatasets(nodes, links) {
     }
     return vis;
   });
-  const visEdges = links.map((e, i) => ({
-    id: `e${i}`,
-    from: e.source,
-    to: e.target,
-    label: e.label || undefined,
-    color: { color: e.isRef ? "#22c55e" : "#60a5fa", highlight: "#93c5fd", opacity: 0.75 },
-    dashes: e.isRef,
-    width: 1.2,
-    selectionWidth: 1.4,
-    arrows: { to: { enabled: true, scaleFactor: 0.55, type: "arrow" } },
-    font: {
-      size: 9,
-      color: "#94a3b8",
-      strokeWidth: 3,
-      strokeColor: "rgba(10, 14, 22, 0.85)",
-      align: "middle",
-      face: CARD_FONT,
-    },
-    smooth: { enabled: true, type: "cubicBezier", forceDirection: "none", roundness: 0.3 },
-  }));
-  return { visNodes, visEdges };
+
+  // Distribute roundness among parallel edges so they don't stack.
+  const pairKey = (a, b) => (a < b ? `${a}|${b}` : `${b}|${a}`);
+  /** @type {Map<string, number>} */
+  const pairCounts = new Map();
+  for (const e of safeLinks) {
+    const k = pairKey(e.source, e.target);
+    pairCounts.set(k, (pairCounts.get(k) || 0) + 1);
+  }
+  /** @type {Map<string, number>} */
+  const pairSeen = new Map();
+
+  const visEdges = safeLinks.map((e, i) => {
+    const k = pairKey(e.source, e.target);
+    const count = pairCounts.get(k) || 1;
+    const idx = pairSeen.get(k) || 0;
+    pairSeen.set(k, idx + 1);
+    let roundness = 0.22;
+    if (count > 1) {
+      const step = 0.18;
+      roundness = 0.12 + idx * step;
+    }
+    return {
+      id: `e${i}`,
+      from: e.source,
+      to: e.target,
+      label: e.label || undefined,
+      color: {
+        color: e.isRef ? "#22c55e" : "#60a5fa",
+        highlight: "#bfdbfe",
+        hover: "#bfdbfe",
+        opacity: 0.55,
+      },
+      dashes: e.isRef ? [4, 3] : false,
+      width: 1.1,
+      selectionWidth: 1.8,
+      hoverWidth: 0.6,
+      arrows: { to: { enabled: true, scaleFactor: 0.5, type: "arrow" } },
+      arrowStrikethrough: false,
+      endPointOffset: { from: 2, to: 2 },
+      font: {
+        size: 9,
+        color: "#94a3b8",
+        strokeWidth: 3,
+        strokeColor: "rgba(10, 14, 22, 0.9)",
+        align: "middle",
+        face: CARD_FONT,
+      },
+      smooth: {
+        enabled: true,
+        type: "cubicBezier",
+        forceDirection: "none",
+        roundness,
+      },
+    };
+  });
+  return { visNodes, visEdges, positionsReady };
 }
 
 const VIS_NETWORK_OPTIONS = {
   physics: {
-    enabled: true,
-    stabilization: {
-      enabled: true,
-      iterations: 520,
-      updateInterval: 30,
-      fit: true,
-    },
-    barnesHut: {
-      gravitationalConstant: -9800,
-      centralGravity: 0.055,
-      springLength: 260,
-      springConstant: 0.036,
-      damping: 0.62,
-      avoidOverlap: 0.95,
-    },
+    enabled: false,
   },
-  layout: { improvedLayout: true, randomSeed: 42 },
+  layout: { improvedLayout: false, randomSeed: 42 },
   interaction: {
     dragNodes: true,
     dragView: true,
@@ -1591,7 +1810,7 @@ const VIS_NETWORK_OPTIONS = {
     borderWidthSelected: 0,
     shadow: false,
   },
-  edges: { selectionWidth: 1.2 },
+  edges: { selectionWidth: 1.6 },
 };
 
 function initGraph(container) {
@@ -1678,7 +1897,7 @@ function renderGraph(apiData) {
 
   const nodes = nodeIn.map((d) => ({ ...d }));
   const links = linkIn.map((d) => ({ ...d }));
-  const { visNodes, visEdges } = buildVisDatasets(nodes, links);
+  const { visNodes, visEdges, positionsReady } = buildVisDatasets(nodes, links);
 
   const data = {
     nodes: new vis.DataSet(visNodes),
@@ -1700,14 +1919,19 @@ function renderGraph(apiData) {
     net.fit({ animation: { duration: 380 } });
   }
 
-  graphView.layoutFallbackTimer = setTimeout(finalizeLayout, 12000);
-  net.on("stabilizationIterationsDone", () => {
-    if (graphView.layoutFallbackTimer) {
-      clearTimeout(graphView.layoutFallbackTimer);
-      graphView.layoutFallbackTimer = null;
-    }
-    finalizeLayout();
-  });
+  if (positionsReady) {
+    // Positions were pre-computed by d3-force; fit the view on next tick.
+    requestAnimationFrame(finalizeLayout);
+  } else {
+    graphView.layoutFallbackTimer = setTimeout(finalizeLayout, 12000);
+    net.on("stabilizationIterationsDone", () => {
+      if (graphView.layoutFallbackTimer) {
+        clearTimeout(graphView.layoutFallbackTimer);
+        graphView.layoutFallbackTimer = null;
+      }
+      finalizeLayout();
+    });
+  }
 
   net.on("click", (params) => {
     hideGraphNodeMenu();
