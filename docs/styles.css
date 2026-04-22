@@ -610,6 +610,40 @@ tbody tr:hover { background: rgba(127, 127, 127, 0.04); }
   .hero.hero--split { grid-template-columns: 1fr; gap: 1.5rem; padding: 1.65rem 1.35rem; }
 }
 .hero > * { position: relative; }
+
+@keyframes ms-wordmark-in {
+  from {
+    opacity: 0;
+    transform: translateY(0.5rem) scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.hero-wordmark {
+  margin: 0 0 0.35rem;
+  padding: 0;
+  font-size: clamp(1.85rem, 5.5vw, 3rem);
+  font-weight: 700;
+  letter-spacing: -0.05em;
+  line-height: 1;
+  color: var(--text);
+  animation: ms-wordmark-in 0.88s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.hero.hero--split .hero-wordmark {
+  font-size: clamp(2rem, 6vw, 3.35rem);
+  margin-bottom: 0.45rem;
+}
+@media (prefers-reduced-motion: reduce) {
+  .hero-wordmark {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+}
+
 .hero .eyebrow {
   display: block;
   font-size: 0.6875rem;
