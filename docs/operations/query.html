@@ -30,9 +30,10 @@
 
           <p class="section-lede">
             <strong>Retrieve</strong> materializes <strong>S<sub>t</sub></strong>: the executor&rsquo;s staged read
-            model over the same durable <strong>D<sub>t</sub></strong> &mdash; semantic ranking first, then optional
-            structural expansion (edges and field refs) and temporal expansion (field histories when requested). Defaults
-            return current field heads; enabling history preserves query soundness against the append-only trace. See
+            model over the same durable <strong>D<sub>t</sub></strong> &mdash; semantic <em>candidate selection</em> first
+            (which topic ids to load), then optional structural expansion (edges and field refs) and temporal expansion
+            (field histories when requested). Defaults return current field heads; enabling history preserves query
+            soundness against the append-only trace. See
             <a href="../data-model/overview.html#gem-state">GEM state</a> and <a href="../data-model/fields.html#value-sequence">value history</a>.
           </p>
 
@@ -40,11 +41,11 @@
           <h2 id="how-it-works">How it works</h2>
           <ol class="steps">
             <li><strong>Client calls <code>POST /v1/query</code>.</strong> The request carries a query string, which stages to run, and how much context to return per result.</li>
-            <li><strong>The query is embedded.</strong> MemState computes a vector for the query text once and reuses it across ranking.</li>
-            <li><strong>Candidates are ranked.</strong> Vector KNN is tried first; cosine fallback runs if the index is unavailable. Archived topics are filtered out.</li>
+            <li><strong>The query is embedded.</strong> MemState computes a vector for the query text once and reuses it when the semantic stage needs to pick candidate topic ids.</li>
+            <li><strong>Candidates are chosen.</strong> With <code>semantic</code> on, the store uses vector KNN when available, otherwise cosine over loaded topic vectors, both capped by <code>top_k</code>. Archived topics are filtered out.</li>
             <li><strong>Each candidate becomes a bundle.</strong> MemState attaches the requested fields, expands neighbors if asked, and optionally returns full value history.</li>
             <li><strong>Salience is reinforced.</strong> Every touched topic gets its salience bumped and an entry appended to its topic-level audit trail.</li>
-            <li><strong>The response returns</strong> with a ranked list of bundles and a summary string.</li>
+            <li><strong>The response returns</strong> a list of topic bundles (structured memory per topic) plus a short <code>summary_text</code>. Bundles may include an internal <code>similarity</code> field when the semantic stage ran; the contract is the topic payload, not a standalone score table.</li>
           </ol>
 
           <!-- ============================================================ -->
@@ -55,7 +56,7 @@
             <div class="feature-card">
               <div class="feature-icon">&#x26b2;</div>
               <h3>Semantic</h3>
-              <p>Rank topics by similarity to the query text. Answers "what does this look like?"</p>
+              <p>Narrow to the topics whose title and summary text best match the question, using embeddings only inside this stage. The answer you ship is still the topic bundles.</p>
             </div>
             <div class="feature-card">
               <div class="feature-icon">&#x1f517;</div>
@@ -84,7 +85,7 @@
               <rect x="200" y="60" width="180" height="140" rx="10" fill="#0f172a" stroke="#3b82f6"/>
               <text x="290" y="86" text-anchor="middle" fill="#60a5fa" font-size="12" font-family="Inter, sans-serif" font-weight="600">Executor.query</text>
               <text x="290" y="110" text-anchor="middle" fill="#94a3b8" font-size="11" font-family="Inter, sans-serif">1. embed query</text>
-              <text x="290" y="128" text-anchor="middle" fill="#94a3b8" font-size="11" font-family="Inter, sans-serif">2. rank candidates</text>
+              <text x="290" y="128" text-anchor="middle" fill="#94a3b8" font-size="11" font-family="Inter, sans-serif">2. pick candidates</text>
               <text x="290" y="146" text-anchor="middle" fill="#94a3b8" font-size="11" font-family="Inter, sans-serif">3. build bundles</text>
               <text x="290" y="164" text-anchor="middle" fill="#94a3b8" font-size="11" font-family="Inter, sans-serif">4. reinforce salience</text>
 
@@ -132,10 +133,10 @@
           <!-- ============================================================ -->
           <h2 id="candidate-selection">Candidate selection</h2>
           <ul>
-            <li>With <code>semantic</code> enabled: vector KNN ranks; cosine fallback runs if KNN is unavailable.</li>
+            <li>With <code>semantic</code> enabled: vector KNN selects candidates; cosine fallback runs if KNN is unavailable.</li>
             <li>With <code>semantic</code> disabled and <code>topic_ids</code> provided: the allowlist is the candidate set.</li>
             <li>With <code>semantic</code> disabled and no allowlist: the first <code>top_k</code> loaded embedding topics are used.</li>
-            <li>When both <code>semantic</code> and <code>topic_ids</code> are provided: ranking runs first, then the allowlist filter is applied.</li>
+            <li>When both <code>semantic</code> and <code>topic_ids</code> are provided: candidate selection runs first, then the allowlist filter is applied.</li>
             <li>Archived topics are skipped from results by default.</li>
           </ul>
 

@@ -69,7 +69,7 @@
   -> schedule reasoner ingest_complete
 
 query:
-  validate request -> semantic candidate ranking
+  validate request -> semantic candidate selection
   -> optional structural + temporal expansion
   -> salience touch side-effect
   -> return QueryResponse(query, candidates, summary_text)

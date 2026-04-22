@@ -125,7 +125,7 @@
           <h3 id="lc-query">Retrieve</h3>
           <pre class="sequence"><code>Client -> FastAPI route -> Executor.query
   -> embed query text
-  -> rank candidates (vector KNN or cosine fallback)
+  -> pick candidate topics (vector KNN or cosine fallback)
   -> optional structural expansion (neighbors + fields)
   -> optional temporal expansion (history when explain=true)
   -> salience bump + topic-history append per touched topic

@@ -67,7 +67,7 @@
             </li>
             <li>
               <strong>S<sub>t</sub></strong> &mdash; <em>Retrieval-facing semantics.</em> The executor&rsquo;s view of
-              <code>D<sub>t</sub></code> when answering a query: semantic ranking over stored embeddings, optional
+              <code>D<sub>t</sub></code> when answering a query: semantic <em>candidate selection</em> over stored embeddings (which topics to hydrate), optional
               structural expansion along edges and field references, optional temporal expansion over field histories,
               and salience bumps on topics that were actually used.
             </li>
@@ -92,7 +92,7 @@
             <span class="concept-label">Definition 2</span>
             <strong>Memory state decomposition.</strong>
             The triple <code>M<sub>t</sub> = (D<sub>t</sub>, S<sub>t</sub>, P<sub>t</sub>)</code> separates what is stored
-            durably (<code>D<sub>t</sub></code>), how queries are allowed to read and rank it (<code>S<sub>t</sub></code>),
+            durably (<code>D<sub>t</sub></code>), how queries are allowed to read and narrow it (<code>S<sub>t</sub></code>),
             and which thresholds and caps constrain change (<code>P<sub>t</sub></code>). In the reference service,
             <code>S<sub>t</sub></code> is not a second database; it is the query path over the same graph with explicit
             stages (semantic, structural, temporal) controlled by the request and by <code>P<sub>t</sub></code>.
@@ -102,7 +102,7 @@
             <span class="concept-label">Definition 3</span>
             <strong>Operators on memory.</strong>
             Four operators advance <code>M<sub>t</sub></code>: <strong>ingest</strong> (observations &rarr; graph writes),
-            <strong>retrieve</strong> (natural-language question &rarr; ranked context), <strong>revise</strong>
+            <strong>retrieve</strong> (natural-language question &rarr; structured context from the relevant topics), <strong>revise</strong>
             (background consolidation such as duplicate merges), and <strong>forget</strong> (non-destructive
             attenuation such as salience-based archival). The developer pages
             <a href="../operations/ingest.html">Ingest</a>, <a href="../operations/query.html">Query</a>,
@@ -124,8 +124,8 @@
             are topics</strong> &mdash; each vertex already bundles identity, fields (with history), summary, salience,
             and embedding &mdash; and whose <strong>edges are typed links</strong> between those bundles. A separate
             mechanism, <strong>field references</strong> (<code>ref_topic_id</code>), points from a field value to
-            another topic so the pointer versions with the field. Retrieval can walk edges, follow refs, or rank by
-            embedding on the same store.
+            another topic so the pointer travels with the field. Retrieval can walk edges, follow refs, or use
+            embeddings on the same store to choose candidates when the semantic stage is on.
           </p>
 
           <div class="figure-block">
@@ -241,7 +241,7 @@
           <ol class="steps">
             <li><strong>Topic nodes carry full context.</strong> Title, summary, fields, embedding, salience, and links all live on one node. One read returns the full picture of one thing.</li>
             <li><strong>Every field keeps its history.</strong> When a value changes, the previous value is preserved with its timestamp and source, so retrieval can distinguish the current truth from what used to be true.</li>
-            <li><strong>Semantic ranking is co-located.</strong> The embedding lives on the topic node, so semantic search and graph traversal share one record &mdash; no drift between a vector store and a graph store.</li>
+            <li><strong>Embeddings live on the topic node.</strong> The same record feeds optional semantic candidate selection and graph-backed expansion &mdash; no drift between a separate vector service and the graph store.</li>
           </ol>
 
           <!-- ============================================================ -->
@@ -407,7 +407,7 @@
             <div class="feature-card">
               <div class="feature-icon">&#x2713;</div>
               <h3>Use scalar columns for hot paths</h3>
-              <p>Properties you filter, rank, or maintain on (<code>salience</code>, <code>archived</code>, timestamps) stay as top-level columns.</p>
+              <p>Properties you filter, tune, or maintain on (<code>salience</code>, <code>archived</code>, timestamps) stay as top-level columns.</p>
             </div>
             <div class="feature-card">
               <div class="feature-icon">&#x2713;</div>

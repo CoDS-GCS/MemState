@@ -17,14 +17,14 @@
           <section class="hero">
             <span class="eyebrow">Finding memory</span>
             <h1 class="hero-title">Ask naturally. Get structured answers.</h1>
-            <p class="hero-sub">The agent asks for <strong>relevant context</strong> in natural language. MemState combines semantic relevance with optional graph expansion and time-aware detail. The default path returns the current truth; deeper paths add neighborhood and history when the question calls for it.</p>
+            <p class="hero-sub">The agent asks for <strong>relevant context</strong> in natural language. MemState pulls the topic bundles that fit the question, then optionally expands along the graph or through field history. The default path returns the current truth; deeper paths add neighborhood and history when the question calls for it.</p>
           </section>
 
           <h2 id="modes">Three retrieval ideas</h2>
           <div class="feature-grid">
             <div class="feature-card">
               <h3>Meaning-first</h3>
-              <p>Rank topics by how closely they match the question.</p>
+              <p>Start from the topics whose stored content answers the question; internal retrieval narrows the set when the semantic stage runs, without treating the API as a similarity-score service.</p>
             </div>
             <div class="feature-card">
               <h3>Neighborhood context</h3>

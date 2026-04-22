@@ -62,7 +62,7 @@ flowchart LR
             <div class="mermaid">
 flowchart TD
   A[POST /v1/query] --> B{semantic stage on?}
-  B -- yes --> C[embedding rank by KNN/cosine]
+  B -- yes --> C[embedding KNN or cosine pick]
   B -- no --> D[use topic_ids allowlist or fallback]
   C --> E[build topic bundles]
   D --> E

@@ -176,8 +176,8 @@
             <tbody>
               <tr>
                 <td><code>semantic</code></td>
-                <td>Embeds the query and ranks topics with KNN (or cosine fallback) over topic embeddings.</td>
-                <td>Chooses the candidate list and sets a <code>similarity</code> score on each bundle.</td>
+                <td>Embeds the query and uses KNN (or cosine fallback) over topic embeddings to decide which topic ids to hydrate.</td>
+                <td>Defines the candidate set; each bundle is topic memory (fields, summary, neighbors as requested). A <code>similarity</code> field may be present for diagnostics when this stage ran&mdash;the payload is still structured context, not a score-first API.</td>
               </tr>
               <tr>
                 <td><code>structural</code></td>
