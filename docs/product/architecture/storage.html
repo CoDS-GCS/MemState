@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Durability &mdash; MemState</title>
+    <link rel="stylesheet" href="../../styles.css" />
+  </head>
+  <body class="has-sidebar" data-doc-audience="product" data-doc-page="product/architecture/storage">
+    <div class="doc-layout">
+      <aside id="doc-sidebar" aria-label="Documentation navigation"></aside>
+      <div class="doc-inner">
+        <header class="page-header">
+          <h1>Durability</h1>
+        </header>
+        <main class="page-main">
+          <section class="hero">
+            <span class="eyebrow">Architecture</span>
+            <h1 class="hero-title">Your agent's memory survives restarts.</h1>
+            <p class="hero-sub">Everything important lives in files on disk managed by the embedded database. Back up the data directory like any other stateful service; there is no hidden cloud dependency in the default footprint.</p>
+          </section>
+
+          <h2 id="use">What operators do</h2>
+          <ol class="steps">
+            <li>Point MemState at a dedicated directory with fast, durable disks.</li>
+            <li>Include that directory in your backup and restore playbooks.</li>
+            <li>Rotate environments by copying or restoring that directory alongside configuration.</li>
+          </ol>
+          <p>Developers will find exact filenames, schema tables, and environment variables on the technical storage page.</p>
+
+          <h2 id="next">Continue</h2>
+          <ul>
+            <li><a href="overview.html">System shape</a></li>
+            <li><a href="../operations/run-config.html">Deployment choices</a></li>
+          </ul>
+
+        </main>
+        <footer class="page-footer">MemState &mdash; straightforward persistence.</footer>
+      </div>
+    </div>
+    <script src="../../js/nav.js" defer></script>
+  </body>
+</html>

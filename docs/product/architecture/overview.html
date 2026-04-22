@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>How it runs &mdash; MemState</title>
+    <link rel="stylesheet" href="../../styles.css" />
+  </head>
+  <body class="has-sidebar" data-doc-audience="product" data-doc-page="product/architecture/overview">
+    <div class="doc-layout">
+      <aside id="doc-sidebar" aria-label="Documentation navigation"></aside>
+      <div class="doc-inner">
+        <header class="page-header">
+          <h1>Architecture</h1>
+        </header>
+        <main class="page-main">
+          <section class="hero">
+            <span class="eyebrow">How it runs</span>
+            <h1 class="hero-title">One service, one store, three doors in.</h1>
+            <p class="hero-sub">MemState is deliberately simple to operate: a single process hosts the APIs, talks to one embedded graph database, and schedules background maintenance after responses return. That keeps latency predictable and deployments small.</p>
+          </section>
+
+          <h2 id="benefits">What this architecture buys you</h2>
+          <ul class="capability-list capability-list--plain capability-list--with-snaps">
+            <li>
+              <div class="capability-list__snap" aria-hidden="true">
+                <svg viewBox="0 0 88 56" fill="none" xmlns="http://www.w3.org/2000/svg" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="34" y="19" width="20" height="24" rx="3" class="snap-accent" stroke-width="2" />
+                  <path d="M10 30h20M58 30h20M44 10v7M44 41v7" opacity="0.5" />
+                </svg>
+              </div>
+              <div class="capability-list__text">
+                <strong>Immediate consistency</strong> &mdash; every surface reads the same store; no replication lag between a vector index and a graph.
+              </div>
+            </li>
+            <li>
+              <div class="capability-list__snap" aria-hidden="true">
+                <svg viewBox="0 0 88 56" fill="none" xmlns="http://www.w3.org/2000/svg" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="18" y="14" width="52" height="34" rx="4" />
+                  <path d="M26 22h36M26 30h28M26 38h32" opacity="0.45" />
+                  <rect x="36" y="44" width="16" height="4" rx="1" class="snap-accent" stroke-width="2" fill="none" />
+                </svg>
+              </div>
+              <div class="capability-list__text">
+                <strong>Low operations burden</strong> &mdash; no separate database fleet to patch and scale for the prototype footprint.
+              </div>
+            </li>
+            <li>
+              <div class="capability-list__snap" aria-hidden="true">
+                <svg viewBox="0 0 88 56" fill="none" xmlns="http://www.w3.org/2000/svg" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="12" y="12" width="64" height="36" rx="4" stroke-dasharray="5 4" opacity="0.55" />
+                  <rect x="28" y="22" width="32" height="18" rx="3" />
+                  <circle cx="58" cy="18" r="4" class="snap-accent" stroke-width="2" />
+                </svg>
+              </div>
+              <div class="capability-list__text">
+                <strong>Clear failure domain</strong> &mdash; when something breaks, the boundary is the service you already deploy.
+              </div>
+            </li>
+          </ul>
+
+          <h2 id="use">How teams adopt it</h2>
+          <p>Start with a single instance beside your agent. Standardize the observation envelope and context-question format once; MemState keeps revise and forget inside the service as you scale. Grow into HA or externalized storage when traffic and compliance require it.</p>
+
+          <h2 id="next">Continue</h2>
+          <ul>
+            <li><a href="storage.html">Durability</a></li>
+            <li><a href="reasoning.html">Background care</a></li>
+            <li><a href="../operations/high-level.html">End-to-end flow</a></li>
+          </ul>
+
+        </main>
+        <footer class="page-footer">MemState &mdash; small blast radius, clear story.</footer>
+      </div>
+    </div>
+    <script src="../../js/nav.js" defer></script>
+  </body>
+</html>

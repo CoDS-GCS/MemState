@@ -6,7 +6,7 @@
     <title>Operations &mdash; forget</title>
     <link rel="stylesheet" href="../styles.css" />
   </head>
-  <body class="has-sidebar" data-doc-page="operations/forget">
+  <body class="has-sidebar" data-doc-audience="developer" data-doc-page="operations/forget">
     <div class="doc-layout">
       <aside id="doc-sidebar" aria-label="Documentation navigation"></aside>
       <div class="doc-inner">
@@ -18,9 +18,9 @@
             <span class="eyebrow">Operation &middot; Forget</span>
             <h1 class="hero-title">Attenuate what stops earning its place.</h1>
             <p class="hero-sub">
-              Forget is a background operation that keeps memory lean. It attenuates or archives content that has
-              stopped being relevant &mdash; without deleting it. Everything forgotten stays on disk and is still
-              reachable by explicit lookup.
+              Forget is a background operation MemState runs under policy &mdash; not an API the agent calls after
+              each turn. It attenuates or archives content that has stopped being reinforced by observations or
+              context queries, without deleting it; archived material stays on disk and is reachable by explicit lookup.
             </p>
             <div class="hero-actions">
               <a class="btn btn-primary" href="ingest.html">Back to start: Ingest</a>

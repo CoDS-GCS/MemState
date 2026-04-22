@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Retention and retrieval &mdash; MemState</title>
+    <link rel="stylesheet" href="../../styles.css" />
+  </head>
+  <body class="has-sidebar" data-doc-audience="product" data-doc-page="product/data-model/limits-and-config">
+    <div class="doc-layout">
+      <aside id="doc-sidebar" aria-label="Documentation navigation"></aside>
+      <div class="doc-inner">
+        <header class="page-header">
+          <h1>Memory health</h1>
+        </header>
+        <main class="page-main">
+          <section class="hero">
+            <span class="eyebrow">Capabilities</span>
+            <h1 class="hero-title">Good defaults, tuned when you need them.</h1>
+            <p class="hero-sub">MemState balances richness with cost: long histories, wide scans, and stale material are governed so the system stays responsive. Defaults favor safety and explainability; you adjust thresholds when your domain demands it.</p>
+          </section>
+
+          <h2 id="ladder">How forgetting feels to users</h2>
+          <p class="section-lede">
+            Nothing is silently deleted. Material first becomes less prominent, then can be archived out of default search
+            while remaining recoverable for audits. That protects both user trust and engineering safety.
+          </p>
+
+          <h2 id="retrieve">How retrieval is staged</h2>
+          <p>Search starts from meaning, optionally expands along graph shape, and can add time-aware detail when you ask for how something evolved. You choose how deep each hop goes based on latency and cost budgets.</p>
+
+          <h2 id="use">How operators use these controls</h2>
+          <p>Product teams set coarse policies (how long history should live, how aggressive archival should be). Developers map those policies to environment and runtime settings on the technical pages.</p>
+
+          <h2 id="next">Continue</h2>
+          <ul>
+            <li><a href="../operations/run-config.html">Deployment choices</a> (product view)</li>
+            <li><a href="diagram.html">Visual maps</a></li>
+          </ul>
+
+        </main>
+        <footer class="page-footer">MemState &mdash; retention that stays humane.</footer>
+      </div>
+    </div>
+    <script src="../../js/nav.js" defer></script>
+  </body>
+</html>

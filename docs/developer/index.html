@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Developer hub &mdash; MemState</title>
+    <link rel="stylesheet" href="../styles.css" />
+  </head>
+  <body class="has-sidebar" data-doc-audience="developer" data-doc-page="developer/index">
+    <div class="doc-layout">
+      <aside id="doc-sidebar" aria-label="Documentation navigation"></aside>
+      <div class="doc-inner">
+        <header class="page-header">
+          <h1>Developer documentation</h1>
+        </header>
+        <main class="page-main">
+          <section class="hero">
+            <span class="eyebrow">Technical edition</span>
+            <h1 class="hero-title">Build on MemState with <em>clear contracts</em>.</h1>
+            <p class="hero-sub">
+              These pages track how the reference implementation behaves today: HTTP routes, storage layout, reasoner
+              hooks, and operational limits. The product contract is fixed: agents emit observations and ask for
+              context; MemState owns ingest structure, revise, and forget. Each technical page has a shorter product twin
+              focused on outcomes and adoption.
+            </p>
+            <div class="hero-actions">
+              <a class="btn btn-primary" href="../developers/quickstart.html">Quickstart</a>
+              <a class="btn" href="../index.html">Product overview</a>
+            </div>
+          </section>
+
+          <h2 id="map">Site map (developer)</h2>
+          <h3>Concepts</h3>
+          <ul>
+            <li><a href="../data-model/overview.html">Topic model</a></li>
+            <li><a href="../data-model/fields.html">Fields and history</a></li>
+            <li><a href="../data-model/relationships.html">Relationships and refs</a></li>
+            <li><a href="../data-model/limits-and-config.html">Limits and stages</a></li>
+            <li><a href="../data-model/diagram.html">Diagrams</a></li>
+          </ul>
+          <h3>Architecture</h3>
+          <ul>
+            <li><a href="../architecture/overview.html">Runtime overview</a></li>
+            <li><a href="../architecture/storage.html">Storage and schema</a></li>
+            <li><a href="../architecture/reasoning.html">Reasoner behavior</a></li>
+            <li><a href="../architecture/http-stack.html">HTTP, UI, LLM</a></li>
+          </ul>
+          <h3>Operations</h3>
+          <ul>
+            <li><a href="../operations/ingest.html">Ingest</a> &middot; <a href="../operations/query.html">Query</a> &middot;
+              <a href="../operations/revision.html">Revision</a> &middot; <a href="../operations/forget.html">Forget</a></li>
+            <li><a href="../operations/high-level.html">High-level API flow</a></li>
+            <li><a href="../operations/low-level.html">Low-level UI API</a></li>
+            <li><a href="../operations/run-config.html">Run and configuration</a></li>
+          </ul>
+          <h3>Reference</h3>
+          <ul>
+            <li><a href="../api/index.html">HTTP endpoint index</a></li>
+          </ul>
+
+          <h2 id="progress">Implementation status</h2>
+          <p>
+            MemState is an open reference prototype. Behavior matches the codebase in <code>src/memstate</code>; where the
+            implementation is still catching up to the full research model, the technical pages call that out in an
+            <strong>Implementation notes</strong> section at the bottom (injected on each developer page).
+          </p>
+
+          <h2 id="roadmap">Roadmap (research vs prototype)</h2>
+          <p>These items are tracked in code and issues; they are intentionally absent from the product guide.</p>
+          <ul class="capability-list">
+            <li class="is-future"><strong>Summarize and detach stages</strong> of the forgetting ladder beyond archive.<span class="tag">planned</span></li>
+            <li class="is-future"><strong>Semantic duplicate detection</strong> beyond identical titles.<span class="tag">planned</span></li>
+            <li class="is-future"><strong>Field-level conflict reconciliation</strong> for colliding histories.<span class="tag">planned</span></li>
+            <li class="is-future"><strong>Declarative policy engine</strong> for user-defined event and condition rules.<span class="tag">planned</span></li>
+          </ul>
+        </main>
+        <footer class="page-footer">MemState &mdash; developer documentation hub.</footer>
+      </div>
+    </div>
+    <script src="../js/nav.js" defer></script>
+  </body>
+</html>

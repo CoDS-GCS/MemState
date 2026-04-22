@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Finding memory &mdash; MemState</title>
+    <link rel="stylesheet" href="../../styles.css" />
+  </head>
+  <body class="has-sidebar" data-doc-audience="product" data-doc-page="product/operations/query">
+    <div class="doc-layout">
+      <aside id="doc-sidebar" aria-label="Documentation navigation"></aside>
+      <div class="doc-inner">
+        <header class="page-header">
+          <h1>Operations</h1>
+        </header>
+        <main class="page-main">
+          <section class="hero">
+            <span class="eyebrow">Finding memory</span>
+            <h1 class="hero-title">Ask naturally. Get structured answers.</h1>
+            <p class="hero-sub">The agent asks for <strong>relevant context</strong> in natural language. MemState combines semantic relevance with optional graph expansion and time-aware detail. The default path returns the current truth; deeper paths add neighborhood and history when the question calls for it.</p>
+          </section>
+
+          <h2 id="modes">Three retrieval ideas</h2>
+          <div class="feature-grid">
+            <div class="feature-card">
+              <h3>Meaning-first</h3>
+              <p>Rank topics by how closely they match the question.</p>
+            </div>
+            <div class="feature-card">
+              <h3>Neighborhood context</h3>
+              <p>Walk a bounded set of related topics when the answer spans more than one node.</p>
+            </div>
+            <div class="feature-card">
+              <h3>How it evolved</h3>
+              <p>Surface field histories when the user cares about change over time, not only the latest value.</p>
+            </div>
+          </div>
+
+          <h2 id="use">How to phrase requests</h2>
+          <p>Pass the agent or user question verbatim as the query text. Optional flags tell MemState to include neighbors or field history; you are not hand-assembling graph traversals in application code.</p>
+
+          <h2 id="next">Continue</h2>
+          <ul>
+            <li><a href="ingest.html">Observations into memory</a></li>
+            <li><a href="../data-model/fields.html">Field history</a></li>
+          </ul>
+
+        </main>
+        <footer class="page-footer">MemState &mdash; answers with context.</footer>
+      </div>
+    </div>
+    <script src="../../js/nav.js" defer></script>
+  </body>
+</html>

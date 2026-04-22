@@ -6,7 +6,7 @@
     <title>Data model &mdash; overview</title>
     <link rel="stylesheet" href="../styles.css" />
   </head>
-  <body class="has-sidebar" data-doc-page="data-model/overview">
+  <body class="has-sidebar" data-doc-audience="developer" data-doc-page="data-model/overview">
     <div class="doc-layout">
       <aside id="doc-sidebar" aria-label="Documentation navigation"></aside>
       <div class="doc-inner">
@@ -18,17 +18,18 @@
             <span class="eyebrow">Data model</span>
             <h1 class="hero-title">Topics, fields, and links.</h1>
             <p class="hero-sub">
-              MemState stores everything the agent knows as a graph of <strong>topics</strong>. Each topic is one
-              self-contained unit of knowledge &mdash; its own fields, its own history, its own embedding, and its
-              own links to other topics.
+              MemState stores what the system has learned from agent <strong>observations</strong> as a graph of
+              <strong>topics</strong>. Each topic is one self-contained unit of knowledge &mdash; its own fields,
+              its own history, its own embedding, and its own links to other topics &mdash; shaped by MemState policy,
+              not by hand-authored graph edits in the agent loop.
             </p>
           </section>
 
           <!-- ============================================================ -->
           <h2 id="three-parts">Memory has three parts</h2>
           <p>
-            Every MemState deployment keeps three things in sync. Together they make up the state the agent reads
-            and writes through.
+            Every MemState deployment keeps three things in sync. Together they define what context retrieval returns
+            and how new observations are absorbed.
           </p>
 
           <div class="feature-grid">
@@ -56,6 +57,97 @@
             cleanest way to express <em>what</em> a topic is and <em>how</em> it relates to others. But a plain
             graph is not enough on its own for agent memory.
           </p>
+
+          <h3 id="topic-graph-visual">What the topic graph is</h3>
+          <p>
+            A <strong>topic graph</strong> is not a free-form sketch of entities. It is a graph whose <strong>vertices
+            are topics</strong> &mdash; each vertex already bundles identity, fields (with history), summary, salience,
+            and embedding &mdash; and whose <strong>edges are typed links</strong> between those bundles. A separate
+            mechanism, <strong>field references</strong> (<code>ref_topic_id</code>), points from a field value to
+            another topic so the pointer versions with the field. Retrieval can walk edges, follow refs, or rank by
+            embedding on the same store.
+          </p>
+
+          <div class="figure-block">
+            <svg
+              class="diagram-svg"
+              viewBox="0 0 820 360"
+              xmlns="http://www.w3.org/2000/svg"
+              role="img"
+              aria-labelledby="tg-title tg-desc"
+            >
+              <title id="tg-title">Example topic graph</title>
+              <desc id="tg-desc">
+                Four topic nodes connected by one extension edge, one association edge, and one dashed field reference
+                from a bug topic to a release topic.
+              </desc>
+              <defs>
+                <marker id="tg-arr" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto">
+                  <path d="M0,0 L0,6 L7,3 z" fill="#64748b" />
+                </marker>
+                <linearGradient id="tg-fill" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0" stop-color="#1e293b" />
+                  <stop offset="1" stop-color="#0f172a" />
+                </linearGradient>
+              </defs>
+
+              <!-- Bug topic -->
+              <rect x="28" y="118" width="172" height="72" rx="10" fill="url(#tg-fill)" stroke="#334155" stroke-width="1.4" />
+              <text x="44" y="148" fill="#e2e8f0" font-size="13" font-family="Inter, system-ui, sans-serif" font-weight="600">Regression #4412</text>
+              <text x="44" y="168" fill="#64748b" font-size="11" font-family="Inter, system-ui, sans-serif">topic node</text>
+
+              <!-- Focal release topic -->
+              <rect x="268" y="88" width="236" height="96" rx="12" fill="url(#tg-fill)" stroke="#3b82f6" stroke-width="2" />
+              <text x="286" y="124" fill="#93c5fd" font-size="13" font-family="Inter, system-ui, sans-serif" font-weight="600">Alpha release</text>
+              <text x="286" y="148" fill="#94a3b8" font-size="11" font-family="Inter, system-ui, sans-serif">fields · history · embedding · salience</text>
+              <text x="286" y="170" fill="#64748b" font-size="10" font-family="Inter, system-ui, sans-serif">one indexed unit = one retrieval bundle</text>
+
+              <!-- Sprint (extension target) -->
+              <rect x="548" y="36" width="196" height="68" rx="10" fill="url(#tg-fill)" stroke="#334155" stroke-width="1.4" />
+              <text x="564" y="66" fill="#e2e8f0" font-size="13" font-family="Inter, system-ui, sans-serif" font-weight="600">Sprint board</text>
+              <text x="564" y="86" fill="#64748b" font-size="11" font-family="Inter, system-ui, sans-serif">extends parent context</text>
+
+              <!-- Acme (association peer) -->
+              <rect x="548" y="208" width="196" height="68" rx="10" fill="url(#tg-fill)" stroke="#334155" stroke-width="1.4" />
+              <text x="564" y="238" fill="#e2e8f0" font-size="13" font-family="Inter, system-ui, sans-serif" font-weight="600">Acme Corp</text>
+              <text x="564" y="258" fill="#64748b" font-size="11" font-family="Inter, system-ui, sans-serif">independent peer topic</text>
+
+              <!-- Field ref: bug -> release (dashed) -->
+              <path
+                d="M200 154 Q 230 120 268 136"
+                fill="none"
+                stroke="#94a3b8"
+                stroke-width="1.6"
+                stroke-dasharray="6 5"
+              />
+              <text x="208" y="118" fill="#cbd5e1" font-size="10" font-family="Inter, system-ui, sans-serif">field ref</text>
+              <text x="208" y="132" fill="#64748b" font-size="9" font-family="ui-monospace, monospace">ref_topic_id</text>
+
+              <!-- Extension edge -->
+              <line x1="504" y1="108" x2="548" y2="78" stroke="#475569" stroke-width="1.6" marker-end="url(#tg-arr)" />
+              <text x="512" y="72" fill="#cbd5e1" font-size="10" font-family="Inter, system-ui, sans-serif">extension</text>
+              <text x="512" y="86" fill="#64748b" font-size="9" font-family="ui-monospace, monospace">RELATED edge</text>
+
+              <!-- Association edge -->
+              <path d="M386 184 Q 470 210 548 242" fill="none" stroke="#475569" stroke-width="1.6" marker-end="url(#tg-arr)" />
+              <text x="430" y="228" fill="#cbd5e1" font-size="10" font-family="Inter, system-ui, sans-serif">association</text>
+              <text x="430" y="242" fill="#64748b" font-size="9" font-family="ui-monospace, monospace">RELATED edge</text>
+
+              <!-- Legend strip -->
+              <rect x="28" y="288" width="764" height="56" rx="8" fill="#0c1220" stroke="#1e293b" stroke-width="1" />
+              <text x="48" y="312" fill="#94a3b8" font-size="11" font-family="Inter, system-ui, sans-serif">
+                <tspan font-weight="600" fill="#e2e8f0">Read in one pass:</tspan>
+                <tspan dx="12">vertices = topics (rich nodes).</tspan>
+                <tspan x="48" dy="18">solid arrows = native graph edges for traversal;</tspan>
+                <tspan dx="8">dashed = pointer on a field value that also resolves to a topic.</tspan>
+              </text>
+            </svg>
+            <p class="diagram-caption">
+              The <strong>topic graph</strong> is the property graph formed by topic vertices and <code>RELATED</code> edges (here: an
+              <strong>extension</strong> and an <strong>association</strong>). <strong>Field references</strong> add a second way to point at a topic without duplicating
+              the bundle; see <a href="relationships.html">Relationships</a> for modeling rules.
+            </p>
+          </div>
 
           <table>
             <thead>

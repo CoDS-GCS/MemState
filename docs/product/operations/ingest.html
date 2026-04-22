@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Observations into memory &mdash; MemState</title>
+    <link rel="stylesheet" href="../../styles.css" />
+  </head>
+  <body class="has-sidebar" data-doc-audience="product" data-doc-page="product/operations/ingest">
+    <div class="doc-layout">
+      <aside id="doc-sidebar" aria-label="Documentation navigation"></aside>
+      <div class="doc-inner">
+        <header class="page-header">
+          <h1>Operations</h1>
+        </header>
+        <main class="page-main">
+          <section class="hero">
+            <span class="eyebrow">Memory writes</span>
+            <h1 class="hero-title">You ship observations; MemState decides the shape.</h1>
+            <p class="hero-sub">
+              Ingest is how new evidence enters the store. The agent or integration forwards what was observed
+              &mdash; not a hand-authored graph surgery plan. MemState applies its own rules for whether that becomes
+              a new topic, an update to an existing one, or a new revision on a field, and it records provenance and
+              history accordingly.
+            </p>
+          </section>
+
+          <h2 id="modes">Three outcomes MemState applies</h2>
+          <div class="feature-grid">
+            <div class="feature-card">
+              <h3>New material</h3>
+              <p>When the observation clearly introduces something that should live as its own unit of memory.</p>
+            </div>
+            <div class="feature-card">
+              <h3>Enrichment</h3>
+              <p>When the observation belongs with something already in the store and should extend that topic.</p>
+            </div>
+            <div class="feature-card">
+              <h3>Correction</h3>
+              <p>When the observation supersedes a fact; MemState appends a revision instead of overwriting.</p>
+            </div>
+          </div>
+
+          <h2 id="use">What you standardize in product</h2>
+          <p>
+            Agree on the observation envelope your agent emits (text, structured fields, tool payloads, optional
+            links). Keep it stable and small. Leave deduplication, archival, and merge timing to MemState so every
+            integration behaves the same under load.
+          </p>
+
+          <h2 id="next">Continue</h2>
+          <ul>
+            <li><a href="query.html">Finding context</a></li>
+            <li><a href="../developers/integration.html">Agent integration</a></li>
+          </ul>
+
+        </main>
+        <footer class="page-footer">MemState &mdash; policy-led ingestion.</footer>
+      </div>
+    </div>
+    <script src="../../js/nav.js" defer></script>
+  </body>
+</html>

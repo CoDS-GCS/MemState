@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Background care &mdash; MemState</title>
+    <link rel="stylesheet" href="../../styles.css" />
+  </head>
+  <body class="has-sidebar" data-doc-audience="product" data-doc-page="product/architecture/reasoning">
+    <div class="doc-layout">
+      <aside id="doc-sidebar" aria-label="Documentation navigation"></aside>
+      <div class="doc-inner">
+        <header class="page-header">
+          <h1>Background care</h1>
+        </header>
+        <main class="page-main">
+          <section class="hero">
+            <span class="eyebrow">Architecture</span>
+            <h1 class="hero-title">Memory that tidies itself after you respond.</h1>
+            <p class="hero-sub">After writes and reads, MemState can merge obvious duplicates and soften topics that have gone quiet. That work is intentionally asynchronous so your user-facing paths stay snappy.</p>
+          </section>
+
+          <h2 id="why">Why background care matters</h2>
+          <p>Without it, long-running agents accumulate near-duplicate notes and stale facts that pollute retrieval. With it, the corpus stays searchable without manual database janitor work after every session.</p>
+
+          <h2 id="use">What you should expect</h2>
+          <p>Policies favor non-destructive changes: consolidation and archival adjust what is easy to find, not what is permanently erased. Tune aggressiveness when you understand your traffic patterns.</p>
+
+          <h2 id="next">Continue</h2>
+          <ul>
+            <li><a href="../operations/revision.html">Cleaning duplicates</a> (product view)</li>
+            <li><a href="../operations/forget.html">Letting memory fade</a> (product view)</li>
+          </ul>
+
+        </main>
+        <footer class="page-footer">MemState &mdash; hygiene without blocking users.</footer>
+      </div>
+    </div>
+    <script src="../../js/nav.js" defer></script>
+  </body>
+</html>

@@ -6,7 +6,7 @@
     <title>Operations - high-level API flow</title>
     <link rel="stylesheet" href="../styles.css" />
   </head>
-  <body class="has-sidebar" data-doc-page="operations/high-level">
+  <body class="has-sidebar" data-doc-audience="developer" data-doc-page="operations/high-level">
     <div class="doc-layout">
       <aside id="doc-sidebar" aria-label="Documentation navigation"></aside>
       <div class="doc-inner">
@@ -15,8 +15,9 @@
         </header>
         <main class="page-main">
           <p>
-            The <code>/v1</code> surface is the canonical product-facing memory interface. It provides controlled write semantics and staged retrieval behavior through
-            <code>Executor</code>.
+            The <code>/v1</code> surface is the canonical agent-facing memory interface: observation-shaped writes and
+            staged context retrieval through <code>Executor</code>. Revise and forget are internal reasoner work, not
+            extra agent calls.
           </p>
 
           <h2><code>POST /v1/ingest</code> semantics</h2>
@@ -91,7 +92,7 @@ res = client.query({
           <ul>
             <li>Automation pipelines that want stable, validated memory semantics.</li>
             <li>Integrations that should not manipulate low-level graph primitives directly.</li>
-            <li>Workflows where placement constraints and stage behavior are part of product contract.</li>
+            <li>Workflows where you need the current explicit ingest payload and staged query behavior documented in one place.</li>
           </ul>
 
           <h2>Related low-level surfaces</h2>

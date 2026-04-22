@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Quickstart &mdash; MemState for developers</title>
+    <link rel="stylesheet" href="../styles.css" />
+  </head>
+  <body class="has-sidebar" data-doc-audience="developer" data-doc-page="developers/quickstart">
+    <div class="doc-layout">
+      <aside id="doc-sidebar" aria-label="Documentation navigation"></aside>
+      <div class="doc-inner">
+        <header class="page-header">
+          <h1>Developer Quickstart</h1>
+        </header>
+        <main class="page-main">
+
+          <!-- ============================================================ -->
+          <!-- Hero                                                         -->
+          <!-- ============================================================ -->
+          <section class="hero hero--split">
+            <div>
+              <span class="eyebrow">For developers</span>
+              <h1 class="hero-title">Run MemState in <em>two commands</em>.</h1>
+              <p class="hero-sub">
+                Install the package, boot the service, then exercise the two calls your agent needs: send an
+                <strong>observation</strong> into memory and ask for <strong>relevant context</strong>. MemState
+                applies ingest, revise, and forget policy internally. Everything here runs against a local instance.
+              </p>
+              <div class="hero-actions">
+                <a class="btn btn-primary" href="#install">Install &amp; run</a>
+                <a class="btn" href="../api/index.html">API reference</a>
+                <a class="btn" href="../index.html">&larr; Product overview</a>
+              </div>
+            </div>
+
+            <div class="code-card" aria-hidden="true">
+              <div class="code-card__head">
+                <span class="code-card__dot"></span>
+                <span class="code-card__dot"></span>
+                <span class="code-card__dot"></span>
+                <span class="code-card__title">POST /v1/ingest</span>
+              </div>
+<pre><span class="tok-k">curl</span> <span class="tok-n">-X</span> POST http://localhost:8000<span class="tok-p">/</span>v1<span class="tok-p">/</span>ingest <span class="tok-p">\</span>
+  <span class="tok-n">-H</span> <span class="tok-s">"content-type: application/json"</span> <span class="tok-p">\</span>
+  <span class="tok-n">-d</span> <span class="tok-s">'{
+    "placement": "new_topic",
+    "title":     "Launch plan",
+    "summary":   "Q3 public release",
+    "fields": [
+      { "name": "owner",       "value": "Aya" },
+      { "name": "target_date", "value": "2026-07-01" }
+    ]
+  }'</span>
+
+<span class="tok-c"># &rarr; { topic_id: "t_8a3b...", applied: [...], version_ids: {...} }</span></pre>
+            </div>
+          </section>
+
+          <div class="callout">
+            <strong>Contract vs wire format.</strong> Product-wise, the agent only emits observations and
+            questions; MemState decides how to persist, merge, and fade memory. The runnable examples below still
+            show explicit <code>placement</code> (and similar) fields accepted by this reference build until
+            observation-first routing is fully automatic in the service.
+          </div>
+
+          <!-- ============================================================ -->
+          <!-- Install                                                      -->
+          <!-- ============================================================ -->
+          <span class="section-eyebrow">Step 1</span>
+          <h2 id="install">Install and boot.</h2>
+          <p class="section-lede">
+            MemState is distributed as a Python package with an embedded Kuzu store. You get a complete service on
+            localhost &mdash; no external database to provision.
+          </p>
+
+          <pre><code>python -m pip install -e .
+uvicorn memstate.api.main:app --reload</code></pre>
+
+          <p>
+            The service listens on <code>http://127.0.0.1:8000</code>. The web UI is served at <code>/ui</code>,
+            and the OpenAPI schema is at <code>/openapi.json</code>.
+          </p>
+
+          <!-- ============================================================ -->
+          <!-- Write & read                                                 -->
+          <!-- ============================================================ -->
+          <span class="section-eyebrow">Step 2</span>
+          <h2 id="calls">Observation in, context out.</h2>
+          <p class="section-lede">
+            Two endpoints cover the agent boundary: persist what was observed, then query for what matters.
+            Revise and forget are not separate agent calls; the reasoner runs them after ingest and query complete.
+          </p>
+
+          <div class="code-tabs" role="tablist" aria-label="Typical calls">
+            <div class="code-tabs__nav">
+              <button class="code-tabs__tab" type="button">Write a topic</button>
+              <button class="code-tabs__tab" type="button">Update a field</button>
+              <button class="code-tabs__tab" type="button">Retrieve</button>
+              <button class="code-tabs__tab" type="button">History</button>
+            </div>
+            <div class="code-tabs__panels">
+              <div class="code-tabs__panel" role="tabpanel">
+<pre><code>POST /v1/ingest
+{
+  "placement": "new_topic",
+  "title":    "Launch plan",
+  "summary":  "Q3 public release milestones",
+  "fields": [
+    { "name": "owner",       "value": "Aya",         "provenance": "ui"   },
+    { "name": "status",      "value": "in_progress", "provenance": "ui"   },
+    { "name": "target_date", "value": "2026-07-01",  "field_type": "date" }
+  ]
+}</code></pre>
+              </div>
+              <div class="code-tabs__panel" role="tabpanel">
+<pre><code>POST /v1/ingest
+{
+  "placement": "version_field",
+  "topic_id":  "t_8a3b...",
+  "fields": [
+    {
+      "name":  "status",
+      "value": "shipped",
+      "provenance":  "ui",
+      "why_changed": "launch went live"
+    }
+  ]
+}</code></pre>
+              </div>
+              <div class="code-tabs__panel" role="tabpanel">
+<pre><code>POST /v1/query
+{
+  "q":      "what is launch plan status?",
+  "top_k":  5
+}
+
+// -> { candidates: [{ topic_id, title, fields: [{ name, current: "shipped" }], ... }] }</code></pre>
+              </div>
+              <div class="code-tabs__panel" role="tabpanel">
+<pre><code>POST /v1/query
+{
+  "q":       "how did launch status change?",
+  "stages":  ["semantic", "structural", "temporal"],
+  "explain": true
+}
+
+// -> fields: [{
+//      name: "status",
+//      current: { value: "shipped",      valid_from: "2026-07-01" },
+//      history: [
+//        { value: "shipped",     valid_from: "2026-07-01", provenance: "ui" },
+//        { value: "in_progress", valid_from: "2026-05-12", provenance: "ui" }
+//      ]
+//    }]</code></pre>
+              </div>
+            </div>
+          </div>
+
+          <!-- ============================================================ -->
+          <!-- Python client                                                -->
+          <!-- ============================================================ -->
+          <span class="section-eyebrow">Step 3</span>
+          <h2 id="python">Use the Python client.</h2>
+          <p class="section-lede">
+            For in-process use, the bundled client gives you a typed wrapper around the same endpoints. Same
+            semantics, no HTTP boilerplate.
+          </p>
+
+          <pre><code>from memstate.client import MemoryClient
+
+client = MemoryClient(base_url="http://127.0.0.1:8000")
+
+client.ingest({
+    "placement": "new_topic",
+    "title":    "Launch plan",
+    "summary":  "Q3 public release",
+    "fields":   [{"name": "owner", "value": "Aya"}],
+})
+
+client.query({ "q": "who owns the launch plan?", "top_k": 3 })</code></pre>
+
+          <!-- ============================================================ -->
+          <!-- API surfaces                                                 -->
+          <!-- ============================================================ -->
+          <span class="section-eyebrow">Know the surfaces</span>
+          <h2 id="surfaces">Three API surfaces, one store.</h2>
+          <p class="section-lede">
+            All three surfaces read and write the same underlying memory. Pick the one that matches the caller.
+          </p>
+
+          <ul class="capability-list">
+            <li>
+              <strong><code>/v1</code> &mdash; Client API.</strong>
+              Stable contract for agent integrations: observation-shaped <code>POST /v1/ingest</code> and
+              context <code>POST /v1/query</code>. Revise and forget stay inside MemState.
+              <span class="tag">primary</span>
+            </li>
+            <li>
+              <strong><code>/api/ui</code> &mdash; UI API.</strong>
+              Lower-level endpoints used by the bundled web UI. Expose raw topic, field, and link operations for
+              inspection and administration.
+              <span class="tag">tooling</span>
+            </li>
+            <li>
+              <strong><code>/api/llm/chat</code> &mdash; LLM API.</strong>
+              A chat-style surface where a model forwards observations and context questions through natural-language requests.
+              <span class="tag">optional</span>
+            </li>
+          </ul>
+
+          <!-- ============================================================ -->
+          <!-- Where to go next                                             -->
+          <!-- ============================================================ -->
+          <span class="section-eyebrow">Go deeper</span>
+          <h2 id="next">Where to go next.</h2>
+          <ul>
+            <li><a href="../api/index.html">API reference</a> &mdash; every endpoint, every field.</li>
+            <li><a href="../operations/ingest.html">Ingest</a> &mdash; observation payload, executor behavior, placement fields in this build.</li>
+            <li><a href="../operations/query.html">Query</a> &mdash; context retrieval stages, history, explain.</li>
+            <li><a href="../data-model/overview.html">Data model</a> &mdash; topics, fields, and links in detail.</li>
+            <li><a href="../architecture/overview.html">Architecture</a> &mdash; service, reasoner, and store.</li>
+            <li><a href="../operations/run-config.html">Run &amp; configuration</a> &mdash; env vars, ports, storage paths.</li>
+          </ul>
+
+        </main>
+        <footer class="page-footer">MemState &mdash; long-term memory infrastructure for AI agents.</footer>
+      </div>
+    </div>
+    <script src="../js/nav.js" defer></script>
+  </body>
+</html>

@@ -3,10 +3,10 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>MemState - Long-term memory for AI agents</title>
+    <title>MemState &mdash; Long-term memory for AI agents</title>
     <link rel="stylesheet" href="styles.css" />
   </head>
-  <body class="has-sidebar" data-doc-page="index">
+  <body class="has-sidebar" data-doc-audience="product" data-doc-page="index">
     <div class="doc-layout">
       <aside id="doc-sidebar" aria-label="Documentation navigation"></aside>
       <div class="doc-inner">
@@ -14,389 +14,264 @@
           <h1>MemState</h1>
         </header>
         <main class="page-main">
+
           <!-- ============================================================ -->
           <!-- Hero                                                         -->
           <!-- ============================================================ -->
-          <section class="hero">
-            <span class="eyebrow">Agent memory infrastructure</span>
-            <h1 class="hero-title">Durable, evolving memory for AI agents.</h1>
-            <p class="hero-sub">
-              MemState is a long-term memory service that keeps agent knowledge coherent as it grows. It organizes
-              what the agent learns, tracks how facts change, prunes what stops mattering, and returns the right
-              context on every retrieval.
-            </p>
-            <div class="hero-actions">
-              <a class="btn btn-primary" href="operations/ingest.html">Start with Ingest</a>
-              <a class="btn" href="architecture/overview.html">Architecture</a>
-              <a class="btn" href="data-model/overview.html">Data model</a>
+          <section class="hero hero--split">
+            <div>
+              <span class="eyebrow">Memory infrastructure for agents</span>
+              <h1 class="hero-title">Memory that <em>evolves</em> with your agent.</h1>
+              <p class="hero-sub">
+                MemState is long-term memory for agents that does the bookkeeping for you. The agent sends
+                <strong>observations</strong> (what it noticed) and asks for <strong>relevant context</strong> when
+                it needs to think; MemState decides how to ingest, revise, and forget so retrieval returns the
+                current truth, not a stale copy.
+              </p>
+              <div class="hero-actions">
+                <a class="btn btn-primary" href="product/developers/integration.html">Agent integration &rarr;</a>
+                <a class="btn" href="#how-it-works">How it works</a>
+              </div>
+            </div>
+
+            <div class="hero-illustration" aria-hidden="true">
+              <div class="topic-card">
+                <div class="topic-card__head">
+                  <span class="topic-card__title">Launch plan</span>
+                  <span class="topic-card__ver">v12</span>
+                </div>
+                <div class="topic-card__summary">Q3 public release &mdash; owner, target, status</div>
+                <ul class="topic-card__fields">
+                  <li><span class="k">owner</span><span class="v">Aya</span></li>
+                  <li>
+                    <span class="k">status</span>
+                    <span class="v">
+                      <span class="pulse"></span>
+                      shipped
+                      <span class="was">in_progress</span>
+                    </span>
+                  </li>
+                  <li><span class="k">target_date</span><span class="v">2026-07-01</span></li>
+                </ul>
+                <div class="topic-card__links">
+                  <span class="topic-card__links-label">related</span>
+                  <span class="topic-card__chip">Q3 roadmap</span>
+                  <span class="topic-card__chip">Go-to-market</span>
+                </div>
+              </div>
             </div>
           </section>
 
           <!-- ============================================================ -->
-          <!-- What it is                                                   -->
+          <!-- Why                                                          -->
           <!-- ============================================================ -->
-          <h2 id="what-it-is">What MemState is</h2>
-          <p>
-            MemState is a single FastAPI service backed by an embedded Kuzu graph. It exposes three access surfaces
-            on one shared store: a product API (<code>/v1</code>), a low-level graph API (<code>/api/ui</code>), and
-            a natural-language tool loop (<code>/api/llm/chat</code>). It is designed for one operational idea:
-            <strong>memory as a managed, evolving store</strong> rather than a passive collection of records.
+          <span class="section-eyebrow">The problem</span>
+          <h2 id="why">Agent memory is not a database problem.</h2>
+          <p class="section-lede">
+            The store you use when an agent is learning over time has to do more than write and read rows. It has
+            to turn raw observations into structured memory, reconcile what was true yesterday with what is true
+            today, and let irrelevant material fade &mdash; all without destroying the history that makes the
+            current answer defensible.
+          </p>
+          <p class="section-lede">
+            A plain database overwrites. A vector store ranks by similarity but has no idea what is fresh. A
+            document store can't safely reason about the consequences of a change. MemState treats all of these
+            as first-class concerns of the memory layer, so the agent loop only emits observations and questions.
           </p>
 
-          <div class="feature-grid">
-            <div class="feature-card">
-              <div class="feature-icon">&#x2b;</div>
-              <h3>Write (Ingest)</h3>
-              <p>Turn new input into a topic, extend an existing one, or append a new value to a field &mdash; without losing what was there before.</p>
-            </div>
-            <div class="feature-card">
-              <div class="feature-icon">&#x21ba;</div>
-              <h3>Revise</h3>
-              <p>Reconcile conflicts and consolidate duplicates in the background as evidence accumulates.</p>
-            </div>
-            <div class="feature-card">
-              <div class="feature-icon">&#x2193;</div>
-              <h3>Forget</h3>
-              <p>Attenuate and archive content that stops being useful, without destroying the underlying history.</p>
-            </div>
-            <div class="feature-card">
-              <div class="feature-icon">&#x26b2;</div>
-              <h3>Retrieve</h3>
-              <p>Pull the right topic, its neighborhood, and the right version of each field &mdash; not just the closest vector.</p>
+          <!-- ============================================================ -->
+          <!-- Three principles                                             -->
+          <!-- ============================================================ -->
+          <span class="section-eyebrow">How it works</span>
+          <h2 id="how-it-works">Three ideas you need to know.</h2>
+
+          <div class="principle">
+            <span class="principle__num">01</span>
+            <div>
+              <h3>Everything is a topic.</h3>
+              <p>
+                A topic is one self-contained unit of knowledge &mdash; a person, a project, a document, a concept.
+                It carries its own fields, its own embedding, and typed links to other topics. One read returns the
+                full picture of one thing; you don't chase pointers across a generic graph to reassemble it.
+              </p>
             </div>
           </div>
 
-          <!-- ============================================================ -->
-          <!-- Why it exists                                                -->
-          <!-- ============================================================ -->
-          <h2 id="why">Why it exists</h2>
-          <p>
-            Agents need memory that does more than store records. As the agent talks, learns, and works over time,
-            what it remembers has to evolve: new input has to be placed correctly, old beliefs have to be updated
-            when evidence changes, unused knowledge has to decay, and every retrieval has to surface the current
-            truth without throwing away how it got there.
-          </p>
-          <p>
-            Classical stores were not built for this. A plain database overwrites. A vector database ranks by
-            similarity but has no notion of freshness or supersession. A document store can't safely reason about
-            cross-record consequences. MemState treats these as first-class concerns of the memory system rather
-            than problems to solve in application code.
-          </p>
-
-          <!-- ============================================================ -->
-          <!-- The four operations                                          -->
-          <!-- ============================================================ -->
-          <h2 id="operations">The four memory operations</h2>
-          <p>
-            All behavior in MemState is expressed through four operations. Two are triggered by clients; two run in
-            the background to keep the store healthy.
-          </p>
-
-          <table>
-            <thead>
-              <tr>
-                <th>Operation</th>
-                <th>Triggered by</th>
-                <th>What it does</th>
-                <th>Access</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td><strong>Ingest</strong></td>
-                <td>Client / agent tool</td>
-                <td>Integrate new input into the store. Decide placement, append a new field value, or create a new topic.</td>
-                <td>Write</td>
-              </tr>
-              <tr>
-                <td><strong>Retrieve</strong></td>
-                <td>Client / agent tool</td>
-                <td>Answer a question with the right topic, its neighbors, and the right version of each field.</td>
-                <td>Read (with reinforcement)</td>
-              </tr>
-              <tr>
-                <td><strong>Revise</strong></td>
-                <td>Background (after ingest)</td>
-                <td>Reconcile contradictions, consolidate duplicates, and mark superseded values.</td>
-                <td>Internal</td>
-              </tr>
-              <tr>
-                <td><strong>Forget</strong></td>
-                <td>Background (pressure / schedule)</td>
-                <td>Attenuate, archive, or compress content that is no longer earning its place.</td>
-                <td>Internal</td>
-              </tr>
-            </tbody>
-          </table>
-
-          <div class="callout">
-            Retrieval is not purely read-only. Every successful retrieval <em>reinforces</em> the topics it touches
-            by increasing their salience. This is how the system learns what stays active and what can be forgotten.
-          </div>
-
-          <!-- ============================================================ -->
-          <!-- Memory model                                                 -->
-          <!-- ============================================================ -->
-          <h2 id="model">How memory is organized</h2>
-          <p>
-            MemState organizes memory into <strong>topics</strong>. Every topic is a self-contained unit of
-            knowledge: a title, a summary, a set of typed fields, an embedding for semantic search, and typed
-            links to other topics. You can read one topic and get the full context of one thing the agent knows,
-            without following ten hops across a generic graph.
-          </p>
-
-          <div class="figure-block">
-            <svg class="diagram-svg" viewBox="0 0 860 300" xmlns="http://www.w3.org/2000/svg" aria-label="How MemState organizes memory">
-              <defs>
-                <marker id="arr-home" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
-                  <path d="M0,0 L0,6 L8,3 z" fill="#8b949e" />
-                </marker>
-                <linearGradient id="topicgrad" x1="0" y1="0" x2="1" y2="1">
-                  <stop offset="0" stop-color="#1e293b"/>
-                  <stop offset="1" stop-color="#0f172a"/>
-                </linearGradient>
-              </defs>
-
-              <rect x="310" y="60" width="240" height="180" rx="12" fill="url(#topicgrad)" stroke="#3b82f6" stroke-width="1.5"/>
-              <text x="430" y="88" text-anchor="middle" fill="#60a5fa" font-size="14" font-family="Inter, sans-serif" font-weight="600">Topic</text>
-              <text x="430" y="110" text-anchor="middle" fill="#cbd5e1" font-size="11" font-family="Inter, sans-serif">one self-contained memory unit</text>
-
-              <line x1="340" y1="124" x2="520" y2="124" stroke="#1e293b" stroke-width="1"/>
-
-              <text x="340" y="146" fill="#94a3b8" font-size="11" font-family="Inter, sans-serif">Title &amp; summary</text>
-              <text x="340" y="166" fill="#94a3b8" font-size="11" font-family="Inter, sans-serif">Typed fields with full value history</text>
-              <text x="340" y="186" fill="#94a3b8" font-size="11" font-family="Inter, sans-serif">Embedding for semantic search</text>
-              <text x="340" y="206" fill="#94a3b8" font-size="11" font-family="Inter, sans-serif">Salience (importance signal)</text>
-              <text x="340" y="226" fill="#94a3b8" font-size="11" font-family="Inter, sans-serif">Typed links to other topics</text>
-
-              <rect x="40" y="100" width="160" height="56" rx="10" fill="#0f172a" stroke="#334155"/>
-              <text x="120" y="122" text-anchor="middle" fill="#e2e8f0" font-size="12" font-family="Inter, sans-serif">Related topic</text>
-              <text x="120" y="140" text-anchor="middle" fill="#64748b" font-size="10" font-family="Inter, sans-serif">(extension or association)</text>
-              <line x1="200" y1="128" x2="310" y2="140" stroke="#475569" stroke-width="1.4" marker-end="url(#arr-home)"/>
-
-              <rect x="40" y="180" width="160" height="56" rx="10" fill="#0f172a" stroke="#334155"/>
-              <text x="120" y="202" text-anchor="middle" fill="#e2e8f0" font-size="12" font-family="Inter, sans-serif">Related topic</text>
-              <text x="120" y="220" text-anchor="middle" fill="#64748b" font-size="10" font-family="Inter, sans-serif">(extension or association)</text>
-              <line x1="200" y1="208" x2="310" y2="190" stroke="#475569" stroke-width="1.4" marker-end="url(#arr-home)"/>
-
-              <rect x="660" y="100" width="160" height="56" rx="10" fill="#0f172a" stroke="#334155"/>
-              <text x="740" y="122" text-anchor="middle" fill="#e2e8f0" font-size="12" font-family="Inter, sans-serif">Semantic search</text>
-              <text x="740" y="140" text-anchor="middle" fill="#64748b" font-size="10" font-family="Inter, sans-serif">KNN over topic embeddings</text>
-              <line x1="660" y1="128" x2="550" y2="140" stroke="#475569" stroke-width="1.4" stroke-dasharray="4 3" marker-end="url(#arr-home)"/>
-
-              <rect x="660" y="180" width="160" height="56" rx="10" fill="#0f172a" stroke="#334155"/>
-              <text x="740" y="202" text-anchor="middle" fill="#e2e8f0" font-size="12" font-family="Inter, sans-serif">Field value history</text>
-              <text x="740" y="220" text-anchor="middle" fill="#64748b" font-size="10" font-family="Inter, sans-serif">current + all past values</text>
-              <line x1="660" y1="208" x2="550" y2="190" stroke="#475569" stroke-width="1.4" stroke-dasharray="4 3" marker-end="url(#arr-home)"/>
-            </svg>
-            <p class="diagram-caption">One topic node carries all the context about one thing. Links model relationships; history preserves how facts evolved.</p>
-          </div>
-
-          <div class="feature-grid">
-            <div class="feature-card">
-              <div class="feature-icon">&#x1f5c2;</div>
-              <h3>Topics, not rows</h3>
-              <p>Each topic is a self-contained semantic unit &mdash; one read returns the full picture of one thing.</p>
-            </div>
-            <div class="feature-card">
-              <div class="feature-icon">&#x1f552;</div>
-              <h3>Every field keeps its history</h3>
-              <p>Values are never silently overwritten. Each field stores a timestamped, provenance-tagged history.</p>
-            </div>
-            <div class="feature-card">
-              <div class="feature-icon">&#x1f517;</div>
-              <h3>Typed links</h3>
-              <p>Topics connect through typed <em>extension</em> and <em>association</em> edges, so retrieval can expand context.</p>
-            </div>
-            <div class="feature-card">
-              <div class="feature-icon">&#x2728;</div>
-              <h3>Salience learns what matters</h3>
-              <p>Ingest, retrieval, and background maintenance all move an importance score that decides what stays live.</p>
+          <div class="principle">
+            <span class="principle__num">02</span>
+            <div>
+              <h3>Every field keeps its history.</h3>
+              <p>
+                When a value changes, MemState doesn't overwrite it. It appends a new revision and marks it as the
+                current value; the previous revision stays in place with its timestamp and its source. Retrieval
+                returns the latest version by default; a question that needs the story can ask for history
+                explicitly.
+              </p>
             </div>
           </div>
 
-          <!-- ============================================================ -->
-          <!-- How it works                                                 -->
-          <!-- ============================================================ -->
-          <h2 id="how">How a request moves through the system</h2>
-
-          <ol class="steps">
-            <li>
-              <strong>Client or agent calls the API.</strong> Ingest for writes, retrieve for reads. No direct
-              database access &mdash; every mutation goes through one semantics layer.
-            </li>
-            <li>
-              <strong>The Executor applies the operation.</strong> It resolves placement (new topic, extend, or
-              append), runs the lowest-level primitives against the store, and enforces policy limits.
-            </li>
-            <li>
-              <strong>The Reasoner runs in the background.</strong> When ingest finishes or pressure builds, the
-              reasoner triggers revise and forget to keep the store coherent and lean.
-            </li>
-            <li>
-              <strong>The response returns.</strong> Every touched topic has its salience updated, so the next
-              retrieval already reflects what was just read or written.
-            </li>
-          </ol>
-
-          <div class="figure-block">
-            <svg class="diagram-svg" viewBox="0 0 860 220" xmlns="http://www.w3.org/2000/svg" aria-label="System flow">
-              <defs>
-                <marker id="arr-sys" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3 z" fill="#64748b"/></marker>
-              </defs>
-
-              <rect x="20" y="80" width="138" height="58" rx="10" fill="#0f172a" stroke="#334155"/>
-              <text x="89" y="104" text-anchor="middle" fill="#e2e8f0" font-size="12" font-family="Inter, sans-serif">Client / Agent</text>
-              <text x="89" y="122" text-anchor="middle" fill="#64748b" font-size="10" font-family="Inter, sans-serif">SDK, chat, MCP</text>
-
-              <rect x="192" y="80" width="148" height="58" rx="10" fill="#0f172a" stroke="#3b82f6"/>
-              <text x="266" y="104" text-anchor="middle" fill="#60a5fa" font-size="12" font-family="Inter, sans-serif">API surface</text>
-              <text x="266" y="122" text-anchor="middle" fill="#94a3b8" font-size="10" font-family="Inter, sans-serif">/v1, /api/ui, /api/llm</text>
-
-              <rect x="378" y="80" width="148" height="58" rx="10" fill="#0f172a" stroke="#22c55e"/>
-              <text x="452" y="104" text-anchor="middle" fill="#4ade80" font-size="12" font-family="Inter, sans-serif">Executor</text>
-              <text x="452" y="122" text-anchor="middle" fill="#94a3b8" font-size="10" font-family="Inter, sans-serif">ingest &amp; retrieve</text>
-
-              <rect x="560" y="30" width="148" height="58" rx="10" fill="#0f172a" stroke="#a855f7"/>
-              <text x="634" y="54" text-anchor="middle" fill="#c084fc" font-size="12" font-family="Inter, sans-serif">Reasoner</text>
-              <text x="634" y="72" text-anchor="middle" fill="#94a3b8" font-size="10" font-family="Inter, sans-serif">revise &amp; forget</text>
-
-              <rect x="560" y="130" width="148" height="58" rx="10" fill="#0f172a" stroke="#f59e0b"/>
-              <text x="634" y="154" text-anchor="middle" fill="#fbbf24" font-size="12" font-family="Inter, sans-serif">Graph store</text>
-              <text x="634" y="172" text-anchor="middle" fill="#94a3b8" font-size="10" font-family="Inter, sans-serif">embedded Kuzu</text>
-
-              <line x1="158" y1="109" x2="192" y2="109" stroke="#475569" stroke-width="1.5" marker-end="url(#arr-sys)"/>
-              <line x1="340" y1="109" x2="378" y2="109" stroke="#475569" stroke-width="1.5" marker-end="url(#arr-sys)"/>
-              <line x1="526" y1="100" x2="560" y2="72" stroke="#475569" stroke-width="1.5" marker-end="url(#arr-sys)"/>
-              <line x1="526" y1="118" x2="560" y2="150" stroke="#475569" stroke-width="1.5" marker-end="url(#arr-sys)"/>
-              <line x1="634" y1="88" x2="634" y2="130" stroke="#475569" stroke-width="1.2" stroke-dasharray="4 3" marker-end="url(#arr-sys)"/>
-            </svg>
-            <p class="diagram-caption">Clients never touch the store directly. All writes and reads flow through the Executor; background maintenance runs through the Reasoner.</p>
+          <div class="principle">
+            <span class="principle__num">03</span>
+            <div>
+              <h3>Memory maintains itself.</h3>
+              <p>
+                After every write and every read, a background reasoner looks at the store. It consolidates
+                duplicates, attenuates topics that stopped being used, and archives the ones that fall below a
+                relevance threshold. None of this adds latency to the request &mdash; it runs after the response
+                is sent.
+              </p>
+            </div>
           </div>
 
           <!-- ============================================================ -->
           <!-- Correctness promises                                         -->
           <!-- ============================================================ -->
-          <h2 id="promises">Correctness promises</h2>
-          <p>
-            MemState keeps two guarantees that make it safe to depend on as the system of record for agent
-            knowledge.
-          </p>
+          <span class="section-eyebrow">What MemState promises</span>
+          <h2 id="promises">Two guarantees worth depending on.</h2>
 
           <div class="concept">
             <span class="concept-label">Promise 1 &mdash; Current truth by default</span>
-            Every retrieval returns the <strong>most recent, non-archived</strong> value for each field. Older
-            values are never returned as current &mdash; they surface only when a caller explicitly asks for history.
+            Every retrieval returns the most recent, non-archived value for each field. A caller that doesn't ask
+            for history will never accidentally see a superseded value as if it were current.
           </div>
 
           <div class="concept">
             <span class="concept-label">Promise 2 &mdash; Transitions respect policy</span>
-            Every change to the store goes through the ingest, revise, or forget path. Limits on history length,
-            salience thresholds, and archival rules are enforced uniformly &mdash; there is no back door that
-            bypasses them.
+            Every change to the store goes through one of four well-defined operations &mdash; ingest, retrieve,
+            revise, or forget. Ingest and retrieve are what the agent calls; revise and forget are driven by
+            MemState policy after those calls. Limits on history length, salience thresholds, and archival rules
+            are enforced uniformly. No back door.
           </div>
 
           <!-- ============================================================ -->
-          <!-- What is built vs. planned                                    -->
+          <!-- Capabilities                                                 -->
           <!-- ============================================================ -->
-          <h2 id="status">Capabilities &mdash; built today vs. planned</h2>
+          <span class="section-eyebrow">What's in the box</span>
+          <h2 id="capabilities">What you get.</h2>
 
-          <table>
-            <thead>
-              <tr>
-                <th>Capability</th>
-                <th>Status</th>
-                <th>Notes</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td>Ingest &mdash; placement decisions (new topic, extend, append field value)</td>
-                <td><span class="status-impl">Shipped</span></td>
-                <td>Structured via <code>/v1/ingest</code>; conversational via chat tools.</td>
-              </tr>
-              <tr>
-                <td>Retrieval &mdash; semantic ranking, neighbors, history expansion</td>
-                <td><span class="status-impl">Shipped</span></td>
-                <td>All three stages available via <code>/v1/query</code>.</td>
-              </tr>
-              <tr>
-                <td>Salience reinforcement on retrieval</td>
-                <td><span class="status-impl">Shipped</span></td>
-                <td>Every touched topic is bumped on read.</td>
-              </tr>
-              <tr>
-                <td>Revision &mdash; duplicate consolidation</td>
-                <td><span class="status-partial">Partial</span></td>
-                <td>Background duplicate sweep runs; full conflict reconciliation is staged.</td>
-              </tr>
-              <tr>
-                <td>Forget &mdash; archive by low salience</td>
-                <td><span class="status-impl">Shipped</span></td>
-                <td>Archived topics are excluded from default scans without being deleted.</td>
-              </tr>
-              <tr>
-                <td>Forget &mdash; summarize and detach stages</td>
-                <td><span class="status-future">Planned</span></td>
-                <td>Additional tiers of the forgetting ladder.</td>
-              </tr>
-              <tr>
-                <td>Policy engine &mdash; declarative event/condition/action rules</td>
-                <td><span class="status-future">Planned</span></td>
-                <td>Today's policies are code-level defaults.</td>
-              </tr>
-            </tbody>
-          </table>
+          <ul class="capability-list capability-list--plain capability-list--with-snaps">
+            <li>
+              <div class="capability-list__snap" aria-hidden="true">
+                <svg viewBox="0 0 88 56" fill="none" xmlns="http://www.w3.org/2000/svg" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="17" cy="30" r="6" />
+                  <path d="M25 30h9" class="snap-accent" stroke-width="2.25" />
+                  <path d="M36 30h8" />
+                  <rect x="48" y="16" width="34" height="28" rx="3" />
+                  <path d="M54 24h22M54 30h16M54 36h20" />
+                </svg>
+              </div>
+              <div class="capability-list__text">
+                <strong>Observation-driven memory</strong> &mdash; you ship what the agent saw; MemState maps it onto topics, fields, and links and preserves prior values.
+              </div>
+            </li>
+            <li>
+              <div class="capability-list__snap" aria-hidden="true">
+                <svg viewBox="0 0 88 56" fill="none" xmlns="http://www.w3.org/2000/svg" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="10" y="16" width="42" height="28" rx="4" />
+                  <path d="M16 26h30M16 33h20" />
+                  <circle cx="62" cy="26" r="9" class="snap-accent" stroke-width="2" />
+                  <path d="M68 32l10 10" class="snap-accent" stroke-width="2" />
+                </svg>
+              </div>
+              <div class="capability-list__text">
+                <strong>Context on demand</strong> &mdash; the agent asks in natural language; MemState returns meaning-ranked results, optional neighborhood, and timelines when needed.
+              </div>
+            </li>
+            <li>
+              <div class="capability-list__snap" aria-hidden="true">
+                <svg viewBox="0 0 88 56" fill="none" xmlns="http://www.w3.org/2000/svg" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M14 14h52M14 14v6M66 14v6" />
+                  <rect x="16" y="22" width="50" height="8" rx="2" />
+                  <path d="M70 24v4" class="snap-accent" stroke-width="2" />
+                  <rect x="16" y="34" width="42" height="8" rx="2" />
+                  <rect x="16" y="46" width="56" height="8" rx="2" />
+                </svg>
+              </div>
+              <div class="capability-list__text">
+                <strong>Honest history</strong> &mdash; every field remembers its past values with timestamps and sources, so the agent can explain how it got to today.
+              </div>
+            </li>
+            <li>
+              <div class="capability-list__snap" aria-hidden="true">
+                <svg viewBox="0 0 88 56" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M14 48h60" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" />
+                  <rect x="18" y="26" width="8" height="20" rx="1.5" fill="currentColor" class="snap-accent" />
+                  <rect x="34" y="18" width="8" height="28" rx="1.5" fill="currentColor" opacity="0.85" />
+                  <rect x="50" y="30" width="8" height="16" rx="1.5" fill="currentColor" opacity="0.55" />
+                  <rect x="66" y="22" width="8" height="24" rx="1.5" fill="currentColor" opacity="0.7" />
+                </svg>
+              </div>
+              <div class="capability-list__text">
+                <strong>Active memory stays loud</strong> &mdash; things the agent actually uses stay easier to find; idle threads quietly step aside.
+              </div>
+            </li>
+            <li>
+              <div class="capability-list__snap" aria-hidden="true">
+                <svg viewBox="0 0 88 56" fill="none" xmlns="http://www.w3.org/2000/svg" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="24" cy="30" r="9" />
+                  <circle cx="42" cy="30" r="9" />
+                  <path d="M52 30h12" class="snap-accent" stroke-width="2.25" />
+                  <circle cx="72" cy="30" r="11" class="snap-accent" stroke-width="2" />
+                </svg>
+              </div>
+              <div class="capability-list__text">
+                <strong>Gentle cleanup</strong> &mdash; duplicates and stale units are merged or archived without deleting the trail that made answers trustworthy.
+              </div>
+            </li>
+            <li>
+              <div class="capability-list__snap" aria-hidden="true">
+                <svg viewBox="0 0 88 56" fill="none" xmlns="http://www.w3.org/2000/svg" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="22" cy="22" r="6" />
+                  <circle cx="66" cy="22" r="6" />
+                  <circle cx="44" cy="40" r="7" class="snap-accent" stroke-width="2" />
+                  <path d="M26 25l14 12M62 25L48 37M28 22h32" />
+                </svg>
+              </div>
+              <div class="capability-list__text">
+                <strong>Linked context</strong> &mdash; connect topics the way people connect ideas: related work, dependencies, and references.
+              </div>
+            </li>
+            <li>
+              <div class="capability-list__snap" aria-hidden="true">
+                <svg viewBox="0 0 88 56" xmlns="http://www.w3.org/2000/svg" fill="currentColor">
+                  <rect x="8" y="10" width="72" height="12" rx="2" opacity="0.28" />
+                  <rect x="14" y="26" width="60" height="12" rx="2" opacity="0.5" class="snap-accent" />
+                  <rect x="22" y="42" width="44" height="10" rx="2" opacity="0.36" />
+                </svg>
+              </div>
+              <div class="capability-list__text">
+                <strong>Your stack, your surface</strong> &mdash; integrate from application code, drive from a UI, or let an LLM use tools &mdash; one memory underneath.
+              </div>
+            </li>
+          </ul>
 
           <!-- ============================================================ -->
-          <!-- Read this doc                                                -->
+          <!-- Developer handoff                                            -->
           <!-- ============================================================ -->
-          <h2 id="how-to-read">Read this documentation</h2>
-          <div class="feature-grid">
-            <div class="feature-card">
-              <div class="feature-icon">&#x2192;</div>
-              <h3>Product overview</h3>
-              <p>You are here. Start with <a href="architecture/overview.html">Architecture</a> next.</p>
+          <aside class="cta-panel">
+            <div>
+              <span class="cta-panel__eyebrow">For developers</span>
+              <h3>Ready to integrate?</h3>
+              <p>
+                The quickstart walks through install, observation-shaped writes, and context queries using the
+                Python client. The API reference documents every endpoint on every surface.
+              </p>
             </div>
-            <div class="feature-card">
-              <div class="feature-icon">&#x2302;</div>
-              <h3>Data model</h3>
-              <p>Topics, fields, history, and links. See <a href="data-model/overview.html">Data model</a>.</p>
+            <div class="hero-actions" style="margin-top:0;">
+              <a class="btn btn-primary" href="product/developers/integration.html">Agent integration</a>
+              <a class="btn" href="developers/quickstart.html">Technical quickstart</a>
+              <a class="btn" href="product/api/index.html">Interfaces overview</a>
             </div>
-            <div class="feature-card">
-              <div class="feature-icon">&#x25b6;</div>
-              <h3>Operations</h3>
-              <p>Ingest, retrieve, revise, forget. See <a href="operations/ingest.html">Operations</a>.</p>
-            </div>
-            <div class="feature-card">
-              <div class="feature-icon">&#x1f6e0;</div>
-              <h3>API reference</h3>
-              <p>Endpoints and contracts. See <a href="api/v1.html">API reference</a>.</p>
-            </div>
-          </div>
+          </aside>
 
-          <h2 id="quick-start">Quick start</h2>
-          <p>Run MemState locally:</p>
-          <pre><code>python -m pip install -e .
-uvicorn memstate.api.main:app --reload</code></pre>
+          <span class="section-eyebrow">Keep reading</span>
+          <h2 id="next">Explore the system.</h2>
+          <ul>
+            <li><a href="product/data-model/overview.html">Topic memory</a> &mdash; how knowledge is grouped and kept trustworthy.</li>
+            <li><a href="product/architecture/overview.html">How it runs</a> &mdash; one service, one store, background care.</li>
+            <li><a href="product/operations/ingest.html">Observations and retrieval</a> &mdash; what the agent sends, what MemState returns, in plain language.</li>
+          </ul>
 
-          <p>Write a topic:</p>
-          <pre><code>curl -X POST http://localhost:8000/v1/ingest \
-  -H "content-type: application/json" \
-  -d '{
-    "placement": "new_topic",
-    "title": "Launch plan",
-    "summary": "Q3 public release milestones",
-    "fields": [
-      {"name": "owner", "value": "Aya", "provenance": "ui"},
-      {"name": "target_date", "value": "2026-07-01", "field_type": "date"}
-    ]
-  }'</code></pre>
-
-          <p>Read it back:</p>
-          <pre><code>curl -X POST http://localhost:8000/v1/query \
-  -H "content-type: application/json" \
-  -d '{ "q": "when is launch?", "top_k": 5 }'</code></pre>
         </main>
         <footer class="page-footer">MemState &mdash; long-term memory infrastructure for AI agents.</footer>
       </div>

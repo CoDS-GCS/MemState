@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Agent integration &mdash; MemState</title>
+    <link rel="stylesheet" href="../../styles.css" />
+  </head>
+  <body class="has-sidebar" data-doc-audience="product" data-doc-page="product/developers/integration">
+    <div class="doc-layout">
+      <aside id="doc-sidebar" aria-label="Documentation navigation"></aside>
+      <div class="doc-inner">
+        <header class="page-header">
+          <h1>Agent integration</h1>
+        </header>
+        <main class="page-main">
+          <section class="hero">
+            <span class="eyebrow">Integration</span>
+            <h1 class="hero-title">Observations in, relevant context out.</h1>
+            <p class="hero-sub">
+              MemState sits beside your agent as a dedicated memory service. The agent should only send
+              <strong>observations</strong> (what it saw or concluded in this turn) and <strong>requests for
+              context</strong> when it needs to reason. MemState decides how those observations become durable
+              memory, when to merge duplicates, and when to let unused material fade &mdash; not your orchestration
+              code and not the model prompt.
+            </p>
+          </section>
+
+          <h2 id="when">When MemState fits</h2>
+          <p class="section-lede">
+            Use MemState when facts must survive across sessions, when answers need a traceable source of truth,
+            and when you do not want every team to reinvent ingestion, deduplication, and forgetting in application
+            logic.
+          </p>
+
+          <h2 id="flow">How the loop works</h2>
+          <ol class="steps steps--with-snaps">
+            <li>
+              <div class="steps__snap" aria-hidden="true">
+                <svg viewBox="0 0 88 56" fill="none" xmlns="http://www.w3.org/2000/svg" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="44" cy="28" r="15" opacity="0.45" />
+                  <circle cx="44" cy="28" r="6" class="snap-accent" stroke-width="2" />
+                  <path d="M44 9v7M44 40v7M79 28h-8M9 28h8" opacity="0.4" />
+                </svg>
+              </div>
+              <div class="steps__text">
+                <strong>Observe</strong> &mdash; after a turn, the integration forwards what the agent noticed: short text, structured fields, tool output, or a compact summary of the delta.
+              </div>
+            </li>
+            <li>
+              <div class="steps__snap" aria-hidden="true">
+                <svg viewBox="0 0 88 56" fill="none" xmlns="http://www.w3.org/2000/svg" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="18" y="12" width="52" height="18" rx="3" />
+                  <path d="M44 32v9" class="snap-accent" stroke-width="2.25" />
+                  <path d="M32 45h24" />
+                  <rect x="22" y="41" width="44" height="9" rx="2" />
+                </svg>
+              </div>
+              <div class="steps__text">
+                <strong>Memorize</strong> &mdash; MemState maps that observation onto topics and fields, appends history where values change, and refreshes embeddings. Placement and merge policy live here.
+              </div>
+            </li>
+            <li>
+              <div class="steps__snap" aria-hidden="true">
+                <svg viewBox="0 0 88 56" fill="none" xmlns="http://www.w3.org/2000/svg" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="10" y="16" width="42" height="28" rx="4" />
+                  <path d="M16 26h30M16 33h20" />
+                  <circle cx="62" cy="26" r="9" class="snap-accent" stroke-width="2" />
+                  <path d="M68 32l10 10" class="snap-accent" stroke-width="2" />
+                </svg>
+              </div>
+              <div class="steps__text">
+                <strong>Ask</strong> &mdash; when the agent needs to think, it sends a natural-language question; MemState returns ranked, structured context (and optional history or neighbors).
+              </div>
+            </li>
+            <li>
+              <div class="steps__snap" aria-hidden="true">
+                <svg viewBox="0 0 88 56" fill="none" xmlns="http://www.w3.org/2000/svg" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M28 40a15 15 0 1 1 11-27" opacity="0.4" />
+                  <path d="M62 14h10v10" />
+                  <path d="M72 14l-10 10" class="snap-accent" stroke-width="2" />
+                  <path d="M18 46h52" opacity="0.35" />
+                </svg>
+              </div>
+              <div class="steps__text">
+                <strong>Maintain</strong> &mdash; after responses return, MemState runs revise and forget in the background. The agent never schedules those steps.
+              </div>
+            </li>
+          </ol>
+
+          <h2 id="surfaces">Pick the surface that matches your team</h2>
+          <ul class="capability-list capability-list--plain capability-list--with-snaps">
+            <li>
+              <div class="capability-list__snap" aria-hidden="true">
+                <svg viewBox="0 0 88 56" fill="none" xmlns="http://www.w3.org/2000/svg" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="10" y="12" width="68" height="34" rx="4" />
+                  <path d="M22 26l-5 5 5 5" class="snap-accent" stroke-width="2" />
+                  <path d="M30 36h22M30 30h14" />
+                </svg>
+              </div>
+              <div class="capability-list__text">
+                <strong>Application path</strong> &mdash; stable client API for production: observation-shaped writes and context queries.
+              </div>
+            </li>
+            <li>
+              <div class="capability-list__snap" aria-hidden="true">
+                <svg viewBox="0 0 88 56" fill="none" xmlns="http://www.w3.org/2000/svg" stroke="currentColor" stroke-width="1.75" stroke-linecap="round">
+                  <line x1="14" y1="18" x2="74" y2="18" />
+                  <circle cx="56" cy="18" r="4" class="snap-accent" fill="currentColor" stroke="none" />
+                  <line x1="14" y1="30" x2="74" y2="30" />
+                  <circle cx="36" cy="30" r="4" fill="currentColor" opacity="0.45" stroke="none" />
+                  <line x1="14" y1="42" x2="74" y2="42" />
+                  <circle cx="64" cy="42" r="4" fill="currentColor" opacity="0.35" stroke="none" />
+                </svg>
+              </div>
+              <div class="capability-list__text">
+                <strong>Operator tools</strong> &mdash; UI-oriented routes for inspection, tuning, and support without widening the agent contract.
+              </div>
+            </li>
+            <li>
+              <div class="capability-list__snap" aria-hidden="true">
+                <svg viewBox="0 0 88 56" fill="none" xmlns="http://www.w3.org/2000/svg" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="10" y="14" width="40" height="14" rx="3" />
+                  <rect x="18" y="32" width="52" height="14" rx="3" opacity="0.75" />
+                  <path d="M62 10l4 4-4 4M66 14H54" class="snap-accent" stroke-width="2" />
+                </svg>
+              </div>
+              <div class="capability-list__text">
+                <strong>LLM-native path</strong> &mdash; optional chat-style entry when a model already sits inside a tool and policy wrapper you control.
+              </div>
+            </li>
+          </ul>
+
+          <h2 id="next">Technical details</h2>
+          <p>
+            For install commands, example payloads, and field-level contracts, use the developer quickstart and API
+            reference from the banner or sidebar. Those pages note where the reference service still expects explicit
+            wire fields while observation-first routing is completed.
+          </p>
+
+        </main>
+        <footer class="page-footer">MemState &mdash; observations, context, policy-driven memory.</footer>
+      </div>
+    </div>
+    <script src="../../js/nav.js" defer></script>
+  </body>
+</html>

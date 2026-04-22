@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Topic memory &mdash; MemState</title>
+    <link rel="stylesheet" href="../../styles.css" />
+  </head>
+  <body class="has-sidebar" data-doc-audience="product" data-doc-page="product/data-model/overview">
+    <div class="doc-layout">
+      <aside id="doc-sidebar" aria-label="Documentation navigation"></aside>
+      <div class="doc-inner">
+        <header class="page-header">
+          <h1>Topic memory</h1>
+        </header>
+        <main class="page-main">
+          <section class="hero">
+            <span class="eyebrow">Capabilities</span>
+            <h1 class="hero-title">One place for everything about one thing.</h1>
+            <p class="hero-sub">A topic is how MemState bundles everything learned from agent <strong>observations</strong> about one subject &mdash; identity, summary, fields, importance, and links. Context queries return that bundle as a coherent unit instead of scattered rows.</p>
+          </section>
+
+          <h2 id="three-parts">What stays in sync</h2>
+          <p>MemState keeps three concerns together so retrieval stays honest as the agent learns.</p>
+          <div class="feature-grid">
+            <div class="feature-card">
+              <h3>Content</h3>
+              <p>The facts themselves: titles, summaries, typed fields, and the text used to understand meaning.</p>
+            </div>
+            <div class="feature-card">
+              <h3>Structure</h3>
+              <p>How topics relate: parent-like links, peer associations, and references embedded in fields.</p>
+            </div>
+            <div class="feature-card">
+              <h3>Policies</h3>
+              <p>The rules that cap history length, decide what is current, and move stale material out of the default view.</p>
+            </div>
+          </div>
+
+          <h2 id="topic-graph">What a topic graph is (picture)</h2>
+          <p>
+            Think of memory as <strong>cards</strong> (each card is one topic) and <strong>strings</strong> between cards when the agent
+            learned a relationship. That whole picture is the topic graph: rich nodes, typed links, optional pointers from a field on one card to another.
+          </p>
+          <div class="figure-block">
+            <svg
+              class="diagram-svg"
+              viewBox="0 0 640 260"
+              xmlns="http://www.w3.org/2000/svg"
+              role="img"
+              aria-labelledby="ptg-title ptg-desc"
+            >
+              <title id="ptg-title">Topic graph in plain terms</title>
+              <desc id="ptg-desc">Three topic cards with one solid link from release to sprint and one dashed pointer from bug to release.</desc>
+              <defs>
+                <marker id="ptg-arr" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+                  <path d="M0,0 L0,5 L6,2.5 z" fill="#64748b" />
+                </marker>
+              </defs>
+              <rect x="168" y="88" width="208" height="92" rx="10" fill="#1e293b" stroke="#3b82f6" stroke-width="2" />
+              <text x="184" y="124" fill="#e2e8f0" font-size="14" font-family="Inter, system-ui, sans-serif" font-weight="600">Release</text>
+              <text x="184" y="148" fill="#94a3b8" font-size="11" font-family="Inter, system-ui, sans-serif">everything about this release</text>
+              <rect x="416" y="40" width="176" height="68" rx="10" fill="#1e293b" stroke="#334155" stroke-width="1.4" />
+              <text x="432" y="70" fill="#e2e8f0" font-size="13" font-family="Inter, system-ui, sans-serif" font-weight="600">Sprint</text>
+              <text x="432" y="90" fill="#64748b" font-size="10" font-family="Inter, system-ui, sans-serif">belongs under the release</text>
+              <line x1="376" y1="108" x2="416" y2="84" stroke="#475569" stroke-width="1.6" marker-end="url(#ptg-arr)" />
+              <text x="360" y="78" fill="#cbd5e1" font-size="10" font-family="Inter, system-ui, sans-serif">typed link</text>
+              <rect x="40" y="152" width="156" height="68" rx="10" fill="#1e293b" stroke="#334155" stroke-width="1.4" />
+              <text x="56" y="184" fill="#e2e8f0" font-size="13" font-family="Inter, system-ui, sans-serif" font-weight="600">Bug</text>
+              <text x="56" y="204" fill="#64748b" font-size="10" font-family="Inter, system-ui, sans-serif">mentions the release</text>
+              <path
+                d="M196 186 Q 248 120 272 120"
+                fill="none"
+                stroke="#94a3b8"
+                stroke-width="1.6"
+                stroke-dasharray="6 4"
+              />
+              <text x="232" y="108" fill="#cbd5e1" font-size="10" font-family="Inter, system-ui, sans-serif">pointer on a field</text>
+            </svg>
+            <p class="diagram-caption">
+              The <strong>topic graph</strong> is that web of cards and links. MemState keeps each card self-contained and ranks or expands along links when the agent asks for context.
+            </p>
+          </div>
+
+          <h2 id="use">How this improves memory quality</h2>
+          <p class="section-lede">
+            Because each topic is self-contained, one context response can carry the whole picture. Because structure
+            is typed, expansion along relationships is predictable. Because policies are centralized inside MemState,
+            the agent loop does not re-implement forgetting and supersession per integration.
+          </p>
+
+          <h2 id="use2">How to use it in product terms</h2>
+          <ol class="steps">
+            <li>Start a new topic when the agent learns a new subject that will be referenced again.</li>
+            <li>Add fields as the story grows instead of overwriting earlier facts.</li>
+            <li>Link out when another subject should stay its own topic with its own history.</li>
+          </ol>
+
+          <h2 id="next">Continue</h2>
+          <ul>
+            <li><a href="fields.html">Field history</a> &mdash; why past values stay available.</li>
+            <li><a href="relationships.html">Links between topics</a> &mdash; how context expands safely.</li>
+            <li><a href="../operations/ingest.html">Adding memory</a> &mdash; the write path in plain language.</li>
+          </ul>
+
+        </main>
+        <footer class="page-footer">MemState &mdash; topic memory that stays coherent.</footer>
+      </div>
+    </div>
+    <script src="../../js/nav.js" defer></script>
+  </body>
+</html>

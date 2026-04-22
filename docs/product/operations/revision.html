@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Cleaning duplicates &mdash; MemState</title>
+    <link rel="stylesheet" href="../../styles.css" />
+  </head>
+  <body class="has-sidebar" data-doc-audience="product" data-doc-page="product/operations/revision">
+    <div class="doc-layout">
+      <aside id="doc-sidebar" aria-label="Documentation navigation"></aside>
+      <div class="doc-inner">
+        <header class="page-header">
+          <h1>Operations</h1>
+        </header>
+        <main class="page-main">
+          <section class="hero">
+            <span class="eyebrow">Cleaning duplicates</span>
+            <h1 class="hero-title">Keep one canonical story per real-world thing.</h1>
+            <p class="hero-sub">When two topics accidentally describe the same entity, MemState can merge them so retrieval stops splitting attention. This is internal hygiene &mdash; the agent never calls a &ldquo;revise&rdquo; step; it only keeps sending observations and asking for context.</p>
+          </section>
+
+          <h2 id="use">What you should tell stakeholders</h2>
+          <p>Duplicate consolidation runs after routine traffic. It is conservative: it targets clear collisions so legitimate distinct topics stay separate.</p>
+
+          <h2 id="next">Continue</h2>
+          <ul>
+            <li><a href="forget.html">Letting memory fade</a></li>
+            <li><a href="../architecture/reasoning.html">Background care</a></li>
+          </ul>
+
+        </main>
+        <footer class="page-footer">MemState &mdash; fewer duplicate truths.</footer>
+      </div>
+    </div>
+    <script src="../../js/nav.js" defer></script>
+  </body>
+</html>

@@ -6,7 +6,7 @@
     <title>Data model &mdash; fields and value history</title>
     <link rel="stylesheet" href="../styles.css" />
   </head>
-  <body class="has-sidebar" data-doc-page="data-model/fields">
+  <body class="has-sidebar" data-doc-audience="developer" data-doc-page="data-model/fields">
     <div class="doc-layout">
       <aside id="doc-sidebar" aria-label="Documentation navigation"></aside>
       <div class="doc-inner">
@@ -142,7 +142,7 @@
           <!-- ============================================================ -->
           <h2 id="lifecycle">The write path</h2>
           <ol class="steps">
-            <li><strong>Caller sends a write.</strong> Either through <code>/v1/ingest</code>, a UI tool, or a chat-driven tool call.</li>
+            <li><strong>An observation reaches MemState.</strong> Typically via <code>/v1/ingest</code>, a UI tool, or a chat-driven tool call that forwards what the agent noticed.</li>
             <li><strong>MemState builds a new revision.</strong> It assigns a UUID, stamps the time, records the provenance, and carries any reason the caller provided.</li>
             <li><strong>The revision is prepended.</strong> It becomes the new current value; previous revisions remain in the stack.</li>
             <li><strong>Limits are enforced.</strong> If the stack exceeds the configured history cap, the oldest revisions are trimmed.</li>

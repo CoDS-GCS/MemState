@@ -6,7 +6,7 @@
     <title>Architecture &mdash; overview</title>
     <link rel="stylesheet" href="../styles.css" />
   </head>
-  <body class="has-sidebar" data-doc-page="architecture/overview">
+  <body class="has-sidebar" data-doc-audience="developer" data-doc-page="architecture/overview">
     <div class="doc-layout">
       <aside id="doc-sidebar" aria-label="Documentation navigation"></aside>
       <div class="doc-inner">
@@ -20,7 +20,8 @@
             <p class="hero-sub">
               MemState runs as a single FastAPI service with an embedded Kuzu graph. All three API surfaces share
               the same in-process store, so state is immediately consistent across product endpoints, UI tools,
-              and the agent chat loop.
+              and the agent chat loop. Agent paths stay limited to observations and context queries; revise and
+              forget run inside the reasoner, not in the agent integration.
             </p>
             <div class="hero-actions">
               <a class="btn btn-primary" href="storage.html">Storage details</a>
@@ -83,7 +84,7 @@
               </tr>
               <tr>
                 <td><code>core.Executor</code></td>
-                <td>Write and read semantics: placement decisions, retrieval stages, salience reinforcement.</td>
+                <td>Write and read semantics: how observations become graph updates, retrieval stages, salience reinforcement (placement may be explicit on the wire today).</td>
                 <td><code>/v1/ingest</code>, <code>/v1/query</code></td>
               </tr>
               <tr>

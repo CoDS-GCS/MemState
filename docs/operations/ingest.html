@@ -6,7 +6,7 @@
     <title>Operations - ingest</title>
     <link rel="stylesheet" href="../styles.css" />
   </head>
-  <body class="has-sidebar" data-doc-page="operations/ingest">
+  <body class="has-sidebar" data-doc-audience="developer" data-doc-page="operations/ingest">
     <div class="doc-layout">
       <aside id="doc-sidebar" aria-label="Documentation navigation"></aside>
       <div class="doc-inner">
@@ -18,27 +18,32 @@
             <span class="eyebrow">Operation &middot; Ingest</span>
             <h1 class="hero-title">The write path into memory.</h1>
             <p class="hero-sub">
-              Ingest is how new information enters MemState. It decides where a new fact belongs &mdash; a new
-              topic, an extension of an existing one, or an appended value on a field &mdash; and records it with
-              full provenance and history.
+              Ingest is how <strong>observations</strong> become durable memory. MemState applies placement, merge,
+              and revision rules inside the executor and store &mdash; the agent loop should not orchestrate
+              revise or forget. (This reference build may still require explicit <code>placement</code> on the wire;
+              see <em>How it works</em> and the payload tables below.)
             </p>
             <div class="hero-actions">
               <a class="btn btn-primary" href="query.html">Next: Retrieve</a>
-              <a class="btn" href="../api/v1.html#ingest">API reference</a>
+              <a class="btn" href="../api/index.html">API reference</a>
             </div>
           </section>
 
           <h2 id="how-it-works">How it works</h2>
           <ol class="steps">
-            <li><strong>Client calls <code>POST /v1/ingest</code>.</strong> The request carries a placement decision and an optional payload of fields and edges.</li>
-            <li><strong>Executor validates and routes.</strong> It checks the placement mode, resolves the target topic (if any), and picks the right write path.</li>
+            <li><strong>Client calls <code>POST /v1/ingest</code>.</strong> The body carries an observation payload (fields, edges, text). Placement may be explicit in this build or derived later as routing matures.</li>
+            <li><strong>Executor validates and applies MemState rules.</strong> It interprets the payload, resolves the target topic when needed, and executes the write path the policy layer selects.</li>
             <li><strong>Primitives run against the store.</strong> A new topic node is created, fields are appended with full revision metadata, and typed edges are merged.</li>
             <li><strong>The embedding is refreshed.</strong> Any topic whose text changed gets a new vector so semantic search stays in sync.</li>
             <li><strong>Background maintenance is scheduled.</strong> The reasoner is notified that ingest completed, which may trigger revision or forget work later.</li>
           </ol>
 
           <h2 id="placement-modes">Placement modes</h2>
-          <p>Every ingest call picks one of three modes. They differ only in where the write lands.</p>
+          <p>
+            These are the three <strong>write shapes</strong> MemState can apply to materialize an observation.
+            Today the client often supplies <code>placement</code> explicitly; long term, MemState is expected to
+            choose among them from the observation alone.
+          </p>
 
           <div class="feature-grid">
             <div class="feature-card">
