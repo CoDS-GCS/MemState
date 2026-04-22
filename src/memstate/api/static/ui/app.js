@@ -274,6 +274,57 @@ function wrapTitleLines(text, maxCharsPerLine, maxLines) {
   return lines;
 }
 
+/**
+ * Wrap arbitrary text into N lines (word-aware).
+ * @param {unknown} text
+ * @param {number} maxCharsPerLine
+ * @param {number} maxLines
+ */
+function wrapTextLines(text, maxCharsPerLine, maxLines) {
+  return wrapTitleLines(String(text ?? ""), maxCharsPerLine, maxLines);
+}
+
+/**
+ * Compact type hint for the schema column inside a topic card.
+ * @param {string} rawType
+ * @param {boolean} [isRef]
+ */
+function abbreviateFieldType(rawType, isRef) {
+  const t = String(rawType || "").toLowerCase().trim();
+  if (isRef) return "ref";
+  if (!t) return "—";
+  if (t === "string" || t === "str") return "str";
+  if (t === "number" || t === "num" || t === "int" || t === "float") return "num";
+  if (t === "boolean" || t === "bool") return "bool";
+  if (t === "json" || t === "object" || t === "dict") return "json";
+  if (t === "list" || t === "array") return "list";
+  return t.slice(0, 6);
+}
+
+/**
+ * Canvas helper: rounded rectangle path. Does not fill or stroke.
+ * @param {CanvasRenderingContext2D} ctx
+ * @param {number} x
+ * @param {number} y
+ * @param {number} w
+ * @param {number} h
+ * @param {number} r
+ */
+function pathRoundRect(ctx, x, y, w, h, r) {
+  const rr = Math.max(0, Math.min(r, Math.min(w, h) / 2));
+  ctx.beginPath();
+  ctx.moveTo(x + rr, y);
+  ctx.lineTo(x + w - rr, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + rr);
+  ctx.lineTo(x + w, y + h - rr);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - rr, y + h);
+  ctx.lineTo(x + rr, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - rr);
+  ctx.lineTo(x, y + rr);
+  ctx.quadraticCurveTo(x, y, x + rr, y);
+  ctx.closePath();
+}
+
 function parseSalience(n) {
   const s = n.salience;
   if (typeof s === "number" && Number.isFinite(s)) return s;
@@ -542,12 +593,27 @@ function buildGraphData(data) {
   const nodes = rawList.map((n, i) => {
     const raw =
       (n.title && String(n.title).trim()) || n.label || n.id.slice(0, 8);
+    const summary = n.summary != null ? String(n.summary) : "";
     const salience = saliences[i];
     const comm =
       n.community != null && Number.isFinite(Number(n.community)) ? Number(n.community) : null;
+    const fieldSchema = Array.isArray(n.fields)
+      ? n.fields
+          .map((f) => {
+            const name = String((f && f.name) || "").trim();
+            if (!name) return null;
+            const rawType = String((f && f.field_type) || "").trim();
+            const typeShort = abbreviateFieldType(rawType, f && f.ref_topic_id);
+            return { name, type: typeShort, ref: !!(f && f.ref_topic_id) };
+          })
+          .filter(Boolean)
+          .sort((a, b) => a.name.localeCompare(b.name))
+      : [];
     return {
       id: String(n.id ?? "").trim(),
-      labelLines: wrapTitleLines(raw, TITLE_CHARS_PER_LINE, TITLE_MAX_LINES),
+      titleRaw: raw,
+      summaryRaw: summary,
+      fieldSchema,
       salience,
       salienceLabel: formatSalience(salience),
       fillOpacity: salienceToFillOpacity(salience, minS, maxS),
@@ -946,7 +1012,7 @@ function renderTopicWizardBody(t) {
           `<div class="topic-wizard-field-card topic-wizard-field-card--nested-root" data-nest-root="${escapeHtml(name)}">`
         );
         parts.push(
-          `<h4 class="topic-wizard-h4">${escapeHtml(name)} <span class="topic-wizard-nested-pill">nested fields</span></h4>`
+          `<h4 class="topic-wizard-h4"><button type="button" class="topic-wizard-field-name-btn" data-field-name="${escapeHtml(name)}" title="Open field history">${escapeHtml(name)}</button> <span class="topic-wizard-nested-pill">nested fields</span></h4>`
         );
         parts.push('<dl class="topic-wizard-dl topic-wizard-field-meta">');
         parts.push("<dt>Type</dt><dd>json <span class=\"topic-wizard-nested-pill\">same topic</span></dd>");
@@ -967,7 +1033,9 @@ function renderTopicWizardBody(t) {
         parts.push("</div>");
         continue;
       }
-      parts.push(`<div class="topic-wizard-field-card"><h4 class="topic-wizard-h4">${escapeHtml(name)}</h4>`);
+      parts.push(
+        `<div class="topic-wizard-field-card"><h4 class="topic-wizard-h4"><button type="button" class="topic-wizard-field-name-btn" data-field-name="${escapeHtml(name)}" title="Open field history">${escapeHtml(name)}</button></h4>`
+      );
       parts.push('<dl class="topic-wizard-dl topic-wizard-field-meta">');
       parts.push(`<dt>Type</dt><dd>${escapeHtml(String(f.field_type ?? "—"))}</dd>`);
       if (f.ref_topic_id) {
@@ -1192,21 +1260,6 @@ async function expandGraphNode(topicId) {
     const t = await loadDetail(topicId);
     if (graphView.expandPending !== topicId) return;
 
-    const bg =
-      prev && prev.color && prev.color.background
-        ? prev.color.background
-        : "rgba(30, 64, 175, 0.92)";
-    ds.nodes.update({
-      id: topicId,
-      shape: "ellipse",
-      borderWidth: 3,
-      color: {
-        background: bg,
-        border: "#93c5fd",
-        highlight: { background: "#2563eb", border: "#bfdbfe" },
-      },
-    });
-
     showTopicWizard(t);
     graphView.expandedId = topicId;
     net.selectNodes([topicId]);
@@ -1230,36 +1283,251 @@ async function expandGraphNode(topicId) {
   }
 }
 
+const CARD_FONT = 'Inter, "Segoe UI", system-ui, -apple-system, sans-serif';
+const CARD_MONO = 'ui-monospace, "Cascadia Code", "JetBrains Mono", monospace';
+const CARD_W = 230;
+const CARD_PAD_X = 12;
+const CARD_PAD_T = 10;
+const CARD_PAD_B = 11;
+const CARD_TITLE_LH = 15;
+const CARD_SUMMARY_LH = 12;
+const CARD_FIELD_LH = 13;
+const CARD_MAX_TITLE_LINES = 2;
+const CARD_MAX_SUMMARY_LINES = 2;
+const CARD_MAX_FIELDS = 6;
+const CARD_TITLE_CHARS = 28;
+const CARD_SUMMARY_CHARS = 34;
+const CARD_FIELD_NAME_MAX = 18;
+
+/**
+ * Prepare render-time layout for a topic card (strings + geometry).
+ * @param {Record<string, any>} n
+ */
+function buildCardLayout(n) {
+  const titleLines = wrapTitleLines(
+    String(n.titleRaw || "—"),
+    CARD_TITLE_CHARS,
+    CARD_MAX_TITLE_LINES,
+  );
+  const summaryRaw = String(n.summaryRaw || "").trim();
+  const summaryLines = summaryRaw
+    ? wrapTextLines(summaryRaw, CARD_SUMMARY_CHARS, CARD_MAX_SUMMARY_LINES)
+    : [];
+  const schema = Array.isArray(n.fieldSchema) ? n.fieldSchema : [];
+  const shown = schema.slice(0, CARD_MAX_FIELDS);
+  const overflow = Math.max(0, schema.length - CARD_MAX_FIELDS);
+
+  let h = CARD_PAD_T;
+  h += titleLines.length * CARD_TITLE_LH;
+  if (summaryLines.length) h += 2 + summaryLines.length * CARD_SUMMARY_LH;
+  if (shown.length) h += 8 + 1 + 7 + shown.length * CARD_FIELD_LH;
+  if (overflow > 0) h += CARD_FIELD_LH;
+  if (!shown.length && !overflow) h += 2;
+  h += CARD_PAD_B;
+
+  return {
+    titleLines,
+    summaryLines,
+    schemaShown: shown,
+    overflow,
+    fieldCount: schema.length,
+    width: CARD_W,
+    height: Math.max(62, Math.round(h)),
+  };
+}
+
+/** @param {number} community */
+function communityHue(community) {
+  const c = Number.isFinite(community) ? community : 0;
+  return ((c * 47) % 360 + 360) % 360;
+}
+
+/**
+ * Build a ctxRenderer for a single topic card.
+ * @param {Record<string, any>} n
+ * @param {number} cid
+ */
+function makeCardRenderer(n, cid) {
+  const layout = buildCardLayout(n);
+  const hue = communityHue(cid);
+  const accent = n.archived ? "#64748b" : `hsl(${hue}, 72%, 65%)`;
+  const accentMuted = n.archived ? "rgba(100,116,139,0.25)" : `hsla(${hue}, 72%, 65%, 0.18)`;
+  const fillT = Math.max(0.55, Math.min(1, Number(n.fillOpacity) || 0.8));
+  const bgTop = n.archived
+    ? `rgba(30, 41, 59, ${0.55 + fillT * 0.3})`
+    : `rgba(22, 30, 46, ${0.82 + fillT * 0.15})`;
+  const bgBot = n.archived
+    ? `rgba(15, 23, 42, ${0.85})`
+    : `rgba(10, 14, 22, ${0.92})`;
+  const bodyText = n.archived ? "#94a3b8" : "#e6edf3";
+  const mutedText = n.archived ? "#64748b" : "#8b949e";
+
+  return function ctxRenderer({ ctx, x, y, state }) {
+    const { width: W, height: H, titleLines, summaryLines, schemaShown, overflow } = layout;
+    const left = x - W / 2;
+    const top = y - H / 2;
+    const selected = !!(state && (state.selected || state.hover));
+
+    return {
+      drawNode() {
+        ctx.save();
+
+        // Soft drop shadow under card
+        ctx.shadowColor = "rgba(0, 0, 0, 0.45)";
+        ctx.shadowBlur = selected ? 18 : 10;
+        ctx.shadowOffsetX = 0;
+        ctx.shadowOffsetY = 3;
+        pathRoundRect(ctx, left, top, W, H, 9);
+        const grad = ctx.createLinearGradient(left, top, left, top + H);
+        grad.addColorStop(0, bgTop);
+        grad.addColorStop(1, bgBot);
+        ctx.fillStyle = grad;
+        ctx.fill();
+        ctx.restore();
+
+        // Border
+        pathRoundRect(ctx, left + 0.5, top + 0.5, W - 1, H - 1, 8.5);
+        ctx.strokeStyle = selected ? "#93c5fd" : "rgba(148, 163, 184, 0.22)";
+        ctx.lineWidth = selected ? 1.75 : 1;
+        ctx.stroke();
+
+        // Left accent bar (community color)
+        ctx.save();
+        pathRoundRect(ctx, left, top, 3, H, 0);
+        ctx.fillStyle = accent;
+        ctx.fill();
+        ctx.restore();
+
+        // Header underline fill (very subtle)
+        const headerH = CARD_PAD_T + titleLines.length * CARD_TITLE_LH + 2;
+        ctx.save();
+        pathRoundRect(ctx, left + 3, top, W - 3, headerH, 8.5);
+        const headGrad = ctx.createLinearGradient(left, top, left, top + headerH);
+        headGrad.addColorStop(0, accentMuted);
+        headGrad.addColorStop(1, "rgba(0,0,0,0)");
+        ctx.fillStyle = headGrad;
+        ctx.fill();
+        ctx.restore();
+
+        // Cursor starts below top padding
+        let cy = top + CARD_PAD_T + 11;
+
+        // Title
+        ctx.fillStyle = bodyText;
+        ctx.font = `600 12px ${CARD_FONT}`;
+        ctx.textAlign = "left";
+        ctx.textBaseline = "alphabetic";
+        for (const line of titleLines) {
+          ctx.fillText(line, left + CARD_PAD_X, cy);
+          cy += CARD_TITLE_LH;
+        }
+
+        // Salience chip (top-right)
+        const chipText = String(n.salienceLabel ?? "—");
+        ctx.font = `600 9px ${CARD_FONT}`;
+        const chipTextW = ctx.measureText(chipText).width;
+        const chipW = chipTextW + 14;
+        const chipH = 15;
+        const chipX = left + W - chipW - 8;
+        const chipY = top + 8;
+        pathRoundRect(ctx, chipX, chipY, chipW, chipH, 7);
+        ctx.fillStyle = "rgba(61, 139, 253, 0.18)";
+        ctx.fill();
+        ctx.strokeStyle = "rgba(61, 139, 253, 0.4)";
+        ctx.lineWidth = 0.8;
+        ctx.stroke();
+        ctx.fillStyle = "#bfdbfe";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(chipText, chipX + chipW / 2, chipY + chipH / 2 + 0.5);
+
+        // Summary
+        ctx.textAlign = "left";
+        ctx.textBaseline = "alphabetic";
+        if (summaryLines.length) {
+          cy += 2;
+          ctx.fillStyle = mutedText;
+          ctx.font = `400 10px ${CARD_FONT}`;
+          for (const line of summaryLines) {
+            ctx.fillText(line, left + CARD_PAD_X, cy);
+            cy += CARD_SUMMARY_LH;
+          }
+        }
+
+        // Divider + fields list
+        if (schemaShown.length || overflow) {
+          cy += 8;
+          ctx.strokeStyle = "rgba(148, 163, 184, 0.14)";
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(left + CARD_PAD_X, cy + 0.5);
+          ctx.lineTo(left + W - CARD_PAD_X, cy + 0.5);
+          ctx.stroke();
+          cy += 10;
+
+          const typeColX = left + W - CARD_PAD_X;
+          const nameX = left + CARD_PAD_X + 6;
+          const bulletX = left + CARD_PAD_X;
+
+          for (const f of schemaShown) {
+            // bullet
+            ctx.fillStyle = f.ref ? "#22c55e" : "rgba(148, 163, 184, 0.6)";
+            ctx.beginPath();
+            ctx.arc(bulletX, cy - 3, 1.7, 0, Math.PI * 2);
+            ctx.fill();
+
+            // name (truncated)
+            ctx.fillStyle = bodyText;
+            ctx.font = `500 10px ${CARD_MONO}`;
+            const name =
+              f.name.length > CARD_FIELD_NAME_MAX
+                ? f.name.slice(0, CARD_FIELD_NAME_MAX - 1) + "…"
+                : f.name;
+            ctx.textAlign = "left";
+            ctx.fillText(name, nameX, cy);
+
+            // type hint (right-aligned, muted)
+            ctx.font = `500 9px ${CARD_MONO}`;
+            ctx.fillStyle = f.ref ? "#86efac" : mutedText;
+            ctx.textAlign = "right";
+            ctx.fillText(f.type, typeColX, cy);
+
+            cy += CARD_FIELD_LH;
+          }
+
+          if (overflow > 0) {
+            ctx.fillStyle = mutedText;
+            ctx.font = `500 9px ${CARD_FONT}`;
+            ctx.textAlign = "left";
+            ctx.fillText(`+${overflow} more field${overflow === 1 ? "" : "s"}`, nameX, cy);
+            cy += CARD_FIELD_LH;
+          }
+        } else {
+          cy += 4;
+          ctx.fillStyle = mutedText;
+          ctx.font = `italic 9.5px ${CARD_FONT}`;
+          ctx.fillText("no fields", left + CARD_PAD_X + 6, cy + 2);
+        }
+      },
+      nodeDimensions: { width: W, height: H },
+    };
+  };
+}
+
 function buildVisDatasets(nodes, links) {
   const { clusterOf } = computeClusters(nodes, links);
   const layoutPos = computeCommunityClusterPositions(nodes, links);
   const visNodes = nodes.map((n) => {
-    const lines = n.labelLines || ["—"];
-    const label = `${lines.join("\n")}\n${n.salienceLabel}`;
     const cid =
       n.community != null && Number.isFinite(Number(n.community))
         ? Number(n.community)
         : clusterOf.get(n.id) ?? 0;
-    const hue = (cid * 47) % 360;
-    const bg = n.archived
-      ? `rgba(51, 65, 85, ${0.55 + n.fillOpacity * 0.45})`
-      : `rgba(30, 64, 175, ${n.fillOpacity})`;
     const p = layoutPos.get(n.id);
     const vis = {
       id: n.id,
-      label,
-      color: {
-        background: bg,
-        border: n.archived ? "#64748b" : `hsl(${hue}, 62%, 72%)`,
-        highlight: {
-          background: n.archived ? "#475569" : "#2563eb",
-          border: "#93c5fd",
-        },
-      },
-      font: { color: "#f1f5f9", size: 11, multi: true, face: "Inter, Segoe UI, system-ui, sans-serif" },
-      shape: "ellipse",
-      borderWidth: 2,
-      margin: 12,
+      shape: "custom",
+      ctxRenderer: makeCardRenderer(n, cid),
+      label: undefined,
     };
     if (p) {
       vis.x = p.x;
@@ -1272,11 +1540,20 @@ function buildVisDatasets(nodes, links) {
     from: e.source,
     to: e.target,
     label: e.label || undefined,
-    color: { color: e.isRef ? "#22c55e" : "#60a5fa", highlight: "#38bdf8" },
+    color: { color: e.isRef ? "#22c55e" : "#60a5fa", highlight: "#93c5fd", opacity: 0.75 },
     dashes: e.isRef,
-    arrows: { to: { enabled: true, scaleFactor: 0.65 } },
-    font: { size: 10, color: "#cbd5e1", strokeWidth: 0, align: "middle" },
-    smooth: { type: "dynamic" },
+    width: 1.2,
+    selectionWidth: 1.4,
+    arrows: { to: { enabled: true, scaleFactor: 0.55, type: "arrow" } },
+    font: {
+      size: 9,
+      color: "#94a3b8",
+      strokeWidth: 3,
+      strokeColor: "rgba(10, 14, 22, 0.85)",
+      align: "middle",
+      face: CARD_FONT,
+    },
+    smooth: { enabled: true, type: "cubicBezier", forceDirection: "none", roundness: 0.3 },
   }));
   return { visNodes, visEdges };
 }
@@ -1286,17 +1563,17 @@ const VIS_NETWORK_OPTIONS = {
     enabled: true,
     stabilization: {
       enabled: true,
-      iterations: 420,
+      iterations: 520,
       updateInterval: 30,
       fit: true,
     },
     barnesHut: {
-      gravitationalConstant: -5200,
-      centralGravity: 0.06,
-      springLength: 195,
-      springConstant: 0.042,
-      damping: 0.58,
-      avoidOverlap: 0.72,
+      gravitationalConstant: -9800,
+      centralGravity: 0.055,
+      springLength: 260,
+      springConstant: 0.036,
+      damping: 0.62,
+      avoidOverlap: 0.95,
     },
   },
   layout: { improvedLayout: true, randomSeed: 42 },
@@ -1309,10 +1586,12 @@ const VIS_NETWORK_OPTIONS = {
     tooltipDelay: 120,
   },
   nodes: {
-    shape: "ellipse",
-    widthConstraint: { maximum: 200 },
+    shape: "custom",
+    borderWidth: 0,
+    borderWidthSelected: 0,
+    shadow: false,
   },
-  edges: { selectionWidth: 2 },
+  edges: { selectionWidth: 1.2 },
 };
 
 function initGraph(container) {
@@ -2572,6 +2851,61 @@ async function loadDetail(topicId) {
   return api(`/api/ui/topics/${encodeURIComponent(topicId)}`);
 }
 
+async function loadFieldDetail(topicId, fieldName) {
+  return api(
+    `/api/ui/topics/${encodeURIComponent(topicId)}/fields/${encodeURIComponent(fieldName)}?with_history=true`
+  );
+}
+
+function hideFieldWizard() {
+  const root = document.getElementById("field-wizard");
+  const body = document.getElementById("field-wizard-body");
+  if (body) body.innerHTML = "";
+  if (root) root.hidden = true;
+}
+
+/**
+ * @param {{ topic_id: string, topic_title?: string, field_name: string, field_type?: string, ref_topic_id?: string | null, history?: unknown[] }} payload
+ */
+function showFieldWizard(payload) {
+  const root = document.getElementById("field-wizard");
+  const titleEl = document.getElementById("field-wizard-title");
+  const body = document.getElementById("field-wizard-body");
+  if (!root || !titleEl || !body) return;
+
+  const topicId = String(payload.topic_id || "").trim();
+  const fieldName = String(payload.field_name || "").trim() || "Field";
+  const topicTitle = String(payload.topic_title || "").trim() || getWizardRefLinkLabel(topicId);
+
+  titleEl.textContent = fieldName;
+  const parts = [];
+  parts.push(
+    `<button type="button" class="field-wizard-topic-link" data-topic-id="${escapeHtml(topicId)}" title="Open topic">` +
+      `<span>Topic: <strong>${escapeHtml(topicTitle)}</strong></span>` +
+      `<code>${escapeHtml(topicId)}</code>` +
+      `</button>`
+  );
+  parts.push('<section class="topic-wizard-section">');
+  parts.push('<dl class="topic-wizard-dl">');
+  parts.push(`<dt>Field</dt><dd>${escapeHtml(fieldName)}</dd>`);
+  if (payload.field_type != null && String(payload.field_type).trim()) {
+    parts.push(`<dt>Type</dt><dd>${escapeHtml(String(payload.field_type))}</dd>`);
+  }
+  if (payload.ref_topic_id) {
+    const rid = String(payload.ref_topic_id).trim();
+    parts.push(
+      `<dt>Ref topic</dt><dd class="topic-wizard-ref-dd"><div class="topic-wizard-ref-single">${formatWizardRefLinkRowHtml(rid, getWizardRefLinkLabel(rid), null)}</div></dd>`
+    );
+  }
+  parts.push("</dl>");
+  parts.push(renderFieldTimelineHtml(Array.isArray(payload.history) ? payload.history : []));
+  parts.push("</section>");
+  body.innerHTML = parts.join("");
+
+  root.hidden = false;
+  document.body.classList.add("topic-wizard-open");
+}
+
 /**
  * @param {HTMLElement} body
  */
@@ -2676,6 +3010,30 @@ function wireTopicWizard() {
   if (body && !body.dataset.refLinksDelegated) {
     body.dataset.refLinksDelegated = "1";
     body.addEventListener("click", (e) => {
+      const fieldBtn = e.target.closest(".topic-wizard-field-name-btn");
+      if (fieldBtn && body.contains(fieldBtn)) {
+        e.preventDefault();
+        const fieldName = fieldBtn.getAttribute("data-field-name") || "";
+        const t = graphView.wizardTopicPayload;
+        const tid = t && t.id != null ? String(t.id) : "";
+        if (!tid || !fieldName) return;
+        void (async () => {
+          try {
+            const fd = await loadFieldDetail(tid, fieldName);
+            showFieldWizard({
+              topic_id: tid,
+              topic_title: (t && t.title) || "",
+              field_name: fieldName,
+              field_type: fd.field_type,
+              ref_topic_id: fd.ref_topic_id,
+              history: fd.history,
+            });
+          } catch (err) {
+            toast(String(err.message || err), "error");
+          }
+        })();
+        return;
+      }
       const undoBtn = e.target.closest(".btn-topic-wizard-undo-nested");
       if (undoBtn && body.contains(undoBtn)) {
         e.preventDefault();
@@ -2728,6 +3086,12 @@ function wireTopicWizard() {
   }
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape") return;
+    const fw = document.getElementById("field-wizard");
+    if (fw && !fw.hidden) {
+      hideFieldWizard();
+      e.preventDefault();
+      return;
+    }
     const menu = document.getElementById("graph-node-menu");
     if (menu && !menu.hidden) {
       hideGraphNodeMenu();
@@ -2737,6 +3101,41 @@ function wireTopicWizard() {
     const w = document.getElementById("topic-wizard");
     if (!w || w.hidden) return;
     collapseGraphExpand({ restorePositions: true });
+  });
+}
+
+function wireFieldWizard() {
+  const root = document.getElementById("field-wizard");
+  const backdrop = document.getElementById("field-wizard-backdrop");
+  const closeBtn = document.getElementById("btn-field-wizard-close");
+  const body = document.getElementById("field-wizard-body");
+  if (!root || !body) return;
+
+  function close() {
+    hideFieldWizard();
+    const tw = document.getElementById("topic-wizard");
+    if (!tw || tw.hidden) document.body.classList.remove("topic-wizard-open");
+  }
+
+  backdrop?.addEventListener("click", close);
+  closeBtn?.addEventListener("click", close);
+  body.addEventListener("click", (e) => {
+    const openTopicBtn = e.target.closest(".field-wizard-topic-link");
+    if (openTopicBtn && body.contains(openTopicBtn)) {
+      e.preventDefault();
+      const tid = openTopicBtn.getAttribute("data-topic-id");
+      if (tid) {
+        close();
+        void expandGraphNode(tid);
+      }
+      return;
+    }
+    const refBtn = e.target.closest(".topic-wizard-ref-link");
+    if (refBtn && body.contains(refBtn)) {
+      e.preventDefault();
+      const tid = refBtn.getAttribute("data-topic-id");
+      if (tid) void expandGraphNode(tid);
+    }
   });
 }
 
@@ -2872,6 +3271,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   wireChat();
   wireReorganize();
   wireTopicWizard();
+  wireFieldWizard();
   await refreshSystemContextCard();
   await checkBackendBanner();
   await refreshGraph();

@@ -119,6 +119,7 @@ def build_ui_graph_snapshot(store: GraphStore) -> dict[str, Any]:
                 "id": sid,
                 "label": str(row.get("title") or sid)[:80],
                 "title": row.get("title") or "",
+                "summary": row.get("summary") or "",
                 "topic_kind": str(tk) if tk else "",
                 "archived": bool(row.get("archived")),
                 "salience": float(row.get("salience") or 0),

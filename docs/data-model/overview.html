@@ -19,6 +19,124 @@
             for semantic retrieval.
           </p>
 
+          <h2 id="why-topic-graph">Why a topic graph — not a property graph, vector DB, or document store</h2>
+          <p>
+            MemState does not fit neatly into any of the storage categories that LLM memory systems usually reach for. Understanding why each alternative was rejected
+            explains the shape of the data model.
+          </p>
+
+          <h3>Property graph (Neo4j / native Kuzu)</h3>
+          <p>
+            A pure property graph places facts on nodes and edges as flat key-value pairs. MemState runs on Kuzu but deliberately does not use Kuzu's native property model
+            for facts. Two things are missing from bare property graphs that matter for memory:
+          </p>
+          <ul>
+            <li>
+              <strong>No versioning at field granularity.</strong> A property graph records the current value of a property. MemState needs to answer "what was the user's
+              job title six months ago and why did it change?" That requires per-field history, provenance, and a <code>why_changed</code> /
+              <code>impact_expected</code> audit trail. These are stored as JSON on the Topic node, not as graph edges.
+            </li>
+            <li>
+              <strong>No salience model.</strong> Property graphs have no built-in concept of importance or decay. MemState needs to decide which topics to retain under
+              memory pressure, which requires a per-field salience score that rolls up to the topic level and drives automatic archiving.
+            </li>
+          </ul>
+          <p>
+            MemState uses Kuzu for its embedded Cypher engine and native vector type — but wraps it with a semantic layer that the graph engine itself does not provide.
+          </p>
+
+          <h3>Vector database (Pinecone / Weaviate / Chroma)</h3>
+          <p>
+            Vector databases treat the embedding as the primary data structure. Every record is a vector; search returns nearest neighbors. MemState inverts this: the
+            embedding is metadata on a Topic node, not the organizing principle. Three consequences follow:
+          </p>
+          <ul>
+            <li>
+              <strong>Graph structure is primary.</strong> A topic can be found by traversing RELATED edges from a known topic, not only by semantic similarity. Query
+              combines <code>semantic</code> (vector KNN), <code>structural</code> (neighbor traversal), and <code>temporal</code> (field history) stages in a single
+              response.
+            </li>
+            <li>
+              <strong>One embedding per topic, not per chunk.</strong> Topics are discrete knowledge units — not document chunks. The embedding is computed once from
+              <code>title + summary</code> and refreshed when those change. There is no chunking pipeline.
+            </li>
+            <li>
+              <strong>Retrieval is not the end goal.</strong> Query also bumps salience on access, which shapes future forget decisions. The act of reading is part of the
+              memory lifecycle, not just a read operation.
+            </li>
+          </ul>
+
+          <h3>Document store (MongoDB / Firestore)</h3>
+          <p>
+            Document stores version at document granularity — a write replaces the whole document. MemState versions at field granularity: each field carries a
+            <code>history</code> list (newest-first) capped at <code>max_field_history</code> entries (default 500). This means two concurrent facts about the same topic —
+            say, a user's current role and a note about their prior role — are separate versioned fields on one Topic, not two documents.
+          </p>
+          <p>
+            Document stores also use denormalized references. MemState externalizes cross-topic links as explicit RELATED graph edges with a named <code>kind</code>, so
+            structural queries can traverse the graph without loading every document.
+          </p>
+
+          <h3>What MemState is instead</h3>
+          <p>
+            A topic is the unit of memory. It has a title, a summary, a single embedding vector, a set of typed versioned fields, a salience score, and outgoing RELATED
+            edges to other topics. The storage model is a property graph node on top of Kuzu, with field versioning and salience logic layered above the graph engine.
+          </p>
+
+          <div class="figure-block">
+            <svg class="diagram-svg" viewBox="0 0 860 240" xmlns="http://www.w3.org/2000/svg" aria-label="Topic node anatomy diagram">
+              <defs>
+                <marker id="arr2" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+                  <path d="M0,0 L0,6 L8,3 z" fill="#8b949e" />
+                </marker>
+              </defs>
+
+              <!-- Topic node box -->
+              <rect x="20" y="20" width="340" height="200" rx="8" fill="#10161d" stroke="#d29922" stroke-width="1.5" />
+              <text x="190" y="46" text-anchor="middle" fill="#d29922" font-size="13" font-family="Segoe UI, sans-serif" font-weight="600">Topic node</text>
+
+              <text x="36" y="68" fill="#c9d1d9" font-size="11" font-family="Consolas, monospace">id, title, summary, topic_kind</text>
+              <text x="36" y="86" fill="#c9d1d9" font-size="11" font-family="Consolas, monospace">salience  (0–10, avg of fields)</text>
+              <text x="36" y="104" fill="#c9d1d9" font-size="11" font-family="Consolas, monospace">embedding  [384 floats]</text>
+              <text x="36" y="122" fill="#c9d1d9" font-size="11" font-family="Consolas, monospace">archived, created_at, updated_at</text>
+
+              <line x1="36" y1="132" x2="344" y2="132" stroke="#30363d" stroke-width="1" />
+
+              <text x="36" y="150" fill="#58a6ff" font-size="11" font-family="Consolas, monospace">fields_json  →  {name: TopicField}</text>
+              <text x="52" y="167" fill="#8b949e" font-size="10" font-family="Consolas, monospace">field_type, salience, ref_topic_id</text>
+              <text x="52" y="182" fill="#8b949e" font-size="10" font-family="Consolas, monospace">history[]: value, valid_from,</text>
+              <text x="52" y="197" fill="#8b949e" font-size="10" font-family="Consolas, monospace">           why_changed, provenance</text>
+
+              <!-- RELATED edge -->
+              <line x1="360" y1="128" x2="440" y2="128" stroke="#8b949e" stroke-width="1.5" marker-end="url(#arr2)" />
+              <text x="400" y="118" text-anchor="middle" fill="#8b949e" font-size="10" font-family="Segoe UI, sans-serif">RELATED</text>
+              <text x="400" y="145" text-anchor="middle" fill="#8b949e" font-size="10" font-family="Segoe UI, sans-serif">kind="has_detail"</text>
+
+              <!-- Second topic -->
+              <rect x="445" y="88" width="160" height="80" rx="8" fill="#10161d" stroke="#d29922" stroke-width="1.5" />
+              <text x="525" y="112" text-anchor="middle" fill="#d29922" font-size="12" font-family="Segoe UI, sans-serif">Topic node</text>
+              <text x="525" y="132" text-anchor="middle" fill="#8b949e" font-size="10" font-family="Consolas, monospace">id, title …</text>
+              <text x="525" y="150" text-anchor="middle" fill="#8b949e" font-size="10" font-family="Consolas, monospace">fields_json …</text>
+
+              <!-- ref_topic_id pointer -->
+              <line x1="360" y1="160" x2="430" y2="160" stroke="#a371f7" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arr2)" />
+              <text x="395" y="175" text-anchor="middle" fill="#a371f7" font-size="9" font-family="Segoe UI, sans-serif">ref_topic_id</text>
+              <line x1="430" y1="160" x2="445" y2="155" stroke="#a371f7" stroke-width="1" stroke-dasharray="4,3" />
+
+              <!-- Embedding callout -->
+              <rect x="640" y="60" width="200" height="120" rx="8" fill="#10161d" stroke="#2ea043" />
+              <text x="740" y="84" text-anchor="middle" fill="#2ea043" font-size="12" font-family="Segoe UI, sans-serif" font-weight="600">Embedding</text>
+              <text x="740" y="104" text-anchor="middle" fill="#8b949e" font-size="10" font-family="Segoe UI, sans-serif">title + summary → 384-dim</text>
+              <text x="740" y="120" text-anchor="middle" fill="#8b949e" font-size="10" font-family="Segoe UI, sans-serif">cosine similarity for KNN</text>
+              <text x="740" y="136" text-anchor="middle" fill="#8b949e" font-size="10" font-family="Segoe UI, sans-serif">one vector per topic</text>
+              <text x="740" y="152" text-anchor="middle" fill="#8b949e" font-size="10" font-family="Segoe UI, sans-serif">(not per field, not chunked)</text>
+              <text x="740" y="168" text-anchor="middle" fill="#8b949e" font-size="10" font-family="Segoe UI, sans-serif">Kuzu native or numpy fallback</text>
+            </svg>
+            <p class="diagram-caption">
+              A Topic node carries its fields as versioned JSON, its embedding as a native vector, and its cross-topic links as RELATED graph edges.
+            </p>
+          </div>
+
           <h2 id="topic-versus-entity-modeling-boundary">Topic versus entity (modeling boundary)</h2>
           <p><strong>Approach.</strong> MemState does not add a separate “Entity” node type. Instead, the graph’s <strong>topic</strong> is the boundary of what is stored as one indexed, versioned unit. Informally, an <strong>entity</strong> is anything you mean in the world (a person, paper, concept, task); a <strong>topic</strong> is how that meaning is packaged for the store.</p>
           <ul>

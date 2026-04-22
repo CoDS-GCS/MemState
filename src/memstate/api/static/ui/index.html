@@ -4,14 +4,15 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>MemState — graph &amp; controls</title>
-    <link rel="stylesheet" href="styles.css?v=memstate-ui-20260341" />
+    <link rel="stylesheet" href="styles.css?v=memstate-ui-20260422-layout" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
     <script src="https://cdn.jsdelivr.net/npm/vis-network@9.1.9/standalone/umd/vis-network.min.js" crossorigin></script>
+    <script src="https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js" crossorigin></script>
     <script src="https://cdn.jsdelivr.net/npm/marked@11.1.1/marked.min.js" crossorigin></script>
     <script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.8/dist/purify.min.js" crossorigin></script>
-    <script src="app.js?v=memstate-ui-20260341" defer></script>
+    <script src="app.js?v=memstate-ui-20260422-layout" defer></script>
   </head>
   <body>
     <div id="backend-banner" class="backend-banner" hidden role="status"></div>
@@ -145,6 +146,23 @@
           </div>
         </div>
 
+        <div class="panel-section" data-section="system-context">
+          <button type="button" class="section-toggle">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82 1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+            Fixed system context
+            <span class="system-context-badge" id="system-context-badge">Not configured</span>
+            <svg class="chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+          <div class="section-body">
+            <form id="form-system-context" class="system-context-form">
+              <label>Role <input name="system_role" type="text" placeholder="e.g. Study assistant for CS students" required /></label>
+              <label>Runtime context <textarea name="runtime_context" rows="3" placeholder="Where this runs, rules, constraints, audience..." required></textarea></label>
+              <label>Admin key <input name="admin_key" type="password" placeholder="Required only for updates" autocomplete="off" /></label>
+              <button type="submit" class="btn-primary">Save fixed context</button>
+            </form>
+          </div>
+        </div>
+
         <div id="status" class="status-bar"></div>
         </div>
       </aside>
@@ -157,18 +175,6 @@
               Remove topic
             </button>
           </div>
-          <section class="system-context-card" id="system-context-card" aria-label="Fixed system context">
-            <div class="system-context-card-head">
-              <strong>Fixed system context</strong>
-              <span class="system-context-badge" id="system-context-badge">Not configured</span>
-            </div>
-            <form id="form-system-context" class="system-context-form">
-              <label>Role <input name="system_role" type="text" placeholder="e.g. Study assistant for CS students" required /></label>
-              <label>Runtime context <textarea name="runtime_context" rows="3" placeholder="Where this runs, rules, constraints, audience..." required></textarea></label>
-              <label>Admin key <input name="admin_key" type="password" placeholder="Required only for updates" autocomplete="off" /></label>
-              <button type="submit" class="btn-primary">Save fixed context</button>
-            </form>
-          </section>
           <div id="network"></div>
           <div id="graph-tooltip" class="graph-tooltip" hidden role="tooltip" aria-live="polite"></div>
           <div id="graph-node-menu" class="graph-node-menu" hidden role="menu" aria-label="Topic actions"></div>
@@ -307,6 +313,29 @@
           </div>
         </header>
         <div class="topic-wizard-body" id="topic-wizard-body"></div>
+      </div>
+    </div>
+
+    <div
+      id="field-wizard"
+      class="topic-wizard field-wizard"
+      hidden
+      aria-modal="true"
+      role="dialog"
+      aria-labelledby="field-wizard-title"
+    >
+      <div class="topic-wizard-backdrop" id="field-wizard-backdrop" aria-hidden="true"></div>
+      <div class="topic-wizard-panel field-wizard-panel">
+        <header class="topic-wizard-header">
+          <div>
+            <div class="field-wizard-kicker">Field history</div>
+            <h2 id="field-wizard-title" class="topic-wizard-h2">Field</h2>
+          </div>
+          <div class="topic-wizard-actions">
+            <button type="button" class="topic-wizard-close" id="btn-field-wizard-close" aria-label="Close">×</button>
+          </div>
+        </header>
+        <div class="topic-wizard-body" id="field-wizard-body"></div>
       </div>
     </div>
 
