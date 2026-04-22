@@ -25,6 +25,24 @@
           </section>
 
           <!-- ============================================================ -->
+          <h2 id="value-sequence">Value history (formal view)</h2>
+          <p>
+            Fix a semantic unit <code>u<sub>i</sub></code> (a topic) and a field name <code>f</code>. MemState stores an
+            ordered sequence of revisions; write each revision as a tuple <strong>(value, time, provenance)</strong>
+            matching the wire shape <code>value</code>, <code>valid_from</code>, <code>provenance</code>, with optional
+            rationale fields <code>why_changed</code> and <code>impact_expected</code>. That sequence is the empirical
+            trace of how the field evolved &mdash; what the agent and tools asserted, when, and from which surface.
+          </p>
+          <p>
+            <strong>Query soundness (default).</strong> Unless the caller enables temporal expansion, retrieval treats the
+            newest revision as <em>current truth</em> and does not mix older values into the default bundle. When
+            <code>explain</code> or temporal stages are on, the same ordered trace is exposed so the model can answer
+            &ldquo;how did we get here?&rdquo; without contradicting the append-only discipline on disk. See also the
+            <a href="overview.html#gem-state">GEM state overview</a> for how <code>D<sub>t</sub></code> and
+            <code>S<sub>t</sub></code> relate.
+          </p>
+
+          <!-- ============================================================ -->
           <h2 id="why-history">Why history and not overwrite</h2>
           <p>
             Overwriting a value loses information the agent may need later: when did this change, who changed it,

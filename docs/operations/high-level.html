@@ -19,6 +19,12 @@
             staged context retrieval through <code>Executor</code>. Revise and forget are internal reasoner work, not
             extra agent calls.
           </p>
+          <p>
+            In GEM notation (<a href="../data-model/overview.html#gem-state"><code>M<sub>t</sub> = (D<sub>t</sub>, S<sub>t</sub>, P<sub>t</sub>)</code></a>),
+            <code>POST /v1/ingest</code> advances <code>D<sub>t</sub></code>, <code>POST /v1/query</code> evaluates
+            <code>S<sub>t</sub></code> over that store, and the reasoner&rsquo;s revise/forget hooks apply
+            <code>P<sub>t</sub></code> after responses return.
+          </p>
 
           <h2><code>POST /v1/ingest</code> semantics</h2>
           <table>

@@ -30,6 +30,13 @@
             </div>
           </section>
 
+          <p class="section-lede">
+            Under the GEM state split <a href="../data-model/overview.html#gem-state"><code>M<sub>t</sub> = (D<sub>t</sub>, S<sub>t</sub>, P<sub>t</sub>)</code></a>,
+            this architecture keeps one durable <code>D<sub>t</sub></code> in Kuzu, evaluates <code>S<sub>t</sub></code>
+            (semantic / structural / temporal query stages) in the executor over that same store, and applies
+            <code>P<sub>t</sub></code> from the in-process <code>Policies</code> object plus environment settings.
+          </p>
+
           <!-- ============================================================ -->
           <h2 id="topology">Topology</h2>
           <p>

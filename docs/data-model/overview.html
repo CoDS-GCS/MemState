@@ -52,6 +52,65 @@
           </div>
 
           <!-- ============================================================ -->
+          <h2 id="gem-state">Formal state (GEM lens)</h2>
+          <p>
+            MemState is easiest to reason about if you treat it as a concrete <strong>Global Episodic Memory (GEM)</strong>
+            for agents: one service absorbs observations, answers context questions, and runs maintenance so the store
+            stays truthful and bounded. At each logical time <code>t</code>, write the deployment state as a triple
+            <strong>M<sub>t</sub> = (D<sub>t</sub>, S<sub>t</sub>, P<sub>t</sub>)</strong>.
+          </p>
+          <ul>
+            <li>
+              <strong>D<sub>t</sub></strong> &mdash; <em>Durable graph.</em> What lives in the embedded Kuzu database:
+              topic nodes (identity, summary, kind, salience, embedding, <code>fields_json</code> with per-field
+              revision stacks), <code>RELATED</code> edges with a <code>kind</code> string, and archival metadata.
+            </li>
+            <li>
+              <strong>S<sub>t</sub></strong> &mdash; <em>Retrieval-facing semantics.</em> The executor&rsquo;s view of
+              <code>D<sub>t</sub></code> when answering a query: semantic ranking over stored embeddings, optional
+              structural expansion along edges and field references, optional temporal expansion over field histories,
+              and salience bumps on topics that were actually used.
+            </li>
+            <li>
+              <strong>P<sub>t</sub></strong> &mdash; <em>Policies and limits.</em> Tunable governance in the
+              <code>Policies</code> model (history caps, salience thresholds, scan limits, embedding width) plus
+              environment-driven settings. In code, <code>P<sub>t</sub></code> is the subset of the full research policy
+              lattice that the reference build materializes today (see <a href="limits-and-config.html">Limits and configuration</a>).
+            </li>
+          </ul>
+
+          <div class="concept">
+            <span class="concept-label">Definition 1</span>
+            <strong>Semantic unit (topic).</strong>
+            A topic is an indexed semantic unit <code>u<sub>i</sub></code>: one vertex carrying its own scalar metadata,
+            one embedding over title and summary text, typed fields whose values are versioned over time, and graph
+            incidence (typed <code>RELATED</code> edges plus optional <code>ref_topic_id</code> on field revisions).
+            Retrieval returns a <em>bundle</em> for each selected unit so callers do not have to stitch partial rows.
+          </div>
+
+          <div class="concept">
+            <span class="concept-label">Definition 2</span>
+            <strong>Memory state decomposition.</strong>
+            The triple <code>M<sub>t</sub> = (D<sub>t</sub>, S<sub>t</sub>, P<sub>t</sub>)</code> separates what is stored
+            durably (<code>D<sub>t</sub></code>), how queries are allowed to read and rank it (<code>S<sub>t</sub></code>),
+            and which thresholds and caps constrain change (<code>P<sub>t</sub></code>). In the reference service,
+            <code>S<sub>t</sub></code> is not a second database; it is the query path over the same graph with explicit
+            stages (semantic, structural, temporal) controlled by the request and by <code>P<sub>t</sub></code>.
+          </div>
+
+          <div class="concept">
+            <span class="concept-label">Definition 3</span>
+            <strong>Operators on memory.</strong>
+            Four operators advance <code>M<sub>t</sub></code>: <strong>ingest</strong> (observations &rarr; graph writes),
+            <strong>retrieve</strong> (natural-language question &rarr; ranked context), <strong>revise</strong>
+            (background consolidation such as duplicate merges), and <strong>forget</strong> (non-destructive
+            attenuation such as salience-based archival). The developer pages
+            <a href="../operations/ingest.html">Ingest</a>, <a href="../operations/query.html">Query</a>,
+            <a href="../operations/revision.html">Revision</a>, and <a href="../operations/forget.html">Forget</a>
+            document each path against the current codebase.
+          </div>
+
+          <!-- ============================================================ -->
           <h2 id="why-graph">Why a graph, and why not just a graph</h2>
           <p>
             MemState is built on an embedded property graph (Kuzu) because typed nodes and typed edges are the

@@ -19,6 +19,27 @@
             <code>GET /api/ui/datamodel</code>.
           </p>
 
+          <h2 id="gem-operators">GEM operators on memory state</h2>
+          <p>
+            Companion to the prose on <a href="overview.html#gem-state">Formal state (GEM lens)</a>: observations advance
+            <strong>D<sub>t</sub></strong> through ingest; queries read through <strong>S<sub>t</sub></strong> stages; revise and forget
+            reshape <strong>D<sub>t</sub></strong> under <strong>P<sub>t</sub></strong> after traffic.
+          </p>
+          <div class="mermaid-wrap">
+            <div class="mermaid">
+flowchart LR
+  Obs([Observation]) --> Ingest[Ingest]
+  Ingest --> Dgraph["D_t: Kuzu graph"]
+  Q([NL query]) --> Retrieve["Retrieve: S_t stages"]
+  Retrieve --> Dgraph
+  Dgraph --> Revise[Revise]
+  Revise --> Dgraph
+  Dgraph --> Forget["Forget: P_t thresholds"]
+  Pt["P_t: Policies"] -.-> Ingest
+  Pt -.-> Forget
+            </div>
+          </div>
+
           <h2>Canonical topic graph shape</h2>
           <div class="mermaid-wrap">
             <div class="mermaid">

@@ -28,6 +28,14 @@
             </div>
           </section>
 
+          <p class="section-lede">
+            <strong>Retrieve</strong> materializes <strong>S<sub>t</sub></strong>: the executor&rsquo;s staged read
+            model over the same durable <strong>D<sub>t</sub></strong> &mdash; semantic ranking first, then optional
+            structural expansion (edges and field refs) and temporal expansion (field histories when requested). Defaults
+            return current field heads; enabling history preserves query soundness against the append-only trace. See
+            <a href="../data-model/overview.html#gem-state">GEM state</a> and <a href="../data-model/fields.html#value-sequence">value history</a>.
+          </p>
+
           <!-- ============================================================ -->
           <h2 id="how-it-works">How it works</h2>
           <ol class="steps">

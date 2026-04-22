@@ -1,5 +1,7 @@
 # MemState
 
+**Website (documentation):** [https://aorogat.github.io/MemState/index.html](https://aorogat.github.io/MemState/index.html)
+
 Topic-graph memory backed by an embedded **Kuzu** database. Exposes a FastAPI server for ingest/query, an LLM chat interface (Ollama + Groq), and a D3 graph explorer UI.
 
 ## Table of contents

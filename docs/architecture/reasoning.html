@@ -24,6 +24,15 @@
             </p>
           </section>
 
+          <p class="section-lede">
+            Policy in the research sense is <strong>event &rarr; condition &rarr; action</strong>: an event (ingest
+            complete, query complete, cron tick, memory pressure) schedules work; conditions read
+            <strong>D<sub>t</sub></strong> and <strong>P<sub>t</sub></strong>; actions update <strong>D<sub>t</sub></strong>
+            (merge, archive, future summarize/detach) without new agent-facing routes. The shipped reasoner wires a small
+            fixed set of handlers to that pattern. See <a href="../data-model/overview.html#gem-state">GEM state</a> and
+            <a href="../operations/high-level.html">High-level API flow</a>.
+          </p>
+
           <!-- ============================================================ -->
           <h2 id="intent">Design intent</h2>
 

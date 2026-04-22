@@ -29,6 +29,14 @@
             </div>
           </section>
 
+          <p class="section-lede">
+            In the GEM decomposition <a href="../data-model/overview.html#gem-state"><code>M<sub>t</sub> = (D<sub>t</sub>, S<sub>t</sub>, P<sub>t</sub>)</code></a>,
+            <strong>ingest</strong> is the operator that advances <strong>D<sub>t</sub></strong> from an observation:
+            placement picks one of three graph primitives (<code>new_topic</code>, <code>extend_topic</code>,
+            <code>version_field</code>), then the executor commits field revisions, edges, and refreshed embeddings under
+            the active <strong>P<sub>t</sub></strong> caps and thresholds.
+          </p>
+
           <h2 id="how-it-works">How it works</h2>
           <ol class="steps">
             <li><strong>Client calls <code>POST /v1/ingest</code>.</strong> The body carries an observation payload (fields, edges, text). Placement may be explicit in this build or derived later as routing matures.</li>

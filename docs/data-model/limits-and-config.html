@@ -94,6 +94,43 @@
             <p class="diagram-caption">Forgetting attenuates content by relevance, never deletes it. Today MemState implements the archive stage; summarize and detach are planned.</p>
           </div>
 
+          <h3 id="threshold-ladder">Paper-aligned threshold ladder</h3>
+          <p>
+            The research formulation uses three salience thresholds to order the ladder: summarize (compress older
+            material while keeping the topic hot), detach (remove from default working set), and archive (exclude from
+            routine scans while retaining durable history). The reference build does not yet expose three separate
+            constants; the table below maps names to intent and to what exists in <code>Policies</code> today.
+          </p>
+          <table>
+            <thead>
+              <tr>
+                <th>Formal name</th>
+                <th>Ladder stage</th>
+                <th>In this codebase</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>&theta;<sub>summary</sub></code> (summarize)</td>
+                <td>Compress older field/topic material while the unit stays active.</td>
+                <td>Planned; history is trimmed only by <code>max_field_history</code>, not a dedicated summarize operator.</td>
+              </tr>
+              <tr>
+                <td><code>&theta;<sub>remove</sub></code> (detach)</td>
+                <td>Drop from default retrieval expansion while keeping the row queryable explicitly.</td>
+                <td>Partially reflected by salience decay and archival flags; dedicated detach threshold not split out yet.</td>
+              </tr>
+              <tr>
+                <td><code>&theta;<sub>archive</sub></code> (archive)</td>
+                <td>Lowest salience band: mark archived, damp salience further, skip in routine scans.</td>
+                <td>
+                  <code>forget_salience_threshold</code> in <code>Policies</code> gates
+                  <code>Executor.run_forget_low_salience</code> (topics below the threshold are archived and salience is scaled down).
+                </td>
+              </tr>
+            </tbody>
+          </table>
+
           <table>
             <thead>
               <tr>

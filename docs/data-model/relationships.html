@@ -40,6 +40,16 @@
             </div>
           </div>
 
+          <h3 id="graph-edge-kinds">How extension and association appear on disk</h3>
+          <p>
+            Extension and association are <strong>modeling intents</strong>, not two different physical edge tables.
+            Both are stored as <code>RELATED</code> edges with a free-form <code>kind</code> string. Retrieval and the
+            reasoner inspect <code>kind</code> (and your own conventions) to decide whether to treat an edge as
+            parent&ndash;child context (<strong>extension</strong>) or peer linkage (<strong>association</strong>). Field
+            references remain separate: they live on field revisions as <code>ref_topic_id</code> and are merged into
+            structural expansion by the query path.
+          </p>
+
           <table>
             <thead>
               <tr>
