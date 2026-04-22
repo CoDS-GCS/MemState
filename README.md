@@ -4,6 +4,12 @@
 
 Topic-graph memory backed by an embedded **Kuzu** database. Exposes a FastAPI server for ingest/query, an LLM chat interface (Ollama + Groq), and a D3 graph explorer UI.
 
+### UI — Graph Explorer
+
+The **MemState Graph Explorer** (served with the API) shows topics as cards on a canvas, **RELATED** edges vs **field ref** edges, and side rails for graph edits plus the assistant (provider/model, chat).
+
+![MemState Graph Explorer — topic graph, edge legend, create-topic sidebar, assistant panel](docs/images/graph-explorer-ui.png)
+
 ## Table of contents
 
 - [Data model](#data-model)
