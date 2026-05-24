@@ -2,7 +2,7 @@
 
 **Long-term topic-graph memory for AI agents** — backed by embedded [Kuzu](https://kuzudb.com/), with FastAPI ingest/query, LLM chat (Ollama + Groq), and a D3 graph explorer UI.
 
-**Documentation site:** [aorogat.github.io/MemState](https://aorogat.github.io/MemState/index.html)
+**Documentation site:** [github.com/CoDS-GCS/MemState](https://github.com/CoDS-GCS/MemState)
 
 MemState Graph Explorer
 

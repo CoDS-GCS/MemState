@@ -1,6 +1,6 @@
 # MemState guides
 
-Markdown reference for developers working from the repository. For the full product documentation site (architecture, operations, diagrams), see [docs/index.html](../index.html) or the [published site](https://aorogat.github.io/MemState/index.html).
+Markdown reference for developers working from the repository. For the full product documentation site (architecture, operations, diagrams), see [docs/index.html](../index.html) or the [published site](https://github.com/CoDS-GCS/MemState).
 
 | Guide | Contents |
 |-------|----------|
