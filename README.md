@@ -4,7 +4,7 @@
 
 **Documentation site:** [github.com/CoDS-GCS/MemState](https://github.com/CoDS-GCS/MemState)
 
-MemState Graph Explorer
+![MemState Graph Explorer](docs/images/graph-explorer-ui.png)
 
 ## Features
 
