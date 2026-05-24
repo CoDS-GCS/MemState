@@ -2,7 +2,6 @@
 
 **Long-term topic-graph memory for AI agents** — backed by embedded [Kuzu](https://kuzudb.com/), with FastAPI ingest/query, LLM chat (Ollama + Groq), and a D3 graph explorer UI.
 
-> **Research prototype.** MemState is a reference implementation of **Governed Evolving Memory (GEM)** — the framework introduced in our paper. This repository brings the paper's abstract to life as a **proof-of-concept**: a runnable system that demonstrates how GEM's core ideas work in practice. It is an early, focused artifact for researchers and developers who want to explore the approach hands-on; the design will continue to evolve as we extend the framework beyond this initial reference build.
 
 **Documentation site:** [github.com/CoDS-GCS/MemState](https://github.com/CoDS-GCS/MemState)
 
@@ -78,3 +77,6 @@ src/memstate/     Core library, API, LLM tools, graph store
 docs/             Product documentation (HTML) and repository guides (Markdown)
 tests/            Pytest suite
 ```
+
+
+> **Research prototype.** MemState is a reference implementation of **Governed Evolving Memory (GEM)** — the framework introduced in our paper. This repository brings the paper's abstract to life as a **proof-of-concept**: a runnable system that demonstrates how GEM's core ideas work in practice. It is an early, focused artifact for researchers and developers who want to explore the approach hands-on; the design will continue to evolve as we extend the framework beyond this initial reference build.
