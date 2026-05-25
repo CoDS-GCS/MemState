@@ -27,6 +27,52 @@ def _utc_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _field_payload_from_topic_field(tf: TopicField, *, with_history: bool = True) -> dict[str, Any]:
+    cur = tf.current_entry()
+    payload: dict[str, Any] = {
+        "field_type": tf.field_type,
+        "ref_topic_id": tf.ref_topic_id,
+        "salience": tf.salience,
+        "value": cur.value if cur else None,
+    }
+    if with_history:
+        payload["history"] = [e.model_dump() for e in tf.history]
+        payload["history_count"] = len(tf.history)
+    return payload
+
+
+def _read_nested_inner_field(
+    nest_key: str,
+    inner_name: str,
+    inner_raw: dict[str, Any],
+    *,
+    with_history: bool = True,
+) -> dict[str, Any]:
+    sub_tf = TopicField.model_validate(inner_raw)
+    return {
+        "ok": True,
+        "nest_key": nest_key,
+        "nested_field_name": inner_name,
+        "field": _field_payload_from_topic_field(sub_tf, with_history=with_history),
+    }
+
+
+def _find_nested_inner_field(store: GraphStore, topic_id: str, inner_name: str) -> tuple[str, dict[str, Any]] | None:
+    """Return (nest_key, inner TopicField dict) when inner_name lives in a nest bundle."""
+    for nest_key in store.list_field_names(topic_id):
+        rec = store.get_field_with_history(topic_id, nest_key)
+        if not rec:
+            continue
+        cur = rec.current_entry()
+        if not cur or not is_nested_fields_bundle_value(cur.value):
+            continue
+        inner = nested_bundle_inner_fields(cur.value)
+        sub_raw = inner.get(inner_name)
+        if isinstance(sub_raw, dict):
+            return nest_key, sub_raw
+    return None
+
+
 def _graph_snapshot(store: GraphStore) -> dict[str, Any]:
     """Same shape as GET /api/ui/graph (includes ``community`` per node)."""
     return build_ui_graph_snapshot(store)
@@ -181,12 +227,21 @@ def _parse_args(raw: Any) -> dict[str, Any]:
 
 
 def _field_to_topic_out(rec: TopicField) -> dict[str, Any]:
-    return {
-        "field_type": rec.field_type,
-        "ref_topic_id": rec.ref_topic_id,
-        "salience": rec.salience,
-        "history": [e.model_dump() for e in rec.history],
-    }
+    return _field_payload_from_topic_field(rec, with_history=True)
+
+
+def _parse_with_history_flag(raw: Any, *, default: bool = True) -> bool:
+    if raw is None:
+        return default
+    if isinstance(raw, bool):
+        return raw
+    if isinstance(raw, str):
+        s = raw.strip().lower()
+        if s in ("false", "0", "no", "off"):
+            return False
+        if s in ("true", "1", "yes", "on"):
+            return True
+    return default
 
 
 class MemoryToolRunner:
@@ -225,6 +280,61 @@ class MemoryToolRunner:
             bump=self._query_bump,
             max_field_salience=self._field_salience_max,
         )
+
+    def _get_field_result(self, args: dict[str, Any], *, with_history: bool) -> dict[str, Any]:
+        s = self._store
+        tid = str(args.get("topic_id") or "").strip()
+        fname = str(args.get("field_name") or "").strip()
+        nested_fname = str(args.get("nested_field_name") or "").strip()
+        if not tid or not fname:
+            return {"ok": False, "error": "topic_id and field_name required"}
+        if self._study_kind and not self._study_topic_kind_ok(tid):
+            return {"ok": False, "error": "topic not in this Study session"}
+
+        if nested_fname:
+            tf = s.get_field_with_history(tid, fname)
+            if not tf:
+                return {"ok": False, "error": "field not found"}
+            cur = tf.current_entry()
+            if not cur or not is_nested_fields_bundle_value(cur.value):
+                return {"ok": False, "error": "field is not a nested bundle"}
+            inner = nested_bundle_inner_fields(cur.value)
+            sub_raw = inner.get(nested_fname)
+            if not isinstance(sub_raw, dict):
+                return {"ok": False, "error": "nested field not found"}
+            try:
+                self._bump_read_access_salience(tid, [fname])
+                return _read_nested_inner_field(
+                    fname, nested_fname, sub_raw, with_history=with_history
+                )
+            except Exception:
+                return {"ok": False, "error": "nested field invalid"}
+
+        tf = s.get_field_with_history(tid, fname)
+        if tf:
+            self._bump_read_access_salience(tid, [fname])
+            return {
+                "ok": True,
+                "topic_id": tid,
+                "field_name": fname,
+                "field": _field_payload_from_topic_field(tf, with_history=with_history),
+            }
+
+        found = _find_nested_inner_field(s, tid, fname)
+        if found:
+            nest_key, sub_raw = found
+            try:
+                self._bump_read_access_salience(tid, [nest_key])
+                out = _read_nested_inner_field(
+                    nest_key, fname, sub_raw, with_history=with_history
+                )
+                out["topic_id"] = tid
+                out["field_name"] = fname
+                return out
+            except Exception:
+                return {"ok": False, "error": "nested field invalid"}
+
+        return {"ok": False, "error": "field not found"}
 
     def execute(self, name: str, arguments: Any) -> dict[str, Any]:
         args = _parse_args(arguments)
@@ -470,26 +580,11 @@ class MemoryToolRunner:
             return {"ok": True, "version_id": vid}
 
         if name == "memory_get_field":
-            tid = str(args.get("topic_id") or "")
-            fname = str(args.get("field_name") or "")
-            if self._study_kind and not self._study_topic_kind_ok(tid):
-                return {"ok": False, "error": "topic not in this Study session"}
-            tf = s.get_field_with_history(tid, fname)
-            if not tf:
-                return {"ok": False, "error": "field not found"}
-            self._bump_read_access_salience(tid, [fname])
-            tf2 = s.get_field_with_history(tid, fname)
-            if not tf2:
-                return {"ok": False, "error": "field not found"}
-            return {
-                "ok": True,
-                "field": {
-                    "field_type": tf2.field_type,
-                    "ref_topic_id": tf2.ref_topic_id,
-                    "salience": tf2.salience,
-                    "history": [e.model_dump() for e in tf2.history],
-                },
-            }
+            with_history = _parse_with_history_flag(args.get("with_history"), default=True)
+            return self._get_field_result(args, with_history=with_history)
+
+        if name == "memory_get_field_history":
+            return self._get_field_result(args, with_history=True)
 
         if name == "memory_delete_field":
             tid = str(args.get("topic_id") or "")

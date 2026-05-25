@@ -1082,6 +1082,12 @@ select {
   scroll-margin: 1.5rem 0;
 }
 
+.topic-wizard-field-card--nested-item.agent-field-active {
+  outline-width: 2px;
+  background: rgba(251, 191, 36, 0.14);
+  box-shadow: inset 0 0 0 1px rgba(251, 191, 36, 0.35);
+}
+
 .topic-wizard-field-card.agent-field-write {
   outline-color: rgba(74, 222, 128, 0.9);
   background: rgba(74, 222, 128, 0.08);
@@ -1794,6 +1800,30 @@ select {
   color: inherit;
   background: transparent;
   border: none;
+}
+
+.topic-wizard-nested-bundle-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.topic-wizard-nested-bundle-dl {
+  margin: 0;
+  font-size: 0.76rem;
+}
+
+.topic-wizard-nested-bundle-dl dd {
+  margin: 0;
+}
+
+.topic-wizard-timeline-item--past .topic-wizard-nested-bundle-summary {
+  opacity: 0.92;
+}
+
+.topic-wizard-timeline-value-pre--inline {
+  max-height: 4.5rem;
+  overflow: auto;
 }
 
 .topic-wizard-value-scalar {

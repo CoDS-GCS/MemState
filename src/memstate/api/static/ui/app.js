@@ -581,7 +581,7 @@ const graphView = {
   agentHighlightIds: new Set(),
   /** When true, non-highlighted nodes render dimmed during scan. */
   agentScanMode: false,
-  /** @type {{ topicId: string, fieldName: string, write?: boolean } | null} */
+  /** @type {{ topicId: string, targets: { fieldName: string, nestRoot?: string | null }[], write?: boolean } | null} */
   agentActiveField: null,
 };
 
@@ -702,9 +702,11 @@ function nestedInnerFromFieldRecord(f) {
  * @param {string} subName
  * @param {Record<string, unknown>} sub
  */
-function renderNestedSubFieldCardHtml(subName, sub) {
+function renderNestedSubFieldCardHtml(subName, sub, nestRoot) {
   const parts = [];
-  parts.push(`<div class="topic-wizard-field-card topic-wizard-field-card--nested-item" data-field-name="${escapeHtml(subName)}">`);
+  parts.push(
+    `<div class="topic-wizard-field-card topic-wizard-field-card--nested-item" data-field-name="${escapeHtml(subName)}" data-nest-root="${escapeHtml(nestRoot)}">`
+  );
   parts.push(`<h5 class="topic-wizard-h5">${escapeHtml(subName)}</h5>`);
   parts.push('<dl class="topic-wizard-dl topic-wizard-field-meta">');
   parts.push(`<dt>Type</dt><dd>${escapeHtml(String(sub.field_type ?? "—"))}</dd>`);
@@ -782,6 +784,78 @@ function formatWizardRefLinkRowHtml(topicId, label, index1Based) {
 }
 
 /**
+ * Current scalar value from a TopicField dict inside a nested bundle snapshot.
+ * @param {unknown} rec
+ */
+function innerFieldCurrentValue(rec) {
+  if (!rec || typeof rec !== "object") return undefined;
+  const r = /** @type {Record<string, unknown>} */ (rec);
+  const hist = r.history;
+  if (Array.isArray(hist) && hist[0] && typeof hist[0] === "object") {
+    return /** @type {Record<string, unknown>} */ (hist[0]).value;
+  }
+  return r.value;
+}
+
+/**
+ * @param {unknown} val
+ * @returns {{ name: string, value: unknown }[] | null}
+ */
+function nestedBundleInnerRows(val) {
+  if (!val || typeof val !== "object" || Array.isArray(val)) return null;
+  const o = /** @type {Record<string, unknown>} */ (val);
+  if (o._memstate_nested !== true) return null;
+  const fields = o.fields;
+  if (!fields || typeof fields !== "object") return null;
+  const rows = [];
+  for (const [name, rec] of Object.entries(/** @type {Record<string, unknown>} */ (fields))) {
+    rows.push({ name, value: innerFieldCurrentValue(rec) });
+  }
+  rows.sort((a, b) => a.name.localeCompare(b.name));
+  return rows.length ? rows : null;
+}
+
+/** @param {unknown} val */
+function formatWizardInlineScalarHtml(val) {
+  if (val === undefined || val === null) {
+    return '<span class="topic-wizard-value-scalar">—</span>';
+  }
+  if (typeof val === "boolean" || typeof val === "number") {
+    return `<span class="topic-wizard-value-scalar">${escapeHtml(String(val))}</span>`;
+  }
+  if (typeof val === "string") {
+    if (isLikelyTopicIdString(val)) {
+      const tid = val.trim();
+      return formatWizardRefLinkRowHtml(tid, getWizardRefLinkLabel(tid), null);
+    }
+    return `<span class="topic-wizard-value-scalar">${escapeHtml(val)}</span>`;
+  }
+  if (Array.isArray(val)) {
+    if (val.length === 0) return '<span class="topic-wizard-value-scalar">[]</span>';
+    if (val.every((item) => typeof item === "string" && !isLikelyTopicIdString(item))) {
+      return `<span class="topic-wizard-value-scalar">${escapeHtml(val.join(", "))}</span>`;
+    }
+  }
+  return `<pre class="topic-wizard-timeline-value-pre topic-wizard-timeline-value-pre--inline">${escapeHtml(JSON.stringify(val, null, 2))}</pre>`;
+}
+
+/** @param {unknown} val */
+function formatNestedBundleValueHtml(val) {
+  const rows = nestedBundleInnerRows(val);
+  if (!rows) return null;
+  const parts = [
+    '<div class="topic-wizard-nested-bundle-summary">',
+    '<span class="topic-wizard-nested-pill">nested fields</span>',
+    '<dl class="topic-wizard-dl topic-wizard-nested-bundle-dl">',
+  ];
+  for (const { name, value } of rows) {
+    parts.push(`<dt>${escapeHtml(name)}</dt><dd>${formatWizardInlineScalarHtml(value)}</dd>`);
+  }
+  parts.push("</dl></div>");
+  return parts.join("");
+}
+
+/**
  * HTML for a field value: UUID strings / lists of UUIDs → ref-edge rows; else escaped JSON/pre.
  * @param {unknown} val
  */
@@ -819,6 +893,10 @@ function formatWizardFieldValueHtml(val) {
       return `<li class="topic-wizard-ref-edge-li topic-wizard-ref-edge-li--raw"><pre class="topic-wizard-timeline-value-pre">${escapeHtml(chunk)}</pre></li>`;
     });
     return `${caption}<ul class="topic-wizard-ref-edges" role="list">${lis.join("")}</ul>`;
+  }
+  if (typeof val === "object") {
+    const nested = formatNestedBundleValueHtml(val);
+    if (nested) return nested;
   }
   return `<pre class="topic-wizard-timeline-value-pre">${escapeHtml(JSON.stringify(val, null, 2))}</pre>`;
 }
@@ -953,7 +1031,7 @@ function renderTopicWizardBody(t) {
         for (const subName of Object.keys(inner).sort()) {
           const sub = inner[subName];
           if (sub && typeof sub === "object") {
-            parts.push(renderNestedSubFieldCardHtml(subName, /** @type {Record<string, unknown>} */ (sub)));
+            parts.push(renderNestedSubFieldCardHtml(subName, /** @type {Record<string, unknown>} */ (sub), name));
           }
         }
         parts.push("</div>");
@@ -1032,18 +1110,61 @@ function showTopicWizard(t) {
 function reapplyAgentFieldHighlight(topicId) {
   const af = graphView.agentActiveField;
   if (!af || String(af.topicId) !== String(topicId || "")) return;
+  const targets = Array.isArray(af.targets) ? af.targets : [];
+  if (!targets.length) return;
   const body = document.getElementById("topic-wizard-body");
   if (!body) return;
-  const fn = String(af.fieldName || "");
-  if (!fn) return;
-  let card = body.querySelector(`.topic-wizard-field-card[data-field-name="${CSS.escape(fn)}"]`);
-  if (!card) card = body.querySelector(`[data-field-name="${CSS.escape(fn)}"]`);
-  if (!card) return;
-  const fieldCard = card.classList.contains("topic-wizard-field-card")
-    ? card
-    : card.closest(".topic-wizard-field-card");
-  const target = fieldCard || card;
-  highlightAgentFieldValues(target, { write: !!af.write });
+  for (const tgt of targets) {
+    const target = findAgentFieldElement(body, tgt);
+    if (target) highlightAgentFieldValues(target, { write: !!af.write });
+  }
+  scrollTopicWizardToAgentTargets(body, targets);
+}
+
+/**
+ * Locate a top-level or nested-inner field card in the topic wizard.
+ * @param {Element} body
+ * @param {{ fieldName: string, nestRoot?: string | null }} target
+ * @returns {Element | null}
+ */
+function findAgentFieldElement(body, { fieldName, nestRoot }) {
+  const fn = String(fieldName || "").trim();
+  const nr = nestRoot != null ? String(nestRoot).trim() : "";
+  if (!body || !fn) return null;
+
+  if (nr) {
+    const root = body.querySelector(
+      `.topic-wizard-field-card--nested-root[data-nest-root="${CSS.escape(nr)}"]`,
+    );
+    if (root) {
+      const inner = root.querySelector(
+        `.topic-wizard-field-card--nested-item[data-field-name="${CSS.escape(fn)}"]`,
+      );
+      if (inner) return inner;
+    }
+    const scoped = body.querySelector(
+      `.topic-wizard-field-card--nested-item[data-nest-root="${CSS.escape(nr)}"][data-field-name="${CSS.escape(fn)}"]`,
+    );
+    if (scoped) return scoped;
+  }
+
+  let card = body.querySelector(
+    `.topic-wizard-field-card:not(.topic-wizard-field-card--nested-item):not(.topic-wizard-field-card--nested-root)[data-field-name="${CSS.escape(fn)}"]`,
+  );
+  if (!card) {
+    card = body.querySelector(
+      `.topic-wizard-field-card--nested-item[data-field-name="${CSS.escape(fn)}"]`,
+    );
+  }
+  if (!card) {
+    card = body.querySelector(
+      `.topic-wizard-field-card[data-field-name="${CSS.escape(fn)}"]`,
+    );
+  }
+  if (!card) return null;
+  if (card.classList.contains("topic-wizard-field-card")) return card;
+  const fieldCard = card.closest(".topic-wizard-field-card");
+  return fieldCard || card;
 }
 
 function hideTopicWizard() {
@@ -2165,112 +2286,318 @@ function agentVizWaitForDom() {
 /**
  * Scroll the topic wizard body so a field card is visible (overflow is on .topic-wizard-body).
  * @param {Element | null | undefined} el
+ * @param {{ align?: "start" | "center" | "end" }} [opts]
  */
-function scrollTopicWizardToField(el) {
+function scrollTopicWizardToField(el, { align = "start" } = {}) {
   if (!el || !(el instanceof Element)) return;
   const body = document.getElementById("topic-wizard-body");
   if (!body) {
-    el.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
+    el.scrollIntoView({ behavior: "smooth", block: align, inline: "nearest" });
     return;
   }
   const pad = 16;
   const bodyRect = body.getBoundingClientRect();
   const elRect = el.getBoundingClientRect();
   const elTopInBody = elRect.top - bodyRect.top + body.scrollTop;
-  const target =
-    elTopInBody - body.clientHeight / 2 + elRect.height / 2;
+  const elHeight = elRect.height || el.offsetHeight;
+  let target;
+  if (align === "end") {
+    target = elTopInBody - body.clientHeight + elHeight + pad;
+  } else if (align === "center") {
+    target = elTopInBody - body.clientHeight / 2 + elHeight / 2;
+  } else {
+    target = elTopInBody - pad;
+  }
   body.scrollTo({
     top: Math.max(0, Math.min(target, body.scrollHeight - body.clientHeight)),
     behavior: "smooth",
   });
 }
 
-function highlightAgentFields(topicId, fieldNames, { write = false } = {}) {
-  clearAgentFieldHighlights();
-  const tid = String(topicId || "");
-  const names = Array.isArray(fieldNames) ? fieldNames.filter(Boolean) : [];
-  if (!tid || !names.length) return;
-
-  graphView.agentActiveField = { topicId: tid, fieldName: names[0], write: !!write };
-  const body = document.getElementById("topic-wizard-body");
-  if (!body) return;
-  /** @type {Element | null} */
-  let scrollTarget = null;
-  for (const fn of names) {
-    let card = body.querySelector(`.topic-wizard-field-card[data-field-name="${CSS.escape(fn)}"]`);
-    if (!card) {
-      card = body.querySelector(`[data-field-name="${CSS.escape(fn)}"]`);
-    }
-    if (card) {
-      const fieldCard = card.classList.contains("topic-wizard-field-card")
-        ? card
-        : card.closest(".topic-wizard-field-card");
-      const target = fieldCard || card;
-      highlightAgentFieldValues(target, { write });
-      if (!scrollTarget) scrollTarget = target;
+/**
+ * Scroll wizard to the first matching highlighted field card.
+ * @param {Element} body
+ * @param {{ fieldName: string, nestRoot?: string | null }[]} targets
+ * @returns {Element | null}
+ */
+function scrollTopicWizardToAgentTargets(body, targets) {
+  if (!body || !targets.length) return null;
+  for (const tgt of targets) {
+    const el = findAgentFieldElement(body, tgt);
+    if (el) {
+      scrollTopicWizardToField(el, { align: "start" });
+      return el;
     }
   }
-  if (scrollTarget) scrollTopicWizardToField(scrollTarget);
+  return null;
 }
 
-async function highlightAgentFieldsAfterRender(topicId, fieldNames, opts = {}) {
+async function scrollTopicWizardToAgentTargetsAfterLayout(body, targets) {
+  const el = scrollTopicWizardToAgentTargets(body, targets);
+  if (!el) return false;
   await agentVizWaitForDom();
-  highlightAgentFields(topicId, fieldNames, opts);
-  if (agentViz.skipViz || !fieldNames || !fieldNames.length) return;
+  await agentVizSleep(80);
+  scrollTopicWizardToField(el, { align: "start" });
+  return true;
+}
+
+function highlightAgentFields(topicId, fieldTargets, { write = false } = {}) {
+  clearAgentFieldHighlights();
+  const tid = String(topicId || "");
+  const targets = normalizeAgentFieldTargets(fieldTargets);
+  if (!tid || !targets.length) return false;
+
+  graphView.agentActiveField = {
+    topicId: tid,
+    targets,
+    write: !!write,
+  };
+  const body = document.getElementById("topic-wizard-body");
+  if (!body) return false;
+  for (const tgt of targets) {
+    const target = findAgentFieldElement(body, tgt);
+    if (target) highlightAgentFieldValues(target, { write });
+  }
+  const scrolled = !!scrollTopicWizardToAgentTargets(body, targets);
+  return scrolled;
+}
+
+/**
+ * @param {unknown} raw
+ * @returns {{ fieldName: string, nestRoot?: string | null }[]}
+ */
+function normalizeAgentFieldTargets(raw) {
+  if (!Array.isArray(raw)) return [];
+  const out = [];
+  for (const item of raw) {
+    if (typeof item === "string") {
+      const fn = item.trim();
+      if (fn) out.push({ fieldName: fn, nestRoot: null });
+      continue;
+    }
+    if (item && typeof item === "object") {
+      const o = /** @type {Record<string, unknown>} */ (item);
+      const fn = o.fieldName != null ? String(o.fieldName).trim() : "";
+      if (!fn) continue;
+      const nr = o.nestRoot != null ? String(o.nestRoot).trim() : "";
+      out.push({ fieldName: fn, nestRoot: nr || null });
+    }
+  }
+  return out;
+}
+
+
+async function highlightAgentFieldsAfterRender(topicId, fieldTargets, opts = {}) {
+  const skipTiming = !!opts.skipTiming || !!agentViz.skipViz;
+  let targets = normalizeAgentFieldTargets(fieldTargets);
+  if (targets.length) {
+    const nestFromViz = targets.every((t) => t.nestRoot === targets[0].nestRoot)
+      ? targets[0].nestRoot
+      : null;
+    targets = targets.map((t) => {
+      if (t.nestRoot) return t;
+      const inferred = inferNestRootForFieldName(topicId, t.fieldName);
+      return { fieldName: t.fieldName, nestRoot: inferred || nestFromViz || null };
+    });
+  }
+  if (!targets.length) return;
+
+  await agentVizWaitForDom();
+  let found = highlightAgentFields(topicId, targets, opts);
+
+  if (!found) {
+    await agentVizSleep(200);
+    await agentVizWaitForDom();
+    found = highlightAgentFields(topicId, targets, opts);
+  }
+
+  const body = document.getElementById("topic-wizard-body");
+  if (found && body) {
+    await scrollTopicWizardToAgentTargetsAfterLayout(body, targets);
+  }
+
+  if (!found) {
+    if (targets.length === 1) {
+      const fn = targets[0].fieldName;
+      const nr = targets[0].nestRoot ? ` (in ${targets[0].nestRoot})` : "";
+      setAgentVizStatus(`Field “${fn}”${nr} — not found in wizard`);
+    } else {
+      setAgentVizStatus(`${targets.length} fields — not found in wizard`);
+    }
+    return;
+  }
+
+  if (skipTiming) return;
 
   await agentVizDwell(AGENT_FIELD_SCROLL_MS, null, { scale: false });
+  if (body) scrollTopicWizardToAgentTargets(body, targets);
 
-  const fn = String(fieldNames[0] || "field");
-  const dwellLabel = `Viewing field “${fn}” at ${agentViz.speed}×`;
+  let dwellLabel;
+  if (targets.length > 1) {
+    const sharedNest =
+      targets.every((t) => t.nestRoot === targets[0].nestRoot) && targets[0].nestRoot
+        ? targets[0].nestRoot
+        : null;
+    dwellLabel = sharedNest
+      ? `Viewing ${targets.length} fields in “${sharedNest}” at ${agentViz.speed}×`
+      : `Viewing ${targets.length} fields at ${agentViz.speed}×`;
+  } else {
+    const primary = targets[0];
+    const fn = String(primary.fieldName || "field");
+    const nest = primary.nestRoot ? ` in “${primary.nestRoot}”` : "";
+    dwellLabel = `Viewing field “${fn}”${nest} at ${agentViz.speed}×`;
+  }
   await agentVizDwell(AGENT_FIELD_DWELL_MS, dwellLabel, { minMs: AGENT_FIELD_DWELL_MIN_MS });
 }
 
 /**
- * Resolve which field(s) to highlight for one tool step.
- * @param {Record<string, unknown>} event
+ * What this step shows: scan (graph), topic (wizard), or field (wizard + field highlight).
  * @param {Record<string, unknown>} [viz]
  */
-function resolveAgentFieldNames(event, viz) {
-  const tool = event && event.tool ? String(event.tool) : "";
+function agentVizFocus(viz) {
+  const v = viz && typeof viz === "object" ? viz : {};
+  const f = v.viz_focus;
+  if (f === "scan" || f === "topic" || f === "field") return f;
+  if (v.action === "scan") return "scan";
+  if (agentVizFieldTargets(v).length) return "field";
+  if (Array.isArray(v.topic_ids) && v.topic_ids.length) return "topic";
+  return "other";
+}
 
-  // Schema / full-topic reads: topic node only — values come from memory_get_field.
-  if (tool === "memory_get_topic_schema" || tool === "memory_get_topic") {
-    return [];
-  }
-
-  const args = event && event.args && typeof event.args === "object" ? event.args : {};
-
-  // Single-field read/write tools — always trust args.field_name first.
-  if (
-    tool === "memory_get_field" ||
-    tool === "memory_append_field" ||
-    tool === "memory_delete_field" ||
-    tool === "memory_set_field_ref"
-  ) {
-    const fn = args.field_name != null ? String(args.field_name).trim() : "";
-    if (fn) return [fn];
-  }
-
+/**
+ * All field highlight targets for a viz step.
+ * @param {Record<string, unknown>} [viz]
+ * @returns {{ fieldName: string, nestRoot: string | null }[]}
+ */
+function agentVizFieldTargets(viz) {
   const v = viz && typeof viz === "object" ? viz : {};
   if (v.highlight_fields === false) return [];
-
-  const fromViz = Array.isArray(v.field_names)
+  const nestRoot = v.nest_key != null ? String(v.nest_key).trim() : "";
+  const names = Array.isArray(v.field_names)
     ? v.field_names.map((x) => String(x || "").trim()).filter(Boolean)
     : [];
-  if (fromViz.length) return fromViz;
-
-  const single = args.field_name != null ? String(args.field_name).trim() : "";
-  if (single) return [single];
-
-  const nest = args.nest_key != null ? String(args.nest_key).trim() : "";
-  if (nest) return [nest];
-
-  const fr = args.field_names;
-  if (Array.isArray(fr) && fr.length) {
-    return fr.map((x) => String(x || "").trim()).filter(Boolean);
+  if (names.length) {
+    return names.map((fieldName) => ({
+      fieldName,
+      nestRoot: nestRoot || null,
+    }));
   }
+  const single = agentVizFieldTarget(v);
+  return single ? [single] : [];
+}
 
-  return [];
+/**
+ * @param {Record<string, unknown>} [viz]
+ * @returns {{ fieldName: string, nestRoot: string | null } | null}
+ */
+function agentVizFieldTarget(viz) {
+  const v = viz && typeof viz === "object" ? viz : {};
+  const ft = v.field_target;
+  if (ft && typeof ft === "object") {
+    const o = /** @type {Record<string, unknown>} */ (ft);
+    const name = o.name != null ? String(o.name).trim() : "";
+    if (name) {
+      const nk = o.nest_key != null ? String(o.nest_key).trim() : "";
+      return { fieldName: name, nestRoot: nk || null };
+    }
+  }
+  if (v.highlight_fields === false) return null;
+  const names = Array.isArray(v.field_names)
+    ? v.field_names.map((x) => String(x || "").trim()).filter(Boolean)
+    : [];
+  if (!names.length) return null;
+  const nestRoot = v.nest_key != null ? String(v.nest_key).trim() : "";
+  return { fieldName: names[0], nestRoot: nestRoot || null };
+}
+
+async function agentVizApplyTopicStep(topicId, { skipTiming = false } = {}) {
+  const tid = String(topicId || "").trim();
+  if (!tid) return;
+  await ensureAgentTopicWizard(tid);
+  setAgentNodeHighlights([tid], { scan: false });
+  clearAgentFieldHighlights();
+  if (!skipTiming) {
+    await agentVizWaitForAdvance();
+    await agentVizSleep(agentVizScaledDelay(AGENT_VIZ_DELAYS.read.commit));
+  }
+}
+
+async function agentVizApplyFieldStep(topicId, viz, { write = false, skipTiming = false } = {}) {
+  const tid = String(topicId || "").trim();
+  if (!tid) return;
+  await ensureAgentTopicWizard(tid);
+  setAgentNodeHighlights([tid], { scan: false });
+  const targets = agentVizFieldTargets(viz);
+  if (!targets.length) {
+    clearAgentFieldHighlights();
+    return;
+  }
+  await highlightAgentFieldsAfterRender(tid, targets, { write, skipTiming });
+}
+
+function inferNestRootForFieldName(topicId, fieldName) {
+  const fn = String(fieldName || "").trim();
+  const tid = String(topicId || "");
+  if (!fn || !tid) return null;
+  const payload = graphView.wizardTopicPayload;
+  if (!payload || String(payload.id) !== tid) return null;
+  const fields =
+    payload.fields && typeof payload.fields === "object"
+      ? /** @type {Record<string, unknown>} */ (payload.fields)
+      : {};
+  const top = fields[fn];
+  if (top && typeof top === "object" && !nestedInnerFromFieldRecord(/** @type {Record<string, unknown>} */ (top))) {
+    return null;
+  }
+  for (const [nestKey, rec] of Object.entries(fields)) {
+    if (!rec || typeof rec !== "object") continue;
+    const inner = nestedInnerFromFieldRecord(/** @type {Record<string, unknown>} */ (rec));
+    if (inner && Object.prototype.hasOwnProperty.call(inner, fn)) return nestKey;
+  }
+  return null;
+}
+
+/** Open topic wizard for agent viz (graph expand + loadDetail fallback). */
+async function ensureAgentTopicWizard(topicId) {
+  const tid = String(topicId || "").trim();
+  if (!tid) return false;
+  if (
+    graphView.expandedId === tid &&
+    graphView.wizardTopicPayload &&
+    String(graphView.wizardTopicPayload.id) === tid
+  ) {
+    return true;
+  }
+  try {
+    await expandGraphNode(tid);
+    if (
+      graphView.expandedId === tid &&
+      graphView.wizardTopicPayload &&
+      String(graphView.wizardTopicPayload.id) === tid
+    ) {
+      await agentVizWaitForDom();
+      return true;
+    }
+  } catch (_) {
+    /* fall through to direct load */
+  }
+  try {
+    const t = await loadDetail(tid);
+    showTopicWizard(t);
+    graphView.expandedId = tid;
+    const net = graphView.network;
+    if (net) {
+      try {
+        net.selectNodes([tid]);
+      } catch (_) {
+        /* ignore */
+      }
+    }
+    await agentVizWaitForDom();
+    return true;
+  } catch (_) {
+    return false;
+  }
 }
 
 function clearAgentVizOverlays() {
@@ -2308,60 +2635,63 @@ function setAgentNodeHighlights(topicIds, { scan = false } = {}) {
   }
 }
 
-function agentVizDelayKey(viz, event) {
+function agentVizDelayKey(viz) {
+  const focus = agentVizFocus(viz || {});
+  if (focus === "field") return "read_field";
   const action = viz && viz.action ? String(viz.action) : "other";
-  if (event && resolveAgentFieldNames(event, viz).length > 0) return "read_field";
-  if (action === "read" && viz.field_names && viz.field_names.length) return "read_field";
   return action in AGENT_VIZ_DELAYS ? action : "other";
 }
 
 async function agentVizApplyPreview(event) {
-  if (agentViz.skipViz || event.type !== "tool_start") return;
+  if (event.type !== "tool_start") return;
   if (event._turn != null && event._turn !== agentViz.turnSeq) return;
+  const skipTiming = !!agentViz.skipViz;
   const viz = event.viz || {};
-  const action = viz.action || "other";
   const ids = viz.topic_ids || [];
   const label = viz.label || event.tool || "Agent step";
+  const focus = agentVizFocus(viz);
   agentViz.toolStep += 1;
   setAgentVizStatus(`Step ${agentViz.toolStep} — ${label}`);
 
-  if (action === "scan") {
+  if (focus === "scan") {
     clearAgentFieldHighlights();
     setAgentNodeHighlights(ids.length ? ids : graphView.nodeIds || [], { scan: true });
   } else if (ids.length) {
     setAgentNodeHighlights(ids, { scan: false });
   }
 
-  const dk = agentVizDelayKey(viz, event);
-  await agentVizWaitForAdvance();
-  await agentVizSleep(agentVizScaledDelay(AGENT_VIZ_DELAYS[dk].preview));
+  const dk = agentVizDelayKey(viz);
+  if (!skipTiming) {
+    await agentVizWaitForAdvance();
+    await agentVizSleep(agentVizScaledDelay(AGENT_VIZ_DELAYS[dk].preview));
+  }
 }
 
 async function agentVizApplyCommit(event) {
-  if (agentViz.skipViz || event.type !== "tool_end") return;
+  if (event.type !== "tool_end") return;
   if (event._turn != null && event._turn !== agentViz.turnSeq) return;
+  const skipTiming = !!agentViz.skipViz;
   const viz = event.viz || {};
   const action = viz.action || "other";
   const ids = viz.topic_ids || [];
   const label = viz.label || event.tool || "Agent step";
+  const focus = agentVizFocus(viz);
+  const primaryTopic = ids[0] ? String(ids[0]) : null;
   setAgentVizStatus(`Step ${agentViz.toolStep} — ${label}`);
 
-  if (action === "scan") {
+  if (focus === "scan") {
     clearAgentFieldHighlights();
     if (ids.length) setAgentNodeHighlights(ids, { scan: false });
     else graphView.agentScanMode = false;
     redrawAgentGraph();
-    if (agentViz.skipViz) return;
-    const dk = agentVizDelayKey(viz, event);
-    await agentVizWaitForAdvance();
-    await agentVizSleep(agentVizScaledDelay(AGENT_VIZ_DELAYS[dk].commit));
+    if (!skipTiming) {
+      const dk = agentVizDelayKey(viz);
+      await agentVizWaitForAdvance();
+      await agentVizSleep(agentVizScaledDelay(AGENT_VIZ_DELAYS[dk].commit));
+    }
     return;
   }
 
-  const primaryTopic = ids[0] ? String(ids[0]) : null;
-  const readLike = action === "read" || action === "write_field" || action === "write_topic" || action === "reorganize";
-  const fieldNames = resolveAgentFieldNames(event, viz);
-  const shouldHighlightFields = fieldNames.length > 0;
   const needsRefresh =
     action === "write_field" ||
     action === "write_topic" ||
@@ -2369,20 +2699,7 @@ async function agentVizApplyCommit(event) {
     action === "reorganize" ||
     (event.tool === "memory_create_topic" && event.result && event.result.ok);
 
-  if (readLike && primaryTopic && !needsRefresh) {
-    try {
-      await expandGraphNode(primaryTopic);
-      if (shouldHighlightFields) {
-        await highlightAgentFieldsAfterRender(primaryTopic, fieldNames, {
-          write: action.startsWith("write"),
-        });
-      } else {
-        clearAgentFieldHighlights();
-      }
-    } catch (_) {
-      /* expand may fail for new topics until refresh */
-    }
-  }
+  if (needsRefresh) await refreshGraph();
 
   if (action === "write_edge" && viz.edge) {
     const a = viz.edge.from_topic_id;
@@ -2390,24 +2707,21 @@ async function agentVizApplyCommit(event) {
     if (a && b) setAgentNodeHighlights([a, b], { scan: false });
   }
 
-  if (needsRefresh) {
-    await refreshGraph();
-    if (primaryTopic && readLike) {
-      try {
-        await expandGraphNode(primaryTopic);
-        if (shouldHighlightFields) {
-          await highlightAgentFieldsAfterRender(primaryTopic, fieldNames, { write: action.startsWith("write") });
-        } else {
-          clearAgentFieldHighlights();
-        }
-      } catch (_) {
-        /* ignore */
-      }
-    }
+  if (primaryTopic && focus === "topic") {
+    await agentVizApplyTopicStep(primaryTopic, { skipTiming });
+    return;
   }
 
-  const dk = agentVizDelayKey(viz, event);
-  if (!shouldHighlightFields) {
+  if (primaryTopic && focus === "field") {
+    await agentVizApplyFieldStep(primaryTopic, viz, {
+      write: action.startsWith("write"),
+      skipTiming,
+    });
+    return;
+  }
+
+  if (!skipTiming) {
+    const dk = agentVizDelayKey(viz);
     await agentVizWaitForAdvance();
     await agentVizSleep(agentVizScaledDelay(AGENT_VIZ_DELAYS[dk].commit));
   }
@@ -2417,11 +2731,16 @@ async function agentVizProcessEvent(event) {
   if (!event || typeof event !== "object") return;
   if (event._turn != null && event._turn !== agentViz.turnSeq) return;
   const t = event.type;
-  if (t === "tool_start") await agentVizApplyPreview(event);
-  else if (t === "tool_end") await agentVizApplyCommit(event);
-  else if (t === "intent") setAgentVizStatus(`Intent: ${event.route || "—"}`);
-  else if (t === "llm_round") setAgentVizStatus("Agent thinking…");
-  else if (t === "study_phase_delay") setAgentVizStatus(`Study phase B (${event.seconds || "?"}s pause)…`);
+  try {
+    if (t === "tool_start") await agentVizApplyPreview(event);
+    else if (t === "tool_end") await agentVizApplyCommit(event);
+    else if (t === "intent") setAgentVizStatus(`Intent: ${event.route || "—"}`);
+    else if (t === "llm_round") setAgentVizStatus("Agent thinking…");
+    else if (t === "study_phase_delay") setAgentVizStatus(`Study phase B (${event.seconds || "?"}s pause)…`);
+  } catch (err) {
+    console.warn("Agent viz step failed:", err);
+    setAgentVizStatus(`Viz error: ${err instanceof Error ? err.message : String(err)}`);
+  }
 }
 
 async function agentVizPump() {

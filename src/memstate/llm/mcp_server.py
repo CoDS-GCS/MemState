@@ -177,9 +177,34 @@ def memory_append_field(
 
 
 @mcp.tool()
-def memory_get_field(topic_id: str, field_name: str) -> dict[str, Any]:
-    """Read field with history."""
-    return _runner().execute("memory_get_field", {"topic_id": topic_id, "field_name": field_name})
+def memory_get_field(
+    topic_id: str,
+    field_name: str,
+    nested_field_name: str | None = None,
+    with_history: bool = True,
+) -> dict[str, Any]:
+    """Read field: current value and revision history (newest first). Use nested_field_name for inner nested fields."""
+    args: dict[str, Any] = {
+        "topic_id": topic_id,
+        "field_name": field_name,
+        "with_history": with_history,
+    }
+    if nested_field_name:
+        args["nested_field_name"] = nested_field_name
+    return _runner().execute("memory_get_field", args)
+
+
+@mcp.tool()
+def memory_get_field_history(
+    topic_id: str,
+    field_name: str,
+    nested_field_name: str | None = None,
+) -> dict[str, Any]:
+    """Read field current value and full revision history. Use when user asks for prior values or change timeline."""
+    args: dict[str, Any] = {"topic_id": topic_id, "field_name": field_name}
+    if nested_field_name:
+        args["nested_field_name"] = nested_field_name
+    return _runner().execute("memory_get_field_history", args)
 
 
 @mcp.tool()

@@ -84,7 +84,8 @@ OLLAMA_TOOLS: list[dict] = [
             "description": (
                 "Return the field **schema** for one topic (structure only by default). "
                 "Use detail=minimal first to see field names, types, and ref_topic_id without values. "
-                "After choosing a field, call memory_get_field for that field's value (or memory_get_topic only when you need every field with full history). "
+                "After choosing a field, call memory_get_field (current value + revision history) or memory_get_field_history when the user asks how a value changed or for prior values. For nested bundles, use nested_field_names from minimal schema, then memory_get_field with field_name=nest key and nested_field_name=inner name (or pass the inner name as field_name for auto-resolve). "
+                "Use memory_get_topic only when you need every field with full history on one topic. "
                 "ref_topic_id on a field points at another topic—follow with get_topic_schema (minimal) or memory_get_field on linked topics. "
                 "Use detail=current or history only when you must bulk-load values on this topic without per-field reads."
             ),
@@ -245,13 +246,57 @@ OLLAMA_TOOLS: list[dict] = [
         "function": {
             "name": "memory_get_field",
             "description": (
-                "Read one field on a topic including history. If the field points at another topic (ref_topic_id), open that topic next when you need its details to answer."
+                "Read one field on a topic: returns current `value` and full revision `history` (newest first). "
+                "Each history entry has value, valid_from, why_changed, provenance, and optional operation. "
+                "Use when you need the latest value or a single field's timeline. "
+                "For nested inner fields use nested_field_name + field_name=nest key, or pass the inner name as field_name (auto-resolved). "
+                "Set with_history=false to fetch only the current value. "
+                "When the user explicitly asks for past values or change history, prefer memory_get_field_history."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "topic_id": {"type": "string"},
-                    "field_name": {"type": "string"},
+                    "field_name": {
+                        "type": "string",
+                        "description": "Top-level field name, or nest bundle key when reading a nested inner field",
+                    },
+                    "nested_field_name": {
+                        "type": "string",
+                        "description": "Inner field inside a json nest bundle (requires field_name = nest key)",
+                    },
+                    "with_history": {
+                        "type": "boolean",
+                        "description": "If false, return only current value (omit history array). Default true.",
+                        "default": True,
+                    },
+                },
+                "required": ["topic_id", "field_name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "memory_get_field_history",
+            "description": (
+                "Read one field's current value and full revision history (same as memory_get_field with with_history=true). "
+                "Use when the user asks how a fact changed over time, what it used to be, when it was updated, or for prior values. "
+                "History is newest-first; history[0] matches field.value. "
+                "Supports nested inner fields via nested_field_name or auto-resolve by inner field_name."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "topic_id": {"type": "string"},
+                    "field_name": {
+                        "type": "string",
+                        "description": "Top-level or inner nested field name",
+                    },
+                    "nested_field_name": {
+                        "type": "string",
+                        "description": "Inner field inside a json nest bundle (requires field_name = nest key)",
+                    },
                 },
                 "required": ["topic_id", "field_name"],
             },
@@ -567,6 +612,7 @@ QUERY_TOOL_NAMES: frozenset[str] = frozenset(
         "memory_get_topic_schema",
         "memory_get_topic",
         "memory_get_field",
+        "memory_get_field_history",
     }
 )
 
@@ -594,6 +640,7 @@ INGEST_READ_HELPER_NAMES: frozenset[str] = frozenset(
         "memory_get_topic_schema",
         "memory_get_topic",
         "memory_get_field",
+        "memory_get_field_history",
         "memory_reorganize_consolidation",
         "memory_reorganize_merge_topics",
         "memory_reorganize_split_topics",
@@ -612,6 +659,7 @@ STUDY_PHASE_A_TOOL_NAMES: frozenset[str] = frozenset(
         "memory_get_topic_schema",
         "memory_get_topic",
         "memory_get_field",
+        "memory_get_field_history",
         "study_unit_catalog",
         "study_graph_snapshot",
     }
@@ -647,7 +695,7 @@ QUERY_ROUTE_PROMPT = """Routed mode: QUERY (read-only).
 You only have read/list tools available. Answer from stored facts; do not attempt creates, updates, deletes, or relationship/field writes.
 Each returned field includes salience (0–10); on this path, accessed fields are bumped slightly (capped) and the topic salience is updated to the average of field saliences.
 
-Graph traversal: You may and should issue multiple read calls in sequence to walk the topic graph. Topics link via RELATED edges and via field ref_topic_id (see memory_graph_snapshot). If the answer is not fully on one topic, follow those links: open related topic ids with memory_get_topic_schema (detail minimal) or memory_get_topic, then use memory_get_field for specific field values. Use memory_graph_snapshot or memory_list_topics to orient, then drill into topics and their neighbors until you have enough detail. Do not stop after a single topic when the question depends on linked people, projects, or other entities."""
+Graph traversal: You may and should issue multiple read calls in sequence to walk the topic graph. Topics link via RELATED edges and via field ref_topic_id (see memory_graph_snapshot). If the answer is not fully on one topic, follow those links: open related topic ids with memory_get_topic_schema (detail minimal) or memory_get_topic, then use memory_get_field for specific field values and history (use nested_field_name for inner fields inside json nest bundles). When the user asks how a value changed or what it used to be, call memory_get_field_history on that field. Use memory_graph_snapshot or memory_list_topics to orient, then drill into topics and their neighbors until you have enough detail. Do not stop after a single topic when the question depends on linked people, projects, or other entities."""
 
 INGEST_ROUTE_PROMPT = """Routed mode: INGEST (writes).
 Use write tools to change memory. Use read helpers (list_topics, get_topic_schema, get_topic, get_field) only to resolve topic ids or inspect fields before writing. You do not have memory_graph_snapshot—use list_topics and get_topic* instead.
@@ -748,7 +796,8 @@ Grounding (mandatory):
 - You MUST use the memory_* tools to read or write data. Do not invent topic ids, titles, edges, or field values.
 - Brief greetings or tiny talk may be answered without tools. For anything about what is stored, or any edit, use the appropriate memory_* tools.
 - Before answering anything about what is stored, call at least one read tool (e.g. memory_graph_snapshot, memory_list_topics, memory_get_topic_schema, or memory_get_topic).
-- Use memory_list_topics to see ids with titles and summaries; use memory_get_topic_schema to inspect field names/types (and optionally current values or full history) without pulling the entire topic unless needed.
+- Use memory_list_topics to see ids with titles and summaries; use memory_get_topic_schema to inspect field names/types (detail minimal first; detail=current for latest values only; detail=history for all fields' histories on one topic).
+- **Field history:** Every stored fact is a field with a value-only revision timeline (newest first). `memory_get_field` returns current `value` plus `history` for one field; `memory_get_field_history` is the dedicated read when the user asks for prior values, change over time, or "when did X change". Do not answer history questions from detail=current schema alone—call get_field or get_field_history on the specific field.
 - The store is a graph: topics link via RELATED edges and field ref_topic_id. When answering from stored facts, follow those links with additional reads on the linked topic ids until you have what you need—do not treat one topic as always sufficient.
 - Your final reply must be based only on what those tools returned (plus obvious paraphrase). If tools do not contain the answer, say you don't know or don't have that detail—without mentioning tools, databases, or "memory" as a system.
 - For edits (create/update/delete/link/fields), call the appropriate tools, then confirm briefly using tool outcomes.
