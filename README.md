@@ -5,7 +5,9 @@
 
 **Documentation site:** [github.com/CoDS-GCS/MemState](https://github.com/CoDS-GCS/MemState)
 
-[![MemState demo](https://img.youtube.com/vi/XPLHPOdUy-g/hqdefault.jpg)](https://www.youtube.com/watch?v=XPLHPOdUy-g)
+![MemState Graph Explorer](docs/images/graph-explorer-ui.png)
+
+[Watch demo on YouTube](https://www.youtube.com/watch?v=XPLHPOdUy-g)
 
 ## Features
 
