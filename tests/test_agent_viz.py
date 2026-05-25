@@ -94,8 +94,8 @@ def test_read_topic_schema_fields_from_result():
             },
         },
     )
-    assert set(viz_cur["field_names"]) == {"married", "birth_place"}
-    assert viz_cur["highlight_fields"] is True
+    assert viz_cur["field_names"] == []
+    assert viz_cur["highlight_fields"] is False
 
 
 def test_read_full_topic_fields_from_result():

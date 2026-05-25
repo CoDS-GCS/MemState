@@ -1079,6 +1079,7 @@ select {
   outline-offset: 2px;
   background: rgba(251, 191, 36, 0.08);
   animation: agent-field-pulse 1.2s ease-in-out infinite;
+  scroll-margin: 1.5rem 0;
 }
 
 .topic-wizard-field-card.agent-field-write {

@@ -82,11 +82,11 @@ OLLAMA_TOOLS: list[dict] = [
         "function": {
             "name": "memory_get_topic_schema",
             "description": (
-                "Return the field schema for one topic without loading full topic metadata unless needed. "
-                "ref_topic_id on a field points at another topic—follow with another get_topic_schema or get_topic when you need that linked entity. "
-                "Use detail level based on the question: minimal = field names and types only; current = same plus latest value per field; "
-                "history = full revision history per field (same shape as memory_get_topic fields). Prefer minimal or current when exploring; "
-                "use history only when the user asks about past values or provenance."
+                "Return the field **schema** for one topic (structure only by default). "
+                "Use detail=minimal first to see field names, types, and ref_topic_id without values. "
+                "After choosing a field, call memory_get_field for that field's value (or memory_get_topic only when you need every field with full history). "
+                "ref_topic_id on a field points at another topic—follow with get_topic_schema (minimal) or memory_get_field on linked topics. "
+                "Use detail=current or history only when you must bulk-load values on this topic without per-field reads."
             ),
             "parameters": {
                 "type": "object",
@@ -647,7 +647,7 @@ QUERY_ROUTE_PROMPT = """Routed mode: QUERY (read-only).
 You only have read/list tools available. Answer from stored facts; do not attempt creates, updates, deletes, or relationship/field writes.
 Each returned field includes salience (0–10); on this path, accessed fields are bumped slightly (capped) and the topic salience is updated to the average of field saliences.
 
-Graph traversal: You may and should issue multiple read calls in sequence to walk the topic graph. Topics link via RELATED edges and via field ref_topic_id (see memory_graph_snapshot). If the answer is not fully on one topic, follow those links: open related topic ids with memory_get_topic_schema or memory_get_topic (and memory_get_field if you need one field). Use memory_graph_snapshot or memory_list_topics to orient, then drill into topics and their neighbors until you have enough detail. Do not stop after a single topic when the question depends on linked people, projects, or other entities."""
+Graph traversal: You may and should issue multiple read calls in sequence to walk the topic graph. Topics link via RELATED edges and via field ref_topic_id (see memory_graph_snapshot). If the answer is not fully on one topic, follow those links: open related topic ids with memory_get_topic_schema (detail minimal) or memory_get_topic, then use memory_get_field for specific field values. Use memory_graph_snapshot or memory_list_topics to orient, then drill into topics and their neighbors until you have enough detail. Do not stop after a single topic when the question depends on linked people, projects, or other entities."""
 
 INGEST_ROUTE_PROMPT = """Routed mode: INGEST (writes).
 Use write tools to change memory. Use read helpers (list_topics, get_topic_schema, get_topic, get_field) only to resolve topic ids or inspect fields before writing. You do not have memory_graph_snapshot—use list_topics and get_topic* instead.

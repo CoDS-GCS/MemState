@@ -2109,6 +2109,29 @@ function agentVizWaitForDom() {
   });
 }
 
+/**
+ * Scroll the topic wizard body so a field card is visible (overflow is on .topic-wizard-body).
+ * @param {Element | null | undefined} el
+ */
+function scrollTopicWizardToField(el) {
+  if (!el || !(el instanceof Element)) return;
+  const body = document.getElementById("topic-wizard-body");
+  if (!body) {
+    el.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
+    return;
+  }
+  const pad = 16;
+  const bodyRect = body.getBoundingClientRect();
+  const elRect = el.getBoundingClientRect();
+  const elTopInBody = elRect.top - bodyRect.top + body.scrollTop;
+  const target =
+    elTopInBody - body.clientHeight / 2 + elRect.height / 2;
+  body.scrollTo({
+    top: Math.max(0, Math.min(target, body.scrollHeight - body.clientHeight)),
+    behavior: "smooth",
+  });
+}
+
 function highlightAgentFields(topicId, fieldNames, { write = false } = {}) {
   clearAgentFieldHighlights();
   const tid = String(topicId || "");
@@ -2118,6 +2141,8 @@ function highlightAgentFields(topicId, fieldNames, { write = false } = {}) {
   graphView.agentActiveField = { topicId: tid, fieldName: names[0] };
   const body = document.getElementById("topic-wizard-body");
   if (!body) return;
+  /** @type {Element | null} */
+  let scrollTarget = null;
   for (const fn of names) {
     let card = body.querySelector(`.topic-wizard-field-card[data-field-name="${CSS.escape(fn)}"]`);
     if (!card) {
@@ -2127,10 +2152,12 @@ function highlightAgentFields(topicId, fieldNames, { write = false } = {}) {
       const fieldCard = card.classList.contains("topic-wizard-field-card")
         ? card
         : card.closest(".topic-wizard-field-card");
-      highlightAgentFieldValues(fieldCard || card, { write });
-      (fieldCard || card).scrollIntoView({ behavior: "smooth", block: "nearest" });
+      const target = fieldCard || card;
+      highlightAgentFieldValues(target, { write });
+      if (!scrollTarget) scrollTarget = target;
     }
   }
+  if (scrollTarget) scrollTopicWizardToField(scrollTarget);
 }
 
 async function highlightAgentFieldsAfterRender(topicId, fieldNames, opts = {}) {
@@ -2145,6 +2172,12 @@ async function highlightAgentFieldsAfterRender(topicId, fieldNames, opts = {}) {
  */
 function resolveAgentFieldNames(event, viz) {
   const tool = event && event.tool ? String(event.tool) : "";
+
+  // Schema / full-topic reads: topic node only — values come from memory_get_field.
+  if (tool === "memory_get_topic_schema" || tool === "memory_get_topic") {
+    return [];
+  }
+
   const args = event && event.args && typeof event.args === "object" ? event.args : {};
 
   // Single-field read/write tools — always trust args.field_name first.

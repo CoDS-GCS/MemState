@@ -170,27 +170,8 @@ def _field_names_from_result(tool: str, args: dict[str, Any], result: dict[str, 
     if tool == "memory_get_field":
         return []
 
-    if tool == "memory_get_topic_schema":
-        detail = str(args.get("detail") or "minimal").strip().lower()
-        if detail not in ("current", "history"):
-            return []
-        fields = result.get("fields")
-        if not isinstance(fields, dict):
-            return []
-        names: list[str] = []
-        for key, payload in fields.items():
-            name = _str_id(key)
-            if not name or not isinstance(payload, dict):
-                continue
-            if detail == "history":
-                hist = payload.get("history")
-                if isinstance(hist, list) and hist:
-                    names.append(name)
-            elif "value" in payload:
-                names.append(name)
-        return names
-
-    if tool == "memory_get_topic":
+    # Schema / full-topic reads are topic-level in the UI; field values use memory_get_field.
+    if tool in ("memory_get_topic_schema", "memory_get_topic"):
         return []
 
     names: list[str] = []
@@ -275,6 +256,11 @@ def _label_for(action: VizAction, tool: str, args: dict[str, Any], result: dict[
         return "Scanning topics"
 
     if action == "read":
+        if tool == "memory_get_topic_schema":
+            detail = str(args.get("detail") or "minimal").strip().lower()
+            if topic_hint:
+                return f"Reading topic schema ({detail}) — {topic_hint}"
+            return f"Reading topic schema ({detail})"
         if tool == "memory_get_field" and field_hint:
             return f"Reading field {field_hint}"
         if field_hint:
@@ -334,6 +320,10 @@ def build_viz_hint(
         fn = _str_id(parsed_args.get("field_name"))
         if fn and fn not in field_names:
             field_names.append(fn)
+
+    # Schema / full-topic steps: open topic only; field highlight comes from memory_get_field.
+    if tool in ("memory_get_topic_schema", "memory_get_topic"):
+        field_names = []
 
     edge: dict[str, str] | None = None
     if action == "write_edge":
