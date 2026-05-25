@@ -5,15 +5,18 @@ from __future__ import annotations
 import asyncio
 import json
 import random
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 import httpx
 
 from memstate.config import get_settings
+from memstate.llm.agent_viz import build_viz_hint
 from memstate.llm.groq_rate_limit import (
     groq_rate_limit_sleep_seconds,
     groq_response_is_rate_limited,
 )
+from memstate.llm.ollama_chat import _parse_tool_args
 from memstate.llm.tools_schema import DEFAULT_LLM_SYSTEM_PROMPT_FALLBACK, OLLAMA_TOOLS
 from memstate.llm.tool_runner import MemoryToolRunner
 
@@ -26,6 +29,16 @@ GROQ_HTTP_TIMEOUT = httpx.Timeout(connect=30.0, read=600.0, write=120.0, pool=30
 
 # Re-use same JSON-schema tools as Ollama (OpenAI format).
 MEMORY_TOOLS = OLLAMA_TOOLS
+
+ChatEventCallback = Callable[[dict[str, Any]], Awaitable[None] | None]
+
+
+async def _emit(on_event: ChatEventCallback | None, event: dict[str, Any]) -> None:
+    if on_event is None:
+        return
+    out = on_event(event)
+    if out is not None:
+        await out
 
 
 async def groq_post_chat_completions_with_retries(
@@ -116,6 +129,7 @@ async def run_groq_chat(
     system_prompt: str | None = None,
     tools: list[dict[str, Any]] | None = None,
     max_tool_rounds: int = DEFAULT_MAX_TOOL_ROUNDS,
+    on_event: ChatEventCallback | None = None,
 ) -> tuple[str, list[dict[str, Any]], str]:
     """
     Groq chat/completions with tools; execute tool calls until the model returns text.
@@ -130,10 +144,13 @@ async def run_groq_chat(
     full: list[dict[str, Any]] = [{"role": "system", "content": sys}, *messages]
     tool_log: list[dict[str, Any]] = []
     used_model = model
+    tool_index = 0
 
     rounds = max(1, int(max_tool_rounds))
     async with httpx.AsyncClient(timeout=GROQ_HTTP_TIMEOUT) as client:
         for _ in range(rounds):
+            await _emit(on_event, {"type": "llm_round"})
+
             payload: dict[str, Any] = {
                 "model": model,
                 "messages": full,
@@ -166,8 +183,34 @@ async def run_groq_chat(
                 fn = tc.get("function") or {}
                 name = fn.get("name") or ""
                 raw_args = fn.get("arguments")
+                args = _parse_tool_args(raw_args)
+                viz_start = build_viz_hint(name, args, None)
+                await _emit(
+                    on_event,
+                    {
+                        "type": "tool_start",
+                        "index": tool_index,
+                        "tool": name,
+                        "args": args,
+                        "viz": viz_start,
+                    },
+                )
                 result = runner.execute(name, raw_args)
-                tool_log.append({"tool": name, "result": result})
+                viz_end = build_viz_hint(name, args, result)
+                entry = {"tool": name, "args": args, "result": result}
+                tool_log.append(entry)
+                await _emit(
+                    on_event,
+                    {
+                        "type": "tool_end",
+                        "index": tool_index,
+                        "tool": name,
+                        "args": args,
+                        "result": result,
+                        "viz": viz_end,
+                    },
+                )
+                tool_index += 1
                 full.append(
                     {
                         "role": "tool",

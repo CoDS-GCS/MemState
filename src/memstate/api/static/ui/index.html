@@ -175,6 +175,22 @@
               Remove topic
             </button>
           </div>
+          <div id="agent-viz-bar" class="agent-viz-bar" hidden aria-live="polite">
+            <span id="agent-viz-status" class="agent-viz-status">Agent working…</span>
+            <div class="agent-viz-controls">
+              <button type="button" class="btn btn-secondary btn-agent-viz" id="btn-agent-viz-pause" title="Pause or resume step playback">Pause</button>
+              <button type="button" class="btn btn-secondary btn-agent-viz" id="btn-agent-viz-step" title="Advance one visualization step">Step →</button>
+              <label class="agent-viz-speed-label">
+                <span>Speed</span>
+                <input type="range" id="agent-viz-speed" min="0.25" max="3" step="0.25" value="1" aria-label="Visualization speed" />
+                <span id="agent-viz-speed-val">1×</span>
+              </label>
+              <label class="agent-viz-skip-label">
+                <input type="checkbox" id="agent-viz-skip" />
+                <span>Skip viz</span>
+              </label>
+            </div>
+          </div>
           <div id="network"></div>
           <div id="graph-node-menu" class="graph-node-menu" hidden role="menu" aria-label="Topic actions"></div>
           <div id="empty-state" class="empty-state">

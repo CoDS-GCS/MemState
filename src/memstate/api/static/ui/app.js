@@ -577,6 +577,12 @@ const graphView = {
   wizardTopicPayload: null,
   /** @type {Map<string, Record<string, unknown>> | null} */
   nodeTooltipPayload: null,
+  /** @type {Set<string>} */
+  agentHighlightIds: new Set(),
+  /** When true, non-highlighted nodes render dimmed during scan. */
+  agentScanMode: false,
+  /** @type {{ topicId: string, fieldName: string } | null} */
+  agentActiveField: null,
 };
 
 /** @param {unknown} entry */
@@ -698,7 +704,7 @@ function nestedInnerFromFieldRecord(f) {
  */
 function renderNestedSubFieldCardHtml(subName, sub) {
   const parts = [];
-  parts.push('<div class="topic-wizard-field-card topic-wizard-field-card--nested-item">');
+  parts.push(`<div class="topic-wizard-field-card topic-wizard-field-card--nested-item" data-field-name="${escapeHtml(subName)}">`);
   parts.push(`<h5 class="topic-wizard-h5">${escapeHtml(subName)}</h5>`);
   parts.push('<dl class="topic-wizard-dl topic-wizard-field-meta">');
   parts.push(`<dt>Type</dt><dd>${escapeHtml(String(sub.field_type ?? "—"))}</dd>`);
@@ -935,7 +941,7 @@ function renderTopicWizardBody(t) {
       const inner = nestedInnerFromFieldRecord(/** @type {Record<string, unknown>} */ (f));
       if (inner) {
         parts.push(
-          `<div class="topic-wizard-field-card topic-wizard-field-card--nested-root" data-nest-root="${escapeHtml(name)}">`
+          `<div class="topic-wizard-field-card topic-wizard-field-card--nested-root" data-field-name="${escapeHtml(name)}" data-nest-root="${escapeHtml(name)}">`
         );
         parts.push(
           `<h4 class="topic-wizard-h4"><button type="button" class="topic-wizard-field-name-btn" data-field-name="${escapeHtml(name)}" title="Open field history">${escapeHtml(name)}</button> <span class="topic-wizard-nested-pill">nested fields</span></h4>`
@@ -960,7 +966,7 @@ function renderTopicWizardBody(t) {
         continue;
       }
       parts.push(
-        `<div class="topic-wizard-field-card"><h4 class="topic-wizard-h4"><button type="button" class="topic-wizard-field-name-btn" data-field-name="${escapeHtml(name)}" title="Open field history">${escapeHtml(name)}</button></h4>`
+        `<div class="topic-wizard-field-card" data-field-name="${escapeHtml(name)}"><h4 class="topic-wizard-h4"><button type="button" class="topic-wizard-field-name-btn" data-field-name="${escapeHtml(name)}" title="Open field history">${escapeHtml(name)}</button></h4>`
       );
       parts.push('<dl class="topic-wizard-dl topic-wizard-field-meta">');
       parts.push(`<dt>Type</dt><dd>${escapeHtml(String(f.field_type ?? "—"))}</dd>`);
@@ -1293,6 +1299,9 @@ function makeCardRenderer(n, cid) {
     const left = x - W / 2;
     const top = y - H / 2;
     const selected = !!(state && (state.selected || state.hover));
+    const agentHi = graphView.agentHighlightIds && graphView.agentHighlightIds.has(n.id);
+    const agentDim =
+      graphView.agentScanMode && graphView.agentHighlightIds && graphView.agentHighlightIds.size > 0 && !agentHi;
 
     return {
       drawNode() {
@@ -1300,7 +1309,7 @@ function makeCardRenderer(n, cid) {
 
         // Soft drop shadow under card
         ctx.shadowColor = "rgba(0, 0, 0, 0.45)";
-        ctx.shadowBlur = selected ? 18 : 10;
+        ctx.shadowBlur = selected || agentHi ? 18 : 10;
         ctx.shadowOffsetX = 0;
         ctx.shadowOffsetY = 3;
         pathRoundRect(ctx, left, top, W, H, 9);
@@ -1308,14 +1317,30 @@ function makeCardRenderer(n, cid) {
         grad.addColorStop(0, bgTop);
         grad.addColorStop(1, bgBot);
         ctx.fillStyle = grad;
+        if (agentDim) ctx.globalAlpha = 0.42;
         ctx.fill();
+        if (agentDim) ctx.globalAlpha = 1;
         ctx.restore();
 
         // Border
         pathRoundRect(ctx, left + 0.5, top + 0.5, W - 1, H - 1, 8.5);
-        ctx.strokeStyle = selected ? "#93c5fd" : "rgba(148, 163, 184, 0.22)";
-        ctx.lineWidth = selected ? 1.75 : 1;
+        if (agentHi) {
+          ctx.strokeStyle = "#fbbf24";
+          ctx.lineWidth = 2.5;
+        } else {
+          ctx.strokeStyle = selected ? "#93c5fd" : "rgba(148, 163, 184, 0.22)";
+          ctx.lineWidth = selected ? 1.75 : 1;
+        }
         ctx.stroke();
+
+        if (agentHi) {
+          ctx.save();
+          pathRoundRect(ctx, left - 2, top - 2, W + 4, H + 4, 10);
+          ctx.strokeStyle = "rgba(251, 191, 36, 0.35)";
+          ctx.lineWidth = 3;
+          ctx.stroke();
+          ctx.restore();
+        }
 
         // Left accent bar (community color)
         ctx.save();
@@ -1972,6 +1997,520 @@ async function refreshGraph() {
   } catch (e) {
     setStatus(String(e.message), true);
   }
+}
+
+/* ── Agent memory visualization (SSE + paced graph player) ── */
+
+const LS_AGENT_VIZ_SPEED = "memstate_agent_viz_speed";
+const LS_AGENT_VIZ_SKIP = "memstate_agent_viz_skip";
+
+/** @type {{ queue: object[], processing: boolean, paused: boolean, skipViz: boolean, speed: number, stepRequested: boolean, streamOpen: boolean, toolStep: number, toolTotal: number, turnSeq: number }} */
+const agentViz = {
+  queue: [],
+  processing: false,
+  paused: false,
+  skipViz: false,
+  speed: 1,
+  stepRequested: false,
+  streamOpen: false,
+  toolStep: 0,
+  toolTotal: 0,
+  turnSeq: 0,
+};
+
+const AGENT_VIZ_DELAYS = {
+  scan: { preview: 600, commit: 400 },
+  read: { preview: 800, commit: 1200 },
+  read_field: { preview: 500, commit: 900 },
+  write_field: { preview: 400, commit: 1000 },
+  write_topic: { preview: 400, commit: 1000 },
+  write_edge: { preview: 500, commit: 900 },
+  reorganize: { preview: 500, commit: 800 },
+  other: { preview: 300, commit: 400 },
+};
+
+function agentVizSleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+function agentVizScaledDelay(baseMs) {
+  const sp = Math.max(0.25, Math.min(3, Number(agentViz.speed) || 1));
+  return Math.round(baseMs / sp);
+}
+
+async function agentVizWaitForAdvance() {
+  if (agentViz.skipViz) return;
+  while (agentViz.paused && !agentViz.stepRequested) {
+    await agentVizSleep(40);
+  }
+  if (agentViz.stepRequested) agentViz.stepRequested = false;
+}
+
+function showAgentVizBar(show) {
+  const bar = document.getElementById("agent-viz-bar");
+  if (bar) bar.hidden = !show;
+}
+
+function setAgentVizStatus(text) {
+  const el = document.getElementById("agent-viz-status");
+  if (el) el.textContent = String(text || "");
+  setStudyProgressLabel(text);
+}
+
+function updateAgentVizControls() {
+  const pauseBtn = document.getElementById("btn-agent-viz-pause");
+  if (pauseBtn) {
+    pauseBtn.textContent = agentViz.paused ? "Play" : "Pause";
+    pauseBtn.setAttribute("aria-label", agentViz.paused ? "Resume visualization" : "Pause visualization");
+  }
+  const speedEl = document.getElementById("agent-viz-speed");
+  if (speedEl && speedEl instanceof HTMLInputElement) {
+    speedEl.value = String(agentViz.speed);
+  }
+  const skipEl = document.getElementById("agent-viz-skip");
+  if (skipEl && skipEl instanceof HTMLInputElement) {
+    skipEl.checked = agentViz.skipViz;
+  }
+}
+
+function redrawAgentGraph() {
+  const net = graphView.network;
+  if (net) net.redraw();
+}
+
+function clearAgentFieldHighlights() {
+  document.querySelectorAll(".topic-wizard-field-card.agent-field-active").forEach((el) => {
+    el.classList.remove("agent-field-active", "agent-field-write");
+  });
+  document.querySelectorAll(".agent-value-active").forEach((el) => {
+    el.classList.remove("agent-value-active");
+  });
+  graphView.agentActiveField = null;
+}
+
+function highlightAgentFieldValues(card, { write = false } = {}) {
+  if (!card) return;
+  card.classList.add("agent-field-active");
+  if (write) card.classList.add("agent-field-write");
+  const currentRow = card.querySelector(".topic-wizard-timeline-item--current");
+  if (currentRow) {
+    currentRow.classList.add("agent-value-active");
+    const valEl = currentRow.querySelector(".topic-wizard-timeline-value");
+    if (valEl) valEl.classList.add("agent-value-active");
+  } else {
+    const valOnly = card.querySelector(".topic-wizard-timeline-value");
+    if (valOnly) valOnly.classList.add("agent-value-active");
+  }
+}
+
+function agentVizWaitForDom() {
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(resolve));
+  });
+}
+
+function highlightAgentFields(topicId, fieldNames, { write = false } = {}) {
+  clearAgentFieldHighlights();
+  const tid = String(topicId || "");
+  const names = Array.isArray(fieldNames) ? fieldNames.filter(Boolean) : [];
+  if (!tid || !names.length) return;
+
+  graphView.agentActiveField = { topicId: tid, fieldName: names[0] };
+  const body = document.getElementById("topic-wizard-body");
+  if (!body) return;
+  for (const fn of names) {
+    let card = body.querySelector(`.topic-wizard-field-card[data-field-name="${CSS.escape(fn)}"]`);
+    if (!card) {
+      card = body.querySelector(`[data-field-name="${CSS.escape(fn)}"]`);
+    }
+    if (card) {
+      const fieldCard = card.classList.contains("topic-wizard-field-card")
+        ? card
+        : card.closest(".topic-wizard-field-card");
+      highlightAgentFieldValues(fieldCard || card, { write });
+      (fieldCard || card).scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+  }
+}
+
+async function highlightAgentFieldsAfterRender(topicId, fieldNames, opts = {}) {
+  await agentVizWaitForDom();
+  highlightAgentFields(topicId, fieldNames, opts);
+}
+
+/**
+ * Resolve which field(s) to highlight for one tool step.
+ * @param {Record<string, unknown>} event
+ * @param {Record<string, unknown>} [viz]
+ */
+function resolveAgentFieldNames(event, viz) {
+  const tool = event && event.tool ? String(event.tool) : "";
+  const args = event && event.args && typeof event.args === "object" ? event.args : {};
+
+  // Single-field read/write tools — always trust args.field_name first.
+  if (
+    tool === "memory_get_field" ||
+    tool === "memory_append_field" ||
+    tool === "memory_delete_field" ||
+    tool === "memory_set_field_ref"
+  ) {
+    const fn = args.field_name != null ? String(args.field_name).trim() : "";
+    if (fn) return [fn];
+  }
+
+  const v = viz && typeof viz === "object" ? viz : {};
+  if (v.highlight_fields === false) return [];
+
+  const fromViz = Array.isArray(v.field_names)
+    ? v.field_names.map((x) => String(x || "").trim()).filter(Boolean)
+    : [];
+  if (fromViz.length) return fromViz;
+
+  const single = args.field_name != null ? String(args.field_name).trim() : "";
+  if (single) return [single];
+
+  const nest = args.nest_key != null ? String(args.nest_key).trim() : "";
+  if (nest) return [nest];
+
+  const fr = args.field_names;
+  if (Array.isArray(fr) && fr.length) {
+    return fr.map((x) => String(x || "").trim()).filter(Boolean);
+  }
+
+  return [];
+}
+
+function clearAgentVizOverlays() {
+  graphView.agentHighlightIds.clear();
+  graphView.agentScanMode = false;
+  clearAgentFieldHighlights();
+  redrawAgentGraph();
+  const net = graphView.network;
+  if (net) {
+    try {
+      net.unselectAll();
+    } catch (_) {
+      /* ignore */
+    }
+  }
+}
+
+function setAgentNodeHighlights(topicIds, { scan = false } = {}) {
+  graphView.agentHighlightIds.clear();
+  const ids = Array.isArray(topicIds) ? topicIds : [];
+  for (const id of ids) {
+    if (id) graphView.agentHighlightIds.add(String(id));
+  }
+  graphView.agentScanMode = scan && ids.length > 0;
+  redrawAgentGraph();
+  const net = graphView.network;
+  if (!net || !ids.length) return;
+  try {
+    net.selectNodes(ids.map(String));
+    if (ids.length === 1) {
+      net.focus(ids[0], { scale: 1.05, animation: { duration: 320, easingFunction: "easeInOutQuad" } });
+    }
+  } catch (_) {
+    /* ignore */
+  }
+}
+
+function agentVizDelayKey(viz) {
+  const action = viz && viz.action ? String(viz.action) : "other";
+  if (action === "read" && viz.field_names && viz.field_names.length) return "read_field";
+  return action in AGENT_VIZ_DELAYS ? action : "other";
+}
+
+async function agentVizApplyPreview(event) {
+  if (agentViz.skipViz || event.type !== "tool_start") return;
+  if (event._turn != null && event._turn !== agentViz.turnSeq) return;
+  const viz = event.viz || {};
+  const action = viz.action || "other";
+  const ids = viz.topic_ids || [];
+  const label = viz.label || event.tool || "Agent step";
+  agentViz.toolStep += 1;
+  setAgentVizStatus(`Step ${agentViz.toolStep} — ${label}`);
+
+  if (action === "read" || action === "write_field" || action === "write_topic" || action === "reorganize") {
+    clearAgentFieldHighlights();
+  }
+
+  if (action === "scan") {
+    setAgentNodeHighlights(ids.length ? ids : graphView.nodeIds || [], { scan: true });
+  } else if (ids.length) {
+    setAgentNodeHighlights(ids, { scan: false });
+  }
+
+  const dk = agentVizDelayKey(viz);
+  await agentVizWaitForAdvance();
+  await agentVizSleep(agentVizScaledDelay(AGENT_VIZ_DELAYS[dk].preview));
+}
+
+async function agentVizApplyCommit(event) {
+  if (agentViz.skipViz || event.type !== "tool_end") return;
+  if (event._turn != null && event._turn !== agentViz.turnSeq) return;
+  const viz = event.viz || {};
+  const action = viz.action || "other";
+  const ids = viz.topic_ids || [];
+  const label = viz.label || event.tool || "Agent step";
+  setAgentVizStatus(`Step ${agentViz.toolStep} — ${label}`);
+
+  if (action === "scan") {
+    clearAgentFieldHighlights();
+    if (ids.length) setAgentNodeHighlights(ids, { scan: false });
+    else graphView.agentScanMode = false;
+    redrawAgentGraph();
+    if (agentViz.skipViz) return;
+    const dk = agentVizDelayKey(viz);
+    await agentVizWaitForAdvance();
+    await agentVizSleep(agentVizScaledDelay(AGENT_VIZ_DELAYS[dk].commit));
+    return;
+  }
+
+  const primaryTopic = ids[0] ? String(ids[0]) : null;
+  const readLike = action === "read" || action === "write_field" || action === "write_topic" || action === "reorganize";
+  const fieldNames = resolveAgentFieldNames(event, viz);
+  const shouldHighlightFields = fieldNames.length > 0;
+
+  if (readLike && primaryTopic) {
+    try {
+      await expandGraphNode(primaryTopic);
+      if (shouldHighlightFields) {
+        await highlightAgentFieldsAfterRender(primaryTopic, fieldNames, {
+          write: action.startsWith("write"),
+        });
+      } else {
+        clearAgentFieldHighlights();
+      }
+    } catch (_) {
+      /* expand may fail for new topics until refresh */
+    }
+  }
+
+  if (action === "write_edge" && viz.edge) {
+    const a = viz.edge.from_topic_id;
+    const b = viz.edge.to_topic_id;
+    if (a && b) setAgentNodeHighlights([a, b], { scan: false });
+  }
+
+  const needsRefresh =
+    action === "write_field" ||
+    action === "write_topic" ||
+    action === "write_edge" ||
+    action === "reorganize" ||
+    (event.tool === "memory_create_topic" && event.result && event.result.ok);
+
+  if (needsRefresh) {
+    await refreshGraph();
+    if (primaryTopic && readLike) {
+      try {
+        await expandGraphNode(primaryTopic);
+        if (shouldHighlightFields) {
+          await highlightAgentFieldsAfterRender(primaryTopic, fieldNames, { write: action.startsWith("write") });
+        } else {
+          clearAgentFieldHighlights();
+        }
+      } catch (_) {
+        /* ignore */
+      }
+    }
+  }
+
+  const dk = agentVizDelayKey(viz);
+  await agentVizWaitForAdvance();
+  await agentVizSleep(agentVizScaledDelay(AGENT_VIZ_DELAYS[dk].commit));
+}
+
+async function agentVizProcessEvent(event) {
+  if (!event || typeof event !== "object") return;
+  if (event._turn != null && event._turn !== agentViz.turnSeq) return;
+  const t = event.type;
+  if (t === "tool_start") await agentVizApplyPreview(event);
+  else if (t === "tool_end") await agentVizApplyCommit(event);
+  else if (t === "intent") setAgentVizStatus(`Intent: ${event.route || "—"}`);
+  else if (t === "llm_round") setAgentVizStatus("Agent thinking…");
+  else if (t === "study_phase_delay") setAgentVizStatus(`Study phase B (${event.seconds || "?"}s pause)…`);
+}
+
+async function agentVizPump() {
+  if (agentViz.processing) return;
+  agentViz.processing = true;
+  const turn = agentViz.turnSeq;
+  try {
+    while (agentViz.queue.length > 0 || (agentViz.streamOpen && turn === agentViz.turnSeq)) {
+      if (agentViz.queue.length === 0) {
+        await agentVizSleep(30);
+        continue;
+      }
+      const ev = agentViz.queue.shift();
+      if (!ev || (ev._turn != null && ev._turn !== agentViz.turnSeq)) continue;
+      await agentVizProcessEvent(ev);
+    }
+  } finally {
+    agentViz.processing = false;
+  }
+}
+
+function agentVizEnqueue(event) {
+  if (!event || typeof event !== "object") return;
+  event._turn = agentViz.turnSeq;
+  if (event.type === "tool_start" || event.type === "tool_end") {
+    if (event.type === "tool_start") agentViz.toolTotal += 1;
+  }
+  agentViz.queue.push(event);
+  void agentVizPump();
+}
+
+async function agentVizWaitForDrain() {
+  while (agentViz.queue.length > 0 || agentViz.processing) {
+    await agentVizSleep(40);
+  }
+}
+
+async function agentVizEndTurn() {
+  agentViz.streamOpen = false;
+  await agentVizWaitForDrain();
+  clearAgentVizOverlays();
+  showAgentVizBar(false);
+}
+
+function agentVizBeginTurn() {
+  agentViz.turnSeq += 1;
+  agentViz.queue = [];
+  agentViz.processing = false;
+  agentViz.paused = false;
+  agentViz.stepRequested = false;
+  agentViz.streamOpen = true;
+  agentViz.toolStep = 0;
+  agentViz.toolTotal = 0;
+  const savedSpeed = localStorage.getItem(LS_AGENT_VIZ_SPEED);
+  const sp = savedSpeed != null ? parseFloat(savedSpeed) : 1;
+  agentViz.speed = Number.isFinite(sp) ? Math.max(0.25, Math.min(3, sp)) : 1;
+  agentViz.skipViz = localStorage.getItem(LS_AGENT_VIZ_SKIP) === "1";
+  clearAgentVizOverlays();
+  showAgentVizBar(true);
+  updateAgentVizControls();
+  const valEl = document.getElementById("agent-viz-speed-val");
+  if (valEl) valEl.textContent = `${agentViz.speed}×`;
+}
+
+/**
+ * Parse SSE stream from POST /api/llm/chat/stream.
+ * @param {Response} response
+ * @param {(ev: object) => void} onEvent
+ * @returns {Promise<object>}
+ */
+async function consumeChatStream(response, onEvent) {
+  const reader = response.body && response.body.getReader ? response.body.getReader() : null;
+  if (!reader) throw new Error("Streaming not supported in this browser.");
+  const dec = new TextDecoder();
+  let buf = "";
+  /** @type {object | null} */
+  let donePayload = null;
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    const parts = buf.split("\n\n");
+    buf = parts.pop() || "";
+    for (const chunk of parts) {
+      const line = chunk
+        .split("\n")
+        .map((l) => l.trim())
+        .find((l) => l.startsWith("data:"));
+      if (!line) continue;
+      const jsonStr = line.slice(5).trim();
+      if (!jsonStr) continue;
+      let ev;
+      try {
+        ev = JSON.parse(jsonStr);
+      } catch {
+        continue;
+      }
+      onEvent(ev);
+      if (ev.type === "done") donePayload = ev;
+      if (ev.type === "error") {
+        const detail =
+          typeof ev.detail === "string"
+            ? ev.detail
+            : ev.detail != null
+              ? JSON.stringify(ev.detail)
+              : "Stream error";
+        throw new Error(detail);
+      }
+    }
+  }
+  if (!donePayload) throw new Error("Stream ended without completion.");
+  return donePayload;
+}
+
+/**
+ * @param {object} payload
+ * @returns {Promise<object>}
+ */
+async function apiChatStream(payload) {
+  const r = await fetch("/api/llm/chat/stream", {
+    method: "POST",
+    headers: headers(),
+    body: JSON.stringify(payload),
+  });
+  if (r.status === 404) {
+    return api("/api/llm/chat", { method: "POST", body: JSON.stringify(payload) });
+  }
+  if (!r.ok) {
+    const text = await r.text().catch(() => "");
+    let data;
+    try {
+      data = text ? JSON.parse(text) : {};
+    } catch {
+      data = { detail: text };
+    }
+    throw new Error(formatApiError(data) || r.statusText || String(r.status));
+  }
+  const ct = r.headers.get("content-type") || "";
+  if (!ct.includes("text/event-stream")) {
+    const text = await r.text();
+    try {
+      return text ? JSON.parse(text) : {};
+    } catch {
+      throw new Error("Invalid chat stream response");
+    }
+  }
+  return consumeChatStream(r, (ev) => agentVizEnqueue(ev));
+}
+
+function wireAgentVizControls() {
+  const pauseBtn = document.getElementById("btn-agent-viz-pause");
+  const stepBtn = document.getElementById("btn-agent-viz-step");
+  const speedEl = document.getElementById("agent-viz-speed");
+  const skipEl = document.getElementById("agent-viz-skip");
+
+  pauseBtn?.addEventListener("click", () => {
+    agentViz.paused = !agentViz.paused;
+    updateAgentVizControls();
+  });
+  stepBtn?.addEventListener("click", () => {
+    agentViz.stepRequested = true;
+    agentViz.paused = false;
+    updateAgentVizControls();
+  });
+  speedEl?.addEventListener("input", () => {
+    if (!(speedEl instanceof HTMLInputElement)) return;
+    const v = parseFloat(speedEl.value);
+    if (Number.isFinite(v)) {
+      agentViz.speed = Math.max(0.25, Math.min(3, v));
+      localStorage.setItem(LS_AGENT_VIZ_SPEED, String(agentViz.speed));
+      const valEl = document.getElementById("agent-viz-speed-val");
+      if (valEl) valEl.textContent = `${agentViz.speed}×`;
+    }
+  });
+  skipEl?.addEventListener("change", () => {
+    if (skipEl instanceof HTMLInputElement) {
+      agentViz.skipViz = skipEl.checked;
+      localStorage.setItem(LS_AGENT_VIZ_SKIP, skipEl.checked ? "1" : "0");
+    }
+  });
 }
 
 /* ── LLM chat (Ollama / Groq + memory tools) ── */
@@ -2812,6 +3351,7 @@ async function runChatTurn(userText, options = {}) {
   chatRequestInFlight = true;
   syncChatInputChrome();
   if (useInternalChunk) showStudyProgressInline();
+  agentVizBeginTurn();
   try {
     appendChatMessage("user", text);
     playChatSound("user");
@@ -2846,10 +3386,8 @@ async function runChatTurn(userText, options = {}) {
     } else {
       localStorage.setItem(LS_MODEL_GROQ, modelSel?.value || "");
     }
-    const data = await api("/api/llm/chat", {
-      method: "POST",
-      body: JSON.stringify(payload),
-    });
+    const data = await apiChatStream(payload);
+    await agentVizEndTurn();
     if (useInternalChunk) {
       setStudyProgressLabel("Visualizing graph…");
     }
@@ -2872,6 +3410,7 @@ async function runChatTurn(userText, options = {}) {
       await refreshGraph();
     }
   } catch (err) {
+    await agentVizEndTurn();
     const msg = err instanceof Error ? err.message : String(err);
     if (voiceChatEnabled()) speakChatReply(`Sorry. ${msg}`);
     else playChatSound("error");
@@ -3467,6 +4006,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   wireReorganize();
   wireTopicWizard();
   wireFieldWizard();
+  wireAgentVizControls();
   await refreshSystemContextCard();
   await checkBackendBanner();
   await refreshGraph();

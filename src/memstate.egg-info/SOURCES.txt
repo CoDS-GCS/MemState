@@ -35,6 +35,7 @@ src/memstate/embeddings/__init__.py
 src/memstate/embeddings/base.py
 src/memstate/embeddings/fastembed_provider.py
 src/memstate/llm/__init__.py
+src/memstate/llm/agent_viz.py
 src/memstate/llm/chat_api.py
 src/memstate/llm/groq_chat.py
 src/memstate/llm/groq_rate_limit.py
@@ -52,6 +53,7 @@ src/memstate/reasoner/engine.py
 src/memstate/store/__init__.py
 src/memstate/store/graph_store.py
 src/memstate/store/kuzu_adapter.py
+tests/test_agent_viz.py
 tests/test_study.py
 tests/test_system_context.py
 tests/test_text_chunking.py

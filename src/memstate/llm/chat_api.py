@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import json
+from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any, Literal
 
 import httpx
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from memstate.api.deps import get_graph_store
@@ -244,6 +247,28 @@ def _should_use_study(
     return last_user_len > settings.chat_chunk_threshold_chars
 
 
+ChatEventCallback = Callable[[dict[str, Any]], Awaitable[None] | None]
+
+
+def _wrap_on_event(
+    on_event: ChatEventCallback | None,
+    *,
+    phase: str | None = None,
+) -> ChatEventCallback | None:
+    if on_event is None:
+        return None
+
+    async def wrapped(event: dict[str, Any]) -> None:
+        out = dict(event)
+        if phase:
+            out["phase"] = phase
+        result = on_event(out)
+        if result is not None:
+            await result
+
+    return wrapped
+
+
 async def _chat_study_ingest(
     body: ChatBody,
     dialogue: list[dict[str, Any]],
@@ -255,6 +280,7 @@ async def _chat_study_ingest(
     base_tool_rounds: int,
     route: IntentRoute,
     intent_source: IntentSource,
+    on_event: ChatEventCallback | None = None,
 ) -> dict[str, Any]:
     """Study pipeline: phase A sandbox topics, phase B integrate with existing memory."""
     prior = dialogue[:-1]
@@ -284,6 +310,7 @@ async def _chat_study_ingest(
         study_session_kind=sk,
         study_catalog=catalog,
     )
+    ev_a = _wrap_on_event(on_event, phase="study_a")
     if body.provider == "groq":
         reply_a, log_a, used_model = await run_groq_chat(
             api_key=groq_key,
@@ -293,6 +320,7 @@ async def _chat_study_ingest(
             system_prompt=sys_a,
             tools=tools_a,
             max_tool_rounds=seg_rounds,
+            on_event=ev_a,
         )
     else:
         reply_a, log_a, used_model = await run_ollama_chat(
@@ -303,10 +331,13 @@ async def _chat_study_ingest(
             system_prompt=sys_a,
             tools=tools_a,
             max_tool_rounds=seg_rounds,
+            on_event=ev_a,
         )
 
     delay = float(settings.study_phase_delay_seconds)
     if delay > 0:
+        if on_event is not None:
+            await on_event({"type": "study_phase_delay", "seconds": delay, "phase": "study_b"})
         await asyncio.sleep(delay)
 
     phase_b_user = (
@@ -326,6 +357,7 @@ async def _chat_study_ingest(
     fixed_block = _build_system_context_prompt_block(store)
     if fixed_block:
         sys_b = f"{sys_b}\n\n{fixed_block}"
+    ev_b = _wrap_on_event(on_event, phase="study_b")
     if body.provider == "groq":
         reply_b, log_b, used_b = await run_groq_chat(
             api_key=groq_key,
@@ -335,6 +367,7 @@ async def _chat_study_ingest(
             system_prompt=sys_b,
             tools=tools_b,
             max_tool_rounds=base_tool_rounds,
+            on_event=ev_b,
         )
     else:
         reply_b, log_b, used_b = await run_ollama_chat(
@@ -345,6 +378,7 @@ async def _chat_study_ingest(
             system_prompt=sys_b,
             tools=tools_b,
             max_tool_rounds=base_tool_rounds,
+            on_event=ev_b,
         )
     used_model = used_b or used_model
 
@@ -372,9 +406,33 @@ async def _chat_study_ingest(
     }
 
 
-@router.post("/chat")
-async def llm_chat(body: ChatBody, store: GraphStore = Depends(get_graph_store)) -> dict[str, Any]:
-    settings = get_settings()
+    return {
+        "reply": combined,
+        "tool_log": merged_log,
+        "model": used_model,
+        "provider": body.provider,
+        "intent": route,
+        "intent_source": intent_source,
+        "max_tool_rounds": seg_rounds,
+        "study_ingest": True,
+        "study_session_kind": sk,
+        "study_phases": 2,
+    }
+
+
+async def _resolve_chat_context(
+    body: ChatBody,
+    store: GraphStore,
+    settings: Settings,
+) -> tuple[
+    list[dict[str, Any]],
+    str,
+    str,
+    str,
+    int,
+    IntentRoute,
+    IntentSource,
+]:
     dialogue = _prepare_chat_messages(body, settings)
     model = (
         (body.model or (settings.groq_model if body.provider == "groq" else settings.ollama_model))
@@ -385,7 +443,6 @@ async def llm_chat(body: ChatBody, store: GraphStore = Depends(get_graph_store))
     ollama_base = _resolve_base_url(body, settings)
     tool_rounds = _resolve_max_tool_rounds(body, settings)
 
-    last_full = str(dialogue[-1].get("content") or "")
     if body.provider == "groq" and not groq_key:
         raise HTTPException(
             status_code=503,
@@ -427,58 +484,37 @@ async def llm_chat(body: ChatBody, store: GraphStore = Depends(get_graph_store))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
-    if _should_use_study(body, settings, len(last_full), route):
-        try:
-            return await _chat_study_ingest(
-                body,
-                dialogue,
-                store,
-                settings,
-                model,
-                groq_key,
-                ollama_base,
-                tool_rounds,
-                route,
-                intent_source,
-            )
-        except httpx.HTTPStatusError as e:
-            if body.provider == "groq":
-                detail = _groq_upstream_error_message(e.response)
-            else:
-                detail = e.response.text if e.response is not None else str(e)
-                detail = f"Ollama error: {detail}"
-            raise HTTPException(status_code=502, detail=detail) from e
-        except httpx.RequestError as e:
-            if body.provider == "groq":
-                raise HTTPException(
-                    status_code=503,
-                    detail=f"Cannot reach Groq API. Check network and API key. ({e})",
-                ) from e
-            raise HTTPException(
-                status_code=503,
-                detail=(
-                    f"Cannot reach Ollama at {ollama_base}. "
-                    "Start the Ollama app (or run `ollama serve`), pull a model (`ollama pull llama3.2`), "
-                    "then set the Ollama URL in the sidebar or MEMSTATE_OLLAMA_BASE_URL. "
-                    f"Details: {e}"
-                ),
-            ) from e
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e)) from e
+    return dialogue, model, groq_key, ollama_base, tool_rounds, route, intent_source
+
+
+async def _run_standard_chat(
+    body: ChatBody,
+    dialogue: list[dict[str, Any]],
+    store: GraphStore,
+    settings: Settings,
+    *,
+    model: str,
+    groq_key: str,
+    ollama_base: str,
+    tool_rounds: int,
+    route: IntentRoute,
+    intent_source: IntentSource,
+    on_event: ChatEventCallback | None = None,
+) -> dict[str, Any]:
+    runner = MemoryToolRunner(
+        store,
+        chat_route=route,
+        query_field_salience_bump=settings.query_field_salience_bump,
+        field_salience_max=settings.field_salience_max,
+    )
+    tool_defs = tools_for_intent_route(route)
+    sys_prompt = build_chat_system_prompt(route)
+    fixed_block = _build_system_context_prompt_block(store)
+    if fixed_block:
+        sys_prompt = f"{sys_prompt}\n\n{fixed_block}"
 
     if body.provider == "groq":
         try:
-            runner = MemoryToolRunner(
-                store,
-                chat_route=route,
-                query_field_salience_bump=settings.query_field_salience_bump,
-                field_salience_max=settings.field_salience_max,
-            )
-            tool_defs = tools_for_intent_route(route)
-            sys_prompt = build_chat_system_prompt(route)
-            fixed_block = _build_system_context_prompt_block(store)
-            if fixed_block:
-                sys_prompt = f"{sys_prompt}\n\n{fixed_block}"
             reply, tool_log, used = await run_groq_chat(
                 api_key=groq_key,
                 model=model,
@@ -487,6 +523,7 @@ async def llm_chat(body: ChatBody, store: GraphStore = Depends(get_graph_store))
                 system_prompt=sys_prompt,
                 tools=tool_defs,
                 max_tool_rounds=tool_rounds,
+                on_event=on_event,
             )
         except httpx.HTTPStatusError as e:
             detail = _groq_upstream_error_message(e.response)
@@ -506,19 +543,7 @@ async def llm_chat(body: ChatBody, store: GraphStore = Depends(get_graph_store))
             "max_tool_rounds": tool_rounds,
         }
 
-    # Ollama
     try:
-        runner = MemoryToolRunner(
-            store,
-            chat_route=route,
-            query_field_salience_bump=settings.query_field_salience_bump,
-            field_salience_max=settings.field_salience_max,
-        )
-        tool_defs = tools_for_intent_route(route)
-        sys_prompt = build_chat_system_prompt(route)
-        fixed_block = _build_system_context_prompt_block(store)
-        if fixed_block:
-            sys_prompt = f"{sys_prompt}\n\n{fixed_block}"
         reply, tool_log, used = await run_ollama_chat(
             base_url=ollama_base,
             model=model,
@@ -527,6 +552,7 @@ async def llm_chat(body: ChatBody, store: GraphStore = Depends(get_graph_store))
             system_prompt=sys_prompt,
             tools=tool_defs,
             max_tool_rounds=tool_rounds,
+            on_event=on_event,
         )
     except httpx.HTTPStatusError as e:
         detail = e.response.text if e.response is not None else str(e)
@@ -553,6 +579,139 @@ async def llm_chat(body: ChatBody, store: GraphStore = Depends(get_graph_store))
         "intent_source": intent_source,
         "max_tool_rounds": tool_rounds,
     }
+
+
+async def _execute_chat_body(
+    body: ChatBody,
+    store: GraphStore,
+    settings: Settings,
+    on_event: ChatEventCallback | None = None,
+) -> dict[str, Any]:
+    dialogue, model, groq_key, ollama_base, tool_rounds, route, intent_source = await _resolve_chat_context(
+        body, store, settings
+    )
+    if on_event is not None:
+        await on_event(
+            {
+                "type": "intent",
+                "route": route,
+                "intent_source": intent_source,
+            }
+        )
+    last_full = str(dialogue[-1].get("content") or "")
+
+    if _should_use_study(body, settings, len(last_full), route):
+        try:
+            return await _chat_study_ingest(
+                body,
+                dialogue,
+                store,
+                settings,
+                model,
+                groq_key,
+                ollama_base,
+                tool_rounds,
+                route,
+                intent_source,
+                on_event=on_event,
+            )
+        except httpx.HTTPStatusError as e:
+            if body.provider == "groq":
+                detail = _groq_upstream_error_message(e.response)
+            else:
+                detail = e.response.text if e.response is not None else str(e)
+                detail = f"Ollama error: {detail}"
+            raise HTTPException(status_code=502, detail=detail) from e
+        except httpx.RequestError as e:
+            if body.provider == "groq":
+                raise HTTPException(
+                    status_code=503,
+                    detail=f"Cannot reach Groq API. Check network and API key. ({e})",
+                ) from e
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    f"Cannot reach Ollama at {ollama_base}. "
+                    "Start the Ollama app (or run `ollama serve`), pull a model (`ollama pull llama3.2`), "
+                    "then set the Ollama URL in the sidebar or MEMSTATE_OLLAMA_BASE_URL. "
+                    f"Details: {e}"
+                ),
+            ) from e
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+
+    return await _run_standard_chat(
+        body,
+        dialogue,
+        store,
+        settings,
+        model=model,
+        groq_key=groq_key,
+        ollama_base=ollama_base,
+        tool_rounds=tool_rounds,
+        route=route,
+        intent_source=intent_source,
+        on_event=on_event,
+    )
+
+
+def _sse_frame(event: dict[str, Any]) -> str:
+    return f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+
+
+@router.post("/chat")
+async def llm_chat(body: ChatBody, store: GraphStore = Depends(get_graph_store)) -> dict[str, Any]:
+    settings = get_settings()
+    return await _execute_chat_body(body, store, settings)
+
+
+@router.post("/chat/stream")
+async def llm_chat_stream(body: ChatBody, store: GraphStore = Depends(get_graph_store)) -> StreamingResponse:
+    settings = get_settings()
+    queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
+
+    async def on_event(event: dict[str, Any]) -> None:
+        await queue.put(event)
+
+    async def producer() -> None:
+        try:
+            result = await _execute_chat_body(body, store, settings, on_event=on_event)
+            await queue.put({"type": "reply", "text": result.get("reply") or ""})
+            done_payload = dict(result)
+            done_payload["type"] = "done"
+            await queue.put(done_payload)
+        except HTTPException as e:
+            await queue.put({"type": "error", "detail": e.detail, "status": e.status_code})
+        except Exception as e:
+            await queue.put({"type": "error", "detail": str(e), "status": 500})
+        finally:
+            await queue.put(None)
+
+    async def event_stream() -> AsyncIterator[str]:
+        task = asyncio.create_task(producer())
+        try:
+            while True:
+                item = await queue.get()
+                if item is None:
+                    break
+                yield _sse_frame(item)
+        finally:
+            if not task.done():
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.post("/transcribe")
