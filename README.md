@@ -92,18 +92,7 @@ See the [Docker guide](docs/guides/docker.md) for persistence and configuration.
 | [Authentication](docs/guides/authentication.md) | API keys and admin access |
 | [Docker](docs/guides/docker.md) | Container deployment |
 
-### Full documentation site
 
-Architecture, operations, and agent integration guides live in [`docs/`](docs/index.html).
-
-| Section | Link |
-| --- | --- |
-| Product overview | [docs/index.html](docs/index.html) |
-| Developer quickstart | [docs/developers/quickstart.html](docs/developers/quickstart.html) |
-| Architecture | [docs/architecture/overview.html](docs/architecture/overview.html) |
-| Data model (deep dive) | [docs/data-model/overview.html](docs/data-model/overview.html) |
-| Operations | [docs/operations/high-level.html](docs/operations/high-level.html) |
-| HTTP API index | [docs/api/index.html](docs/api/index.html) |
 
 ## Project Layout
 
