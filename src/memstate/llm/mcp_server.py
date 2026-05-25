@@ -92,7 +92,7 @@ def memory_create_topic(
     salience: float = 1.0,
     topic_id: str | None = None,
 ) -> dict[str, Any]:
-    """Create a new standalone topic only for substantial subjects; use fields on an existing topic for small facts or nested detail not ready for its own node."""
+    """Create a new topic only after memory_list_topics confirms the subject is not already stored; otherwise update the existing topic."""
     args: dict[str, Any] = {"title": title, "salience": salience}
     if summary is not None:
         args["summary"] = summary

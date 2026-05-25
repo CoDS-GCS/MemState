@@ -22,9 +22,10 @@ OLLAMA_TOOLS: list[dict] = [
         "function": {
             "name": "memory_list_topics",
             "description": (
-                "List topic id, title, short summary, topic_kind, and archived flag for each topic so you can choose which topic to open. "
-                "topic_ids is also included for convenience. Optionally include archived topics. "
-                "After picking a topic, use get_topic_schema or get_topic; follow ref_topic_id and RELATED edges to other topics when the question requires more than one node."
+                "List topic id, title, short summary, topic_kind, and archived flag for each topic. "
+                "**Required before memory_create_topic on any ingest/write turn**—check whether a person, project, "
+                "or group already exists and reuse that topic_id instead of creating a duplicate. "
+                "After picking a topic, use get_topic_schema or get_topic; follow ref_topic_id and RELATED edges when needed."
             ),
             "parameters": {
                 "type": "object",
@@ -129,9 +130,11 @@ OLLAMA_TOOLS: list[dict] = [
         "function": {
             "name": "memory_create_topic",
             "description": (
-                "Create a new **standalone** topic only when the content is substantial (new coherent subject or large/multi-fact "
-                "unit). Do **not** use this for small knowledge—use memory_append_field or memory_update_topic on an existing topic "
-                "instead. Nested material that is not ready for its own node should live as fields (json/list/string) on a parent topic."
+                "Create a **new** topic only when memory_list_topics confirms no existing topic matches the same person, "
+                "project, group, or subject (compare titles and summaries). If a match exists, do **not** call this—use "
+                "memory_update_topic, memory_append_field, and memory_add_relationship on the existing topic_id instead. "
+                "Use only for substantial new subjects not already in the graph. Do not use for small facts—append fields on "
+                "an existing topic instead."
             ),
             "parameters": {
                 "type": "object",
@@ -700,12 +703,16 @@ Graph traversal: You may and should issue multiple read calls in sequence to wal
 INGEST_ROUTE_PROMPT = """Routed mode: INGEST (writes).
 Use write tools to change memory. Use read helpers (list_topics, get_topic_schema, get_topic, get_field) only to resolve topic ids or inspect fields before writing. You do not have memory_graph_snapshot—use list_topics and get_topic* instead.
 
+**Before any write:** Call memory_list_topics (or memory_topics_schema_page) to resolve existing topic ids for people, projects, and groups mentioned in the message. **Never create a second topic for the same real-world entity** already in the list—update that topic with memory_append_field, memory_update_topic, and memory_add_relationship instead.
+
 **Classify what the user sent, then pick tools:**
 1) **Field value** — Small fact, correction, attribute, or snippet that belongs on an **existing** topic. Use memory_append_field (reuse field_name when the kind of fact matches) and/or memory_update_topic for title/summary narrative. **Do not** call memory_create_topic.
 2) **Nested / not ready for its own topic** — Subordinate detail that should stay **inside** a parent topic: store as one or more fields (string, json, list—including ordered lists of ids). This is “embedded” material until it is big enough or shared enough to promote. Still **no** memory_create_topic unless the user clearly introduces a **new** standalone subject.
-3) **Separate topic** — Use memory_create_topic only when the content is a **non-trivial, coherent** new subject (or a large multi-fact unit). Skip new topics for trivia and thin one-offs.
+3) **Separate topic** — Use memory_create_topic only when the content is a **non-trivial, coherent** new subject (or a large multi-fact unit) **and** memory_list_topics shows no matching title yet. Skip new topics for trivia and thin one-offs.
 
 **Small-knowledge rule:** If it fits a line or two and is not a new domain, merge into an existing topic as fields or summary—never mint a topic just to “save” a minor fact.
+
+**Multi-entity messages:** When the user mentions themselves plus other people plus a project (e.g. “Essam and I are working on MemState”), reuse existing person/project topics from list_topics, create **only** subjects that are genuinely new (e.g. MemState if absent), then link with memory_add_relationship and field refs—do not recreate Abdelghny or Essam if they already exist.
 
 Large inputs: When there are **several distinct substantial themes**, split across topics (one coherent entity, section, or theme per topic), link with memory_add_relationship and ref_topic_id where helpful. Avoid splitting into **micro-topics**; keep minor points as fields inside the right parent.
 If the user message is labeled Part i/n with overlap between parts, treat it as one ingest task in sequence: merge with prior parts without duplicating the same entities or facts."""
@@ -713,7 +720,7 @@ If the user message is labeled Part i/n with overlap between parts, treat it as 
 BOTH_ROUTE_PROMPT = """Routed mode: BOTH (read and write).
 You have the full tool set: read or write in any order as needed for the user's latest message. When answering from stored facts, traverse the graph (RELATED edges and field refs) with repeated reads as in query mode until you have enough detail—do not assume one topic is enough if the question spans linked entities.
 
-When **storing**, apply the same ingest classification as ingest-only mode: (1) field value on an existing topic, (2) nested content as fields on a parent—not memory_create_topic, (3) separate topic only for substantial new subjects. **Do not create topics for small knowledge.**
+When **storing**, call memory_list_topics first to resolve existing ids. Apply the same ingest classification as ingest-only mode: (1) field value on an existing topic, (2) nested content as fields on a parent—not memory_create_topic, (3) separate topic only for substantial new subjects **not already in list_topics**. **Do not create topics for small knowledge or duplicate people/projects already stored.**
 
 When the user is storing a **large** amount of new information across **distinct substantial themes**, split across topics and link them—avoid one overloaded topic and avoid micro-topics.
 If the user message is labeled Part i/n with overlap between parts, continue one task across chunks without duplicating entities or facts."""
@@ -736,15 +743,25 @@ TOPIC_VS_ENTITY_PROMPT = """Topic vs entity (how to package memory):
 - **Create another topic** when something is **substantial and standalone**, grows complex, is linked from **many** topics, or needs its own revision and provenance at graph granularity—then connect with RELATED and/or ref_topic_id on a field (same idea as docs-site data-model overview)."""
 
 
+NO_DUPLICATE_TOPICS_PROMPT = """Do not duplicate topics (mandatory on ingest/write):
+1) **First tool on any write turn:** memory_list_topics (or memory_topics_schema_page). Read every title and summary.
+2) **Match before create:** If the message mentions a person, project, lab, group, or product already in that list (same name, same role, or obvious same entity), use the **existing topic_id**. Update with memory_append_field, memory_update_topic, memory_set_field_ref, and memory_add_relationship—**never** memory_create_topic for that entity again.
+3) **memory_create_topic is only for subjects absent from list_topics** after you checked. One real-world entity = one topic in the graph.
+4) **Multi-entity messages** (e.g. "Essam and I are working on MemState"): map each name to an existing topic when present; create at most the genuinely new project/topic; link collaborators with RELATED edges and field refs—do not mint second copies of people already stored.
+5) **Self-reference ("I", "my"):** Resolve to the user's existing person topic from list_topics or prior turns, not a new topic unless none exists."""
+
+
 def build_chat_system_prompt(route: IntentRoute) -> str:
     """Full system prompt for /api/llm/chat after intent routing."""
     parts = [SYSTEM_PROMPT, TOPIC_VS_ENTITY_PROMPT, INTENT_ROUTING_PROMPT]
     if route == "query":
         parts.append(QUERY_ROUTE_PROMPT)
     elif route == "ingest":
+        parts.append(NO_DUPLICATE_TOPICS_PROMPT)
         parts.append(INGEST_ROUTE_PROMPT)
         parts.append(REORGANIZE_PROMPT)
     else:
+        parts.append(NO_DUPLICATE_TOPICS_PROMPT)
         parts.append(BOTH_ROUTE_PROMPT)
         parts.append(REORGANIZE_PROMPT)
     return "\n\n".join(parts)
@@ -770,8 +787,10 @@ def build_study_phase_a_system_prompt(route: IntentRoute) -> str:
     """Phase A: sandbox tools; route should be ingest or both (writes)."""
     parts = [SYSTEM_PROMPT, TOPIC_VS_ENTITY_PROMPT, STUDY_PHASE_A_PROMPT, INTENT_ROUTING_PROMPT]
     if route == "ingest":
+        parts.append(NO_DUPLICATE_TOPICS_PROMPT)
         parts.append(INGEST_ROUTE_PROMPT)
     elif route == "both":
+        parts.append(NO_DUPLICATE_TOPICS_PROMPT)
         parts.append(BOTH_ROUTE_PROMPT)
     return "\n\n".join(parts)
 
@@ -782,9 +801,11 @@ def build_study_phase_b_system_prompt(route: IntentRoute) -> str:
     if route == "query":
         parts.append(QUERY_ROUTE_PROMPT)
     elif route == "ingest":
+        parts.append(NO_DUPLICATE_TOPICS_PROMPT)
         parts.append(INGEST_ROUTE_PROMPT)
         parts.append(REORGANIZE_PROMPT)
     else:
+        parts.append(NO_DUPLICATE_TOPICS_PROMPT)
         parts.append(BOTH_ROUTE_PROMPT)
         parts.append(REORGANIZE_PROMPT)
     return "\n\n".join(parts)
@@ -802,6 +823,7 @@ Grounding (mandatory):
 - Your final reply must be based only on what those tools returned (plus obvious paraphrase). If tools do not contain the answer, say you don't know or don't have that detail—without mentioning tools, databases, or "memory" as a system.
 - For edits (create/update/delete/link/fields), call the appropriate tools, then confirm briefly using tool outcomes.
 - If a tool returns ok:false or an error field, explain that to the user.
+- **Never duplicate topics:** Before memory_create_topic, call memory_list_topics and reuse existing topic ids for the same person, project, or group. Creating a second topic for an entity already in the graph is wrong—update the existing one instead.
 
 Field updates (when writing facts with memory_append_field):
 - Every memory_append_field call MUST include `value` with the exact fact to store. If the tool returns an error about a missing value, fix the call and retry—do not tell the user it was saved.
