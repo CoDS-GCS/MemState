@@ -581,7 +581,7 @@ const graphView = {
   agentHighlightIds: new Set(),
   /** When true, non-highlighted nodes render dimmed during scan. */
   agentScanMode: false,
-  /** @type {{ topicId: string, fieldName: string } | null} */
+  /** @type {{ topicId: string, fieldName: string, write?: boolean } | null} */
   agentActiveField: null,
 };
 
@@ -1025,6 +1025,25 @@ function showTopicWizard(t) {
   body.innerHTML = renderTopicWizardBody(t);
   root.hidden = false;
   document.body.classList.add("topic-wizard-open");
+  reapplyAgentFieldHighlight(t.id);
+}
+
+/** Re-apply agent field highlight after wizard DOM is rebuilt. */
+function reapplyAgentFieldHighlight(topicId) {
+  const af = graphView.agentActiveField;
+  if (!af || String(af.topicId) !== String(topicId || "")) return;
+  const body = document.getElementById("topic-wizard-body");
+  if (!body) return;
+  const fn = String(af.fieldName || "");
+  if (!fn) return;
+  let card = body.querySelector(`.topic-wizard-field-card[data-field-name="${CSS.escape(fn)}"]`);
+  if (!card) card = body.querySelector(`[data-field-name="${CSS.escape(fn)}"]`);
+  if (!card) return;
+  const fieldCard = card.classList.contains("topic-wizard-field-card")
+    ? card
+    : card.closest(".topic-wizard-field-card");
+  const target = fieldCard || card;
+  highlightAgentFieldValues(target, { write: !!af.write });
 }
 
 function hideTopicWizard() {
@@ -2029,6 +2048,13 @@ const AGENT_VIZ_DELAYS = {
   other: { preview: 300, commit: 400 },
 };
 
+/** After scrolling to a field, keep highlight visible (scaled by speed slider). */
+const AGENT_FIELD_DWELL_MS = 5000;
+/** Minimum field hold even at max speed so highlights stay visible. */
+const AGENT_FIELD_DWELL_MIN_MS = 3000;
+/** Fixed wait for smooth scroll — not scaled by speed. */
+const AGENT_FIELD_SCROLL_MS = 600;
+
 function agentVizSleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
@@ -2036,6 +2062,33 @@ function agentVizSleep(ms) {
 function agentVizScaledDelay(baseMs) {
   const sp = Math.max(0.25, Math.min(3, Number(agentViz.speed) || 1));
   return Math.round(baseMs / sp);
+}
+
+function agentVizEffectiveDelay(baseMs, { scale = true, minMs = 0 } = {}) {
+  const raw = scale ? agentVizScaledDelay(baseMs) : Math.round(baseMs);
+  return Math.max(minMs, raw);
+}
+
+/** Pause/step-aware wait; re-reads speed each tick so slider changes apply mid-hold. */
+async function agentVizDwell(baseMs, statusHint, opts = {}) {
+  if (agentViz.skipViz || baseMs <= 0) return;
+  const { scale = true, minMs = 0 } = opts;
+  const started = Date.now();
+  while (true) {
+    await agentVizWaitForAdvance();
+    if (agentViz.stepRequested) {
+      agentViz.stepRequested = false;
+      break;
+    }
+    const total = agentVizEffectiveDelay(baseMs, { scale, minMs });
+    const left = total - (Date.now() - started);
+    if (left <= 0) break;
+    if (statusHint) {
+      const secs = Math.max(1, Math.ceil(left / 1000));
+      setAgentVizStatus(`${statusHint} (${secs}s)`);
+    }
+    await agentVizSleep(Math.min(100, left));
+  }
 }
 
 async function agentVizWaitForAdvance() {
@@ -2138,7 +2191,7 @@ function highlightAgentFields(topicId, fieldNames, { write = false } = {}) {
   const names = Array.isArray(fieldNames) ? fieldNames.filter(Boolean) : [];
   if (!tid || !names.length) return;
 
-  graphView.agentActiveField = { topicId: tid, fieldName: names[0] };
+  graphView.agentActiveField = { topicId: tid, fieldName: names[0], write: !!write };
   const body = document.getElementById("topic-wizard-body");
   if (!body) return;
   /** @type {Element | null} */
@@ -2163,6 +2216,13 @@ function highlightAgentFields(topicId, fieldNames, { write = false } = {}) {
 async function highlightAgentFieldsAfterRender(topicId, fieldNames, opts = {}) {
   await agentVizWaitForDom();
   highlightAgentFields(topicId, fieldNames, opts);
+  if (agentViz.skipViz || !fieldNames || !fieldNames.length) return;
+
+  await agentVizDwell(AGENT_FIELD_SCROLL_MS, null, { scale: false });
+
+  const fn = String(fieldNames[0] || "field");
+  const dwellLabel = `Viewing field “${fn}” at ${agentViz.speed}×`;
+  await agentVizDwell(AGENT_FIELD_DWELL_MS, dwellLabel, { minMs: AGENT_FIELD_DWELL_MIN_MS });
 }
 
 /**
@@ -2248,8 +2308,9 @@ function setAgentNodeHighlights(topicIds, { scan = false } = {}) {
   }
 }
 
-function agentVizDelayKey(viz) {
+function agentVizDelayKey(viz, event) {
   const action = viz && viz.action ? String(viz.action) : "other";
+  if (event && resolveAgentFieldNames(event, viz).length > 0) return "read_field";
   if (action === "read" && viz.field_names && viz.field_names.length) return "read_field";
   return action in AGENT_VIZ_DELAYS ? action : "other";
 }
@@ -2264,17 +2325,14 @@ async function agentVizApplyPreview(event) {
   agentViz.toolStep += 1;
   setAgentVizStatus(`Step ${agentViz.toolStep} — ${label}`);
 
-  if (action === "read" || action === "write_field" || action === "write_topic" || action === "reorganize") {
-    clearAgentFieldHighlights();
-  }
-
   if (action === "scan") {
+    clearAgentFieldHighlights();
     setAgentNodeHighlights(ids.length ? ids : graphView.nodeIds || [], { scan: true });
   } else if (ids.length) {
     setAgentNodeHighlights(ids, { scan: false });
   }
 
-  const dk = agentVizDelayKey(viz);
+  const dk = agentVizDelayKey(viz, event);
   await agentVizWaitForAdvance();
   await agentVizSleep(agentVizScaledDelay(AGENT_VIZ_DELAYS[dk].preview));
 }
@@ -2294,7 +2352,7 @@ async function agentVizApplyCommit(event) {
     else graphView.agentScanMode = false;
     redrawAgentGraph();
     if (agentViz.skipViz) return;
-    const dk = agentVizDelayKey(viz);
+    const dk = agentVizDelayKey(viz, event);
     await agentVizWaitForAdvance();
     await agentVizSleep(agentVizScaledDelay(AGENT_VIZ_DELAYS[dk].commit));
     return;
@@ -2304,8 +2362,14 @@ async function agentVizApplyCommit(event) {
   const readLike = action === "read" || action === "write_field" || action === "write_topic" || action === "reorganize";
   const fieldNames = resolveAgentFieldNames(event, viz);
   const shouldHighlightFields = fieldNames.length > 0;
+  const needsRefresh =
+    action === "write_field" ||
+    action === "write_topic" ||
+    action === "write_edge" ||
+    action === "reorganize" ||
+    (event.tool === "memory_create_topic" && event.result && event.result.ok);
 
-  if (readLike && primaryTopic) {
+  if (readLike && primaryTopic && !needsRefresh) {
     try {
       await expandGraphNode(primaryTopic);
       if (shouldHighlightFields) {
@@ -2326,13 +2390,6 @@ async function agentVizApplyCommit(event) {
     if (a && b) setAgentNodeHighlights([a, b], { scan: false });
   }
 
-  const needsRefresh =
-    action === "write_field" ||
-    action === "write_topic" ||
-    action === "write_edge" ||
-    action === "reorganize" ||
-    (event.tool === "memory_create_topic" && event.result && event.result.ok);
-
   if (needsRefresh) {
     await refreshGraph();
     if (primaryTopic && readLike) {
@@ -2349,9 +2406,11 @@ async function agentVizApplyCommit(event) {
     }
   }
 
-  const dk = agentVizDelayKey(viz);
-  await agentVizWaitForAdvance();
-  await agentVizSleep(agentVizScaledDelay(AGENT_VIZ_DELAYS[dk].commit));
+  const dk = agentVizDelayKey(viz, event);
+  if (!shouldHighlightFields) {
+    await agentVizWaitForAdvance();
+    await agentVizSleep(agentVizScaledDelay(AGENT_VIZ_DELAYS[dk].commit));
+  }
 }
 
 async function agentVizProcessEvent(event) {
@@ -2536,6 +2595,9 @@ function wireAgentVizControls() {
       localStorage.setItem(LS_AGENT_VIZ_SPEED, String(agentViz.speed));
       const valEl = document.getElementById("agent-viz-speed-val");
       if (valEl) valEl.textContent = `${agentViz.speed}×`;
+      if (graphView.agentActiveField) {
+        reapplyAgentFieldHighlight(graphView.agentActiveField.topicId);
+      }
     }
   });
   skipEl?.addEventListener("change", () => {
