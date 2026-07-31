@@ -106,6 +106,23 @@ tests/            Pytest suite
 
 MemState is a reference implementation of **Governed Evolving Memory (GEM)**, the framework introduced in our paper. It is a research prototype: a runnable proof-of-concept that demonstrates how the core ideas of GEM work in practice. The system is an early, focused artifact for researchers and developers who want to explore the approach directly, and its design will continue to evolve as the framework is extended beyond this initial reference build.
 
+
+## Citation
+
+If you use MAFBench in academic work, please cite:
+
+```bibtex
+@article{orogat2026agentmemorydatabaserethinking,
+      title={Is Agent Memory a Database? Rethinking Data Foundations for Long-Term AI Agent Memory}, 
+      author={Abdelghny Orogat and Essam Mansour},
+      year={2026},
+      eprint={2605.26252},
+      archivePrefix={arXiv},
+      primaryClass={cs.AI},
+      url={https://arxiv.org/abs/2605.26252}, 
+}
+```
+
 <div align="center">
 <sub>Developed at the <a href="https://cods.encs.concordia.ca/">CoDS Lab</a>, Concordia University.</sub>
 </div>
