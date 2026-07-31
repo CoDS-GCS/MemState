@@ -108,9 +108,6 @@ MemState is a reference implementation of **Governed Evolving Memory (GEM)**, th
 
 
 ## Citation
-
-If you use MAFBench in academic work, please cite:
-
 ```bibtex
 @article{orogat2026agentmemorydatabaserethinking,
       title={Is Agent Memory a Database? Rethinking Data Foundations for Long-Term AI Agent Memory}, 
