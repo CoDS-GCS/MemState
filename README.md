@@ -2,7 +2,7 @@
 
 # MemState
 
-### Long-term topic-graph memory for AI agents
+### Long-term topic-graph memory for AI agents (It is Proof-of-Concept, NOT Full Implementation)
 
 Backed by embedded [Kuzu](https://kuzudb.com/), with a FastAPI ingest/query layer,<br/>
 LLM chat (Ollama and Groq), and a D3 graph explorer UI.
