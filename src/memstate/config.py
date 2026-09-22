@@ -64,7 +64,7 @@ class Settings(BaseSettings):
                         key = line.split("=", 1)[1].strip().strip('"').strip("'")
                         break
         if key:
-            return self.model_copy(update={"groq_api_key": key})
+            object.__setattr__(self, "groq_api_key", key)
         return self
 
 
