@@ -4,13 +4,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
 from memstate.llm.tool_runner import MemoryToolRunner
 from memstate.llm.tools_schema import TOPIC_VS_ENTITY_PROMPT
 from memstate.store.graph_store import get_store
 
-mcp = FastMCP(
+mcp = MCPServer(
     "memstate-memory",
     instructions=(
         "MemState topic graph memory: use these tools to read and edit topics, fields, "
